@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -34,7 +34,7 @@ interface PrintifyShop {
 
 type Tab = "printify" | "colors" | "templates" | "settings";
 
-export default function StoreConfigPage() {
+function StoreConfigContent() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -146,6 +146,20 @@ export default function StoreConfigPage() {
       {activeTab === "colors" && <ColorsTab store={store} onRefresh={fetchStore} />}
       {activeTab === "templates" && <TemplatesTab store={store} />}
     </div>
+  );
+}
+
+export default function StoreConfigPage() {
+  return (
+    <Suspense
+      fallback={
+        <div style={{ textAlign: "center", padding: 60 }}>
+          <Loader2 size={24} className="animate-spin" style={{ margin: "0 auto" }} />
+        </div>
+      }
+    >
+      <StoreConfigContent />
+    </Suspense>
   );
 }
 

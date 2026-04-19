@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Plus,
@@ -27,7 +27,7 @@ interface Design {
   createdAt: string;
 }
 
-export default function DesignsPage() {
+function DesignsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [designs, setDesigns] = useState<Design[]>([]);
@@ -390,5 +390,19 @@ export default function DesignsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function DesignsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center" style={{ padding: 64, opacity: 0.5 }}>
+          <Loader2 size={24} className="animate-spin" />
+        </div>
+      }
+    >
+      <DesignsContent />
+    </Suspense>
   );
 }

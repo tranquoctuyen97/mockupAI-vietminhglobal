@@ -4,7 +4,7 @@ import type { NextRequest } from "next/server";
 const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/health", "/api/shopify", "/api/webhooks"];
 const ADMIN_PATHS = ["/admin", "/api/admin"];
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow public paths

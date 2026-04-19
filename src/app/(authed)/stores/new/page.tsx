@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Store,
@@ -35,7 +35,7 @@ const SETUP_STEPS = [
   "Tab API credentials → copy Client ID + Client secret",
 ];
 
-export default function NewStorePage() {
+function NewStoreContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const errorParam = searchParams.get("error");
@@ -453,5 +453,19 @@ export default function NewStorePage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function NewStorePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center" style={{ padding: 64, opacity: 0.5 }}>
+          <Loader2 size={24} className="animate-spin" />
+        </div>
+      }
+    >
+      <NewStoreContent />
+    </Suspense>
   );
 }
