@@ -29,10 +29,10 @@ export async function POST(
   }
 
   const body = await request.json();
-  const { apiKey, shopId } = body as { apiKey: string; shopId: string };
+  const { apiKey, shopId: rawShopId } = body as { apiKey: string; shopId?: string };
 
-  if (!apiKey || !shopId) {
-    return NextResponse.json({ error: "apiKey and shopId required" }, { status: 400 });
+  if (!apiKey) {
+    return NextResponse.json({ error: "apiKey is required" }, { status: 400 });
   }
 
   // Test connection first
@@ -43,6 +43,26 @@ export async function POST(
       { error: `Printify connection failed: ${test.error}` },
       { status: 400 },
     );
+  }
+
+  // Auto-detect shopId if not provided
+  let shopId = rawShopId;
+  if (!shopId) {
+    try {
+      const shops = await client.getShops();
+      if (!shops || shops.length === 0) {
+        return NextResponse.json(
+          { error: "No Printify shops found for this API key. Create a shop on Printify first." },
+          { status: 400 },
+        );
+      }
+      shopId = String(shops[0].id);
+    } catch {
+      return NextResponse.json(
+        { error: "Failed to fetch Printify shops" },
+        { status: 500 },
+      );
+    }
   }
 
   // Save encrypted
