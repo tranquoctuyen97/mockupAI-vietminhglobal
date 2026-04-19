@@ -1,0 +1,480 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// Multi-tenant ready: mọi bảng có tenant_id dù v1 single-tenant
+// ============================================================
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  users        User[]
+  auditEvents  AuditEvent[]
+  stores       Store[]
+  wizardDrafts WizardDraft[]
+
+  @@map("tenants")
+}
+
+model User {
+  id                 String     @id @default(cuid())
+  tenantId           String     @map("tenant_id")
+  email              String     @unique
+  passwordHash       String     @map("password_hash")
+  role               UserRole   @default(OPERATOR)
+  status             UserStatus @default(ACTIVE)
+  mustChangePassword Boolean    @default(true) @map("must_change_password")
+  createdBy          String?    @map("created_by")
+  createdAt          DateTime   @default(now()) @map("created_at")
+  updatedAt          DateTime   @updatedAt @map("updated_at")
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  sessions Session[]
+
+  @@index([tenantId])
+  @@index([email, status])
+  @@index([tenantId, role])
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  userAgent String?  @map("user_agent")
+  ip        String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([tokenHash])
+  @@map("sessions")
+}
+
+model AuditEvent {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  actorUserId  String?  @map("actor_user_id")
+  action       String // e.g. "user.created", "store.connected"
+  resourceType String   @map("resource_type")
+  resourceId   String?  @map("resource_id")
+  metadata     Json? // Flexible JSONB for extra context
+  ipAddress    String?  @map("ip_address")
+  userAgent    String?  @map("user_agent")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([resourceType, resourceId])
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_events")
+}
+
+model FeatureFlag {
+  key            String   @id
+  enabled        Boolean  @default(false)
+  description    String?
+  rolloutPercent Int      @default(100) @map("rollout_percent")
+  updatedBy      String?  @map("updated_by")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([enabled])
+  @@map("feature_flags")
+}
+
+// ============================================================
+// PHASE 1 — Store Connection
+// ============================================================
+
+model Store {
+  id              String      @id @default(cuid())
+  tenantId        String      @map("tenant_id")
+  name            String
+  shopifyDomain   String      @map("shopify_domain") // mystore.myshopify.com
+  shopifyShopId   String?     @map("shopify_shop_id") // gid://shopify/Shop/...
+  printifyShopId  String?     @map("printify_shop_id")
+  status          StoreStatus @default(ACTIVE)
+  lastHealthCheck DateTime?   @map("last_health_check")
+  createdBy       String?     @map("created_by")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+  deletedAt       DateTime?   @map("deleted_at")
+
+  tenant       Tenant                @relation(fields: [tenantId], references: [id])
+  credentials  StoreCredentials?
+  colors       StoreColor[]
+  templates    StoreMockupTemplate[]
+  wizardDrafts WizardDraft[]
+
+  @@unique([tenantId, shopifyDomain])
+  @@index([tenantId, status])
+  @@map("stores")
+}
+
+enum StoreStatus {
+  ACTIVE
+  TOKEN_EXPIRED
+  ERROR
+}
+
+model StoreCredentials {
+  storeId                  String   @id @map("store_id")
+  shopifyClientId          String   @map("shopify_client_id")
+  shopifyClientSecretEnc   Bytes    @map("shopify_client_secret_enc")
+  shopifyTokenEncrypted    Bytes?   @map("shopify_token_encrypted")
+  printifyApiKeyEncrypted  Bytes?   @map("printify_api_key_encrypted")
+  encryptionKeyId          String   @map("encryption_key_id")
+  rotatedAt                DateTime @default(now()) @map("rotated_at")
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@map("store_credentials")
+}
+
+model StoreColor {
+  id              String  @id @default(cuid())
+  storeId         String  @map("store_id")
+  name            String
+  hex             String
+  printifyColorId String? @map("printify_color_id")
+  sortOrder       Int     @default(0) @map("sort_order")
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, name])
+  @@index([storeId])
+  @@map("store_colors")
+}
+
+model StoreMockupTemplate {
+  id                      String           @id @default(cuid())
+  storeId                 String           @map("store_id")
+  name                    String
+  printifyBlueprintId     Int              @map("printify_blueprint_id")
+  printifyPrintProviderId Int              @map("printify_print_provider_id")
+  previewUrl              String?          @map("preview_url")
+  position                TemplatePosition @default(FRONT)
+  isDefault               Boolean          @default(false) @map("is_default")
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@map("store_mockup_templates")
+}
+
+enum TemplatePosition {
+  FRONT
+  BACK
+  SLEEVE
+}
+
+// ============================================================
+// PHASE 2 — Design Library
+// ============================================================
+
+model Design {
+  id               String       @id @default(cuid())
+  tenantId         String       @map("tenant_id")
+  ownerUserId      String       @map("owner_user_id")
+  name             String
+  originalFilename String       @map("original_filename")
+  storagePath      String       @map("storage_path")
+  previewPath      String?      @map("preview_path")
+  width            Int
+  height           Int
+  dpi              Int?
+  fileSizeBytes    Int          @map("file_size_bytes")
+  mimeType         String       @map("mime_type")
+  status           DesignStatus @default(ACTIVE)
+  deletedAt        DateTime?    @map("deleted_at")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  usages       DesignUsage[]
+  wizardDrafts WizardDraft[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, name])
+  @@map("designs")
+}
+
+enum DesignStatus {
+  ACTIVE
+  DELETED
+}
+
+model DesignUsage {
+  designId  String @map("design_id")
+  listingId String @map("listing_id")
+
+  design Design @relation(fields: [designId], references: [id], onDelete: Cascade)
+
+  @@id([designId, listingId])
+  @@map("design_usage")
+}
+
+// ============================================================
+// PHASE 3 — Wizard + Mockup Engine
+// ============================================================
+
+model WizardDraft {
+  id              String      @id @default(cuid())
+  tenantId        String      @map("tenant_id")
+  designId        String?     @map("design_id")
+  storeId         String?     @map("store_id")
+  productType     String?     @map("product_type") // e.g. "T-Shirt", "Hoodie"
+  blueprintId     Int?        @map("blueprint_id")
+  printProviderId Int?        @map("print_provider_id")
+  selectedColors  Json?       @map("selected_colors") // Extracted colors
+  placement       Json?       @map("placement") // e.g. { position: "FRONT", scale: 0.8, x: 0.5, y: 0.5 }
+  aiContent       Json?       @map("ai_content") // Added for Phase 4: title, desc, etc.
+  currentStep     Int         @default(1) @map("current_step")
+  status          DraftStatus @default(DRAFT)
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  mockupJobs MockupJob[]
+  design     Design?     @relation(fields: [designId], references: [id])
+  tenant     Tenant      @relation(fields: [tenantId], references: [id])
+  store      Store?      @relation(fields: [storeId], references: [id])
+
+  @@index([tenantId, updatedAt])
+  @@map("wizard_drafts")
+}
+
+enum DraftStatus {
+  DRAFT
+  GENERATING
+  READY
+  PUBLISHED
+  ABANDONED
+}
+
+model MockupJob {
+  id                String          @id @default(cuid())
+  wizardDraftId     String          @map("wizard_draft_id")
+  colorName         String          @map("color_name")
+  colorHex          String          @map("color_hex")
+  templateId        String          @map("template_id")
+  templateName      String          @map("template_name")
+  status            MockupJobStatus @default(PENDING)
+  mockupStoragePath String?         @map("mockup_storage_path")
+  errorMessage      String?         @map("error_message")
+  attempts          Int             @default(0)
+  createdAt         DateTime        @default(now()) @map("created_at")
+  completedAt       DateTime?       @map("completed_at")
+
+  wizardDraft WizardDraft @relation(fields: [wizardDraftId], references: [id], onDelete: Cascade)
+
+  @@index([wizardDraftId, status])
+  @@map("mockup_jobs")
+}
+
+enum MockupJobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+// ============================================================
+// Phase 4: AI & Review
+// ============================================================
+
+model AiContentCache {
+  cacheKey  String   @id @map("cache_key")
+  payload   Json // {title, description, tags, altText}
+  provider  String // "gemini"
+  model     String // "gemini-2.5-flash"
+  tokensIn  Int      @map("tokens_in")
+  tokensOut Int      @map("tokens_out")
+  costUsd   Float    @map("cost_usd")
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+
+  @@index([provider, createdAt])
+  @@map("ai_content_cache")
+}
+
+model ProductPricingTemplate {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  productType  String   @map("product_type") // "T-Shirt", "Hoodie", etc.
+  basePriceUsd Float    @map("base_price_usd")
+  updatedBy    String?  @map("updated_by")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, productType])
+  @@map("product_pricing_templates")
+}
+
+model AiSettings {
+  tenantId        String   @id @map("tenant_id")
+  provider        String   @default("gemini")
+  model           String   @default("gemini-2.5-flash")
+  apiKeyEncrypted Bytes    @map("api_key_encrypted")
+  encryptionKeyId String   @map("encryption_key_id")
+  promptVersion   Int      @default(1) @map("prompt_version")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("ai_settings")
+}
+
+// ============================================================
+// Phase 5: Publish Pipeline
+// ============================================================
+
+enum ListingStatus {
+  PUBLISHING
+  ACTIVE
+  PARTIAL_FAILURE
+  FAILED
+}
+
+enum PublishStage {
+  SHOPIFY
+  PRINTIFY
+}
+
+model Listing {
+  id                String        @id @default(cuid())
+  tenantId          String        @map("tenant_id")
+  storeId           String        @map("store_id")
+  designId          String?       @map("design_id")
+  wizardDraftId     String?       @unique @map("wizard_draft_id")
+  shopifyProductId  String?       @map("shopify_product_id")
+  printifyProductId String?       @map("printify_product_id")
+  status            ListingStatus @default(PUBLISHING)
+  title             String
+  descriptionHtml   String        @map("description_html")
+  tags              String[]
+  priceUsd          Float         @map("price_usd")
+  publishedAt       DateTime?     @map("published_at")
+  archivedAt        DateTime?     @map("archived_at")
+  createdBy         String        @map("created_by")
+  createdAt         DateTime      @default(now()) @map("created_at")
+
+  variants    ListingVariant[]
+  publishJobs PublishJob[]
+
+  @@index([tenantId, status])
+  @@index([storeId])
+  @@map("listings")
+}
+
+model ListingVariant {
+  id                String  @id @default(cuid())
+  listingId         String  @map("listing_id")
+  colorName         String  @map("color_name")
+  colorHex          String  @map("color_hex")
+  size              String  @default("ONE_SIZE")
+  shopifyVariantId  String? @map("shopify_variant_id")
+  printifyVariantId String? @map("printify_variant_id")
+  sku               String?
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
+  @@map("listing_variants")
+}
+
+model PublishJob {
+  id             String       @id @default(cuid())
+  listingId      String       @map("listing_id")
+  idempotencyKey String       @unique @map("idempotency_key")
+  stage          PublishStage
+  status         String       @default("PENDING")
+  attempts       Int          @default(0)
+  lastError      String?      @map("last_error")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  completedAt    DateTime?    @map("completed_at")
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
+  @@map("publish_jobs")
+}
+
+// ============================================================
+// Phase 6: Dashboard & Orders
+// ============================================================
+
+enum FulfillmentStatus {
+  UNFULFILLED
+  FULFILLED
+  PARTIAL
+}
+
+model Order {
+  id                  String            @id @default(cuid())
+  tenantId            String            @map("tenant_id")
+  storeId             String            @map("store_id")
+  listingId           String?           @map("listing_id")
+  shopifyOrderId      String            @unique @map("shopify_order_id")
+  shopifyOrderNumber  String?           @map("shopify_order_number")
+  customerEmail       String?           @map("customer_email")
+  totalUsd            Float             @map("total_usd")
+  currency            String            @default("USD")
+  fulfillmentStatus   FulfillmentStatus @default(UNFULFILLED)
+  printifyOrderId     String?           @map("printify_order_id")
+  printifyStatus      String?           @map("printify_status")
+  createdAt           DateTime          @default(now()) @map("created_at")
+
+  lineItems OrderLineItem[]
+
+  @@index([tenantId, createdAt])
+  @@index([storeId])
+  @@index([listingId])
+  @@map("orders")
+}
+
+model OrderLineItem {
+  id               String  @id @default(cuid())
+  orderId          String  @map("order_id")
+  listingVariantId String? @map("listing_variant_id")
+  title            String
+  quantity         Int
+  priceUsd         Float   @map("price_usd")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_line_items")
+}
+
+model WebhookEvent {
+  id             String    @id @default(cuid())
+  source         String
+  topic          String
+  externalId     String    @map("external_id")
+  signatureValid Boolean   @map("signature_valid")
+  payload        Json
+  processedAt    DateTime? @map("processed_at")
+  error          String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([source, topic, externalId])
+  @@map("webhook_events")
+}

@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:18-alpine3.23
+    container_name: mockupai-postgres
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: mockupai
+      POSTGRES_PASSWORD: mockupai
+      POSTGRES_DB: mockupai
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mockupai']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

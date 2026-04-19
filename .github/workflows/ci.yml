@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mockupai
+          POSTGRES_PASSWORD: mockupai
+          POSTGRES_DB: mockupai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://mockupai:mockupai@localhost:5432/mockupai_test
+      SESSION_SECRET: ci-test-secret-32-characters-ok
+      ADMIN_EMAIL: test@mockupai.local
+      ADMIN_PASSWORD: test-password-123
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Biome check
+        run: pnpm lint
+
+      - name: TypeScript check
+        run: pnpm tsc --noEmit
+
+      - name: Prisma generate
+        run: pnpm db:generate
+
+      - name: Prisma push
+        run: pnpm db:push
+
+      - name: Build
+        run: pnpm build

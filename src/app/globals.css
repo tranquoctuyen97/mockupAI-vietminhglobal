@@ -1,26 +1,568 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap');
 @import "tailwindcss";
 
+/* ============================================================
+   MockupAI Design System — Wise (Light) + OLED Dark Mode Merge
+   ============================================================ */
+
+@theme {
+  /* ============================================================
+     COLOR SYSTEM — Dual Theme Tokens
+     ============================================================ */
+
+  /* === Wise Brand Colors === */
+  --color-wise-green: #9fe870;
+  --color-wise-dark-green: #163300;
+  --color-wise-light-mint: #e2f6d5;
+  --color-wise-pastel-green: #cdffad;
+  --color-wise-near-black: #0e0f0c;
+  --color-wise-warm-dark: #454745;
+  --color-wise-gray: #868685;
+  --color-wise-light-surface: #e8ebe6;
+
+  /* === Semantic Colors === */
+  --color-positive: #054d28;
+  --color-danger: #d03238;
+  --color-danger-hover: #b82a30;
+  --color-warning: #ffd11a;
+  --color-warning-hover: #e6bc00;
+  --color-info-bg: rgba(56, 200, 255, 0.10);
+  --color-bright-orange: #ffc091;
+
+  /* === OLED Dark Mode Colors === */
+  --color-oled-bg: #020617;
+  --color-oled-surface: #0f172a;
+  --color-oled-surface-2: #1e293b;
+  --color-oled-border: #334155;
+  --color-oled-text: #f8fafc;
+  --color-oled-muted: #94a3b8;
+
+  /* ============================================================
+     RADIUS SYSTEM — Wise Scale
+     ============================================================ */
+  --radius-xs: 2px;
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-xl: 30px;
+  --radius-2xl: 40px;
+  --radius-mega: 1000px;
+  --radius-pill: 9999px;
+
+  /* ============================================================
+     TYPOGRAPHY
+     ============================================================ */
+  --font-display: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* ============================================================
+     SHADOWS — Wise Ring Shadows (minimal depth)
+     ============================================================ */
+  --shadow-ring: rgba(14, 15, 12, 0.12) 0px 0px 0px 1px;
+  --shadow-ring-inset: rgb(134, 134, 133) 0px 0px 0px 1px inset;
+  --shadow-ring-green: 0 0 0 1px #9fe870;
+
+  /* OLED glow */
+  --shadow-glow-green: 0 0 20px rgba(159, 232, 112, 0.15);
+  --shadow-glow-text: 0 0 10px rgba(159, 232, 112, 0.3);
+}
+
+/* ============================================================
+   BASE STYLES
+   ============================================================ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Light mode (Wise default) */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --bg-surface: #ffffff;
+  --bg-sidebar: #0e0f0c;
+  --text-primary: #0e0f0c;
+  --text-secondary: #454745;
+  --text-muted: #868685;
+  --border-default: rgba(14, 15, 12, 0.12);
+  --border-hover: rgba(14, 15, 12, 0.24);
+  --nav-hover: rgba(211, 242, 192, 0.4);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+.dark {
+  /* Dark mode (OLED) */
+  --bg-primary: #020617;
+  --bg-secondary: #0f172a;
+  --bg-surface: #1e293b;
+  --bg-sidebar: #0f172a;
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --border-default: #334155;
+  --border-hover: #475569;
+  --nav-hover: rgba(159, 232, 112, 0.1);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  font-feature-settings: "calt" 1; /* Contextual alternates — Wise identity */
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-body);
+  font-weight: 600; /* Inter 600 as default — confident, not light (Wise principle) */
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================================
+   TYPOGRAPHY CLASSES — Wise Scale
+   ============================================================ */
+
+.text-display-mega {
+  font-family: var(--font-display);
+  font-size: clamp(3rem, 8vw, 7.88rem); /* 126px responsive */
+  font-weight: 900;
+  line-height: 0.85;
+  letter-spacing: normal;
+}
+
+.text-display-hero {
+  font-family: var(--font-display);
+  font-size: clamp(2.5rem, 6vw, 6rem); /* 96px responsive */
+  font-weight: 900;
+  line-height: 0.85;
+  letter-spacing: normal;
+}
+
+.text-section-heading {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 4vw, 4rem); /* 64px responsive */
+  font-weight: 900;
+  line-height: 0.85;
+  letter-spacing: normal;
+}
+
+.text-sub-heading {
+  font-family: var(--font-display);
+  font-size: clamp(1.5rem, 2.5vw, 2.5rem); /* 40px responsive */
+  font-weight: 900;
+  line-height: 0.85;
+}
+
+.text-card-title {
+  font-family: var(--font-body);
+  font-size: 1.625rem; /* 26px */
+  font-weight: 600;
+  line-height: 1.23;
+  letter-spacing: -0.39px;
+}
+
+.text-feature-title {
+  font-family: var(--font-body);
+  font-size: 1.375rem; /* 22px */
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.396px;
+}
+
+.text-body {
+  font-family: var(--font-body);
+  font-size: 1.125rem; /* 18px */
+  font-weight: 400;
+  line-height: 1.44;
+  letter-spacing: 0.18px;
+}
+
+.text-body-semibold {
+  font-family: var(--font-body);
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.44;
+  letter-spacing: -0.108px;
+}
+
+.text-caption {
+  font-family: var(--font-body);
+  font-size: 0.875rem; /* 14px */
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: -0.084px;
+}
+
+.text-small {
+  font-family: var(--font-body);
+  font-size: 0.75rem; /* 12px */
+  font-weight: 400;
+  line-height: 1.33;
+  letter-spacing: -0.084px;
+}
+
+/* ============================================================
+   BUTTON STYLES — Wise Pill with Scale Animations
+   ============================================================ */
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.5rem;
+  background-color: var(--color-wise-green);
+  color: var(--color-wise-dark-green);
+  font-weight: 600;
+  font-size: 1.125rem;
+  line-height: 1;
+  border-radius: var(--radius-pill);
+  border: none;
+  cursor: pointer;
+  transition: transform 150ms ease-out;
+  user-select: none;
+}
+
+.btn-primary:hover {
+  transform: scale(1.05);
+}
+
+.btn-primary:active {
+  transform: scale(0.95);
+}
+
+.btn-primary:focus-visible {
+  outline: 2px solid var(--color-wise-green);
+  outline-offset: 2px;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem 0.5rem 1.25rem;
+  background-color: rgba(22, 51, 0, 0.08);
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 1rem;
+  line-height: 1.44;
+  border-radius: var(--radius-pill);
+  border: none;
+  cursor: pointer;
+  transition: transform 150ms ease-out;
+}
+
+.dark .btn-secondary {
+  background-color: rgba(159, 232, 112, 0.1);
+}
+
+.btn-secondary:hover {
+  transform: scale(1.05);
+}
+
+.btn-secondary:active {
+  transform: scale(0.95);
+}
+
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.5rem;
+  background-color: var(--color-danger);
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 1rem;
+  border-radius: var(--radius-pill);
+  border: none;
+  cursor: pointer;
+  transition: transform 150ms ease-out;
+}
+
+.btn-danger:hover {
+  transform: scale(1.05);
+  background-color: var(--color-danger-hover);
+}
+
+.btn-danger:active {
+  transform: scale(0.95);
+}
+
+/* ============================================================
+   CARD STYLES — Wise Rounded + Ring Shadow
+   ============================================================ */
+
+.card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl); /* 30px */
+  padding: 1.5rem;
+}
+
+.card-sm {
+  border-radius: var(--radius-md); /* 16px */
+}
+
+.card-lg {
+  border-radius: var(--radius-2xl); /* 40px */
+  padding: 2rem;
+}
+
+.dark .card {
+  border-color: var(--color-oled-border);
+  box-shadow: var(--shadow-glow-green);
+}
+
+/* ============================================================
+   SIDEBAR — Near-black (both themes)
+   ============================================================ */
+
+.sidebar {
+  background-color: var(--bg-sidebar);
+  color: #ffffff;
+  width: 260px;
+  min-height: 100vh;
+  padding: 1.5rem 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar .nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 1.25rem;
+  margin: 0 0.75rem;
+  border-radius: var(--radius-pill);
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+  font-size: 0.9375rem;
+  cursor: pointer;
+  transition: all 150ms ease-out;
+  text-decoration: none;
+}
+
+.sidebar .nav-item:hover {
+  background-color: var(--nav-hover);
+  color: #ffffff;
+}
+
+.sidebar .nav-item.active {
+  background-color: var(--color-wise-green);
+  color: var(--color-wise-dark-green);
+  font-weight: 600;
+}
+
+/* ============================================================
+   FORM INPUTS — Wise Style
+   ============================================================ */
+
+.input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm); /* 10px */
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.input:focus {
+  border-color: var(--color-wise-green);
+  box-shadow: var(--shadow-ring-green);
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.dark .input {
+  background-color: var(--color-oled-surface);
+  border-color: var(--color-oled-border);
+  color: var(--color-oled-text);
+}
+
+.dark .input:focus {
+  border-color: var(--color-wise-green);
+}
+
+/* ============================================================
+   TABLE — Wise Large Rounded
+   ============================================================ */
+
+.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-2xl); /* 40px */
+  overflow: hidden;
+}
+
+.data-table th {
+  padding: 1rem 1.25rem;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-default);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.data-table td {
+  padding: 1rem 1.25rem;
+  font-size: 0.9375rem;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.data-table tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table tr:hover td {
+  background-color: var(--nav-hover);
+}
+
+.dark .data-table {
+  border-color: var(--color-oled-border);
+}
+
+.dark .data-table th,
+.dark .data-table td {
+  border-color: var(--color-oled-border);
+}
+
+/* ============================================================
+   BADGE
+   ============================================================ */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: var(--radius-pill);
+  line-height: 1.5;
+}
+
+.badge-success {
+  background-color: var(--color-wise-light-mint);
+  color: var(--color-positive);
+}
+
+.badge-danger {
+  background-color: #fde2e2;
+  color: var(--color-danger);
+}
+
+.badge-warning {
+  background-color: #fef9c3;
+  color: #854d0e;
+}
+
+.badge-info {
+  background-color: var(--color-info-bg);
+  color: #0369a1;
+}
+
+.dark .badge-success {
+  background-color: rgba(159, 232, 112, 0.15);
+  color: var(--color-wise-green);
+}
+
+.dark .badge-danger {
+  background-color: rgba(208, 50, 56, 0.15);
+  color: #f87171;
+}
+
+/* ============================================================
+   SWITCH / TOGGLE
+   ============================================================ */
+
+.toggle {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background-color: var(--text-muted);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background-color 200ms ease;
+  border: none;
+  padding: 0;
+}
+
+.toggle.active {
+  background-color: var(--color-wise-green);
+}
+
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background-color: white;
+  border-radius: 50%;
+  transition: transform 200ms ease;
+}
+
+.toggle.active::after {
+  transform: translateX(20px);
+}
+
+/* ============================================================
+   UTILITIES
+   ============================================================ */
+
+.glass {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.ring-shadow {
+  box-shadow: var(--shadow-ring);
+}
+
+.glow-green {
+  box-shadow: var(--shadow-glow-green);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .btn-primary:hover,
+  .btn-primary:active,
+  .btn-secondary:hover,
+  .btn-secondary:active,
+  .btn-danger:hover,
+  .btn-danger:active {
+    transform: none;
+  }
+
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================
+   RESPONSIVE — Wise Breakpoints
+   ============================================================ */
+
+@media (max-width: 576px) {
+  .sidebar {
+    width: 100%;
+    min-height: auto;
+    padding: 0.5rem 0;
+  }
 }
