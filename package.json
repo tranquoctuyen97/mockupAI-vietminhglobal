@@ -5,7 +5,7 @@
   "scripts": {
     "postinstall": "prisma generate",
     "dev": "next dev --turbopack",
-    "build": "next build",
+    "build": "prisma db push && prisma db seed && next build",
     "start": "next start",
     "lint": "biome check",
     "format": "biome format --write",
