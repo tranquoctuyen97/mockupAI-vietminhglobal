@@ -255,13 +255,13 @@ function PrintifyTab({ store, onRefresh }: { store: StoreDetail; onRefresh: () =
   }
 
   async function handleSave() {
-    if (!apiKey.trim() || !selectedShop) return;
+    if (!apiKey.trim()) return;
     setSaving(true);
     try {
       const res = await fetch(`/api/stores/${store.id}/printify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: apiKey.trim(), shopId: selectedShop }),
+        body: JSON.stringify({ apiKey: apiKey.trim(), shopId: selectedShop || undefined }),
       });
       if (res.ok) {
         toast.success("Đã lưu Printify API key!");
