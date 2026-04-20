@@ -300,6 +300,9 @@ model WizardDraft {
   aiContent       Json?       @map("ai_content") // Added for Phase 4: title, desc, etc.
   currentStep     Int         @default(1) @map("current_step")
   status          DraftStatus @default(DRAFT)
+  // Phase 6.9: mockup stale detection (set by DB trigger, reset by regenerate worker)
+  mockupsStale       Boolean  @default(false) @map("mockups_stale")
+  mockupsStaleReason String?  @map("mockups_stale_reason") // "colors_changed" | "design_changed" | "placement_changed"
   updatedAt       DateTime    @updatedAt @map("updated_at")
 
   mockupJobs MockupJob[]
@@ -310,6 +313,7 @@ model WizardDraft {
   @@index([tenantId, updatedAt])
   @@map("wizard_drafts")
 }
+
 
 enum DraftStatus {
   DRAFT
@@ -524,4 +528,49 @@ model WebhookEvent {
 
   @@index([source, topic, externalId])
   @@map("webhook_events")
+}
+
+// ============================================================
+// Phase 6.6: Placement Editor Pro
+// ============================================================
+
+enum PlacementPosition {
+  FRONT
+  BACK
+  SLEEVE_LEFT
+  SLEEVE_RIGHT
+  NECK_LABEL
+  HEM
+}
+
+model PlacementPreset {
+  id             String            @id @default(cuid())
+  tenantId       String?           @map("tenant_id") // NULL = system preset
+  key            String            // "left_chest", "full_back", etc.
+  name           String            // English name
+  nameVi         String?           @map("name_vi") // Vietnamese name
+  position       PlacementPosition @default(FRONT)
+  productTypes   String[]          @map("product_types") // ["tshirt","hoodie"]
+  defaultXMm     Float             @map("default_x_mm")
+  defaultYMm     Float             @map("default_y_mm")
+  defaultWidthMm Float             @map("default_width_mm")
+  defaultHeightMm Float            @map("default_height_mm")
+  iconSvg        String?           @map("icon_svg")
+  sortOrder      Int               @default(0) @map("sort_order")
+
+  @@unique([tenantId, key])
+  @@index([position])
+  @@map("placement_presets")
+}
+
+model BlueprintPrintArea {
+  id                   String            @id @default(cuid())
+  printifyBlueprintId  Int               @unique @map("printify_blueprint_id")
+  position             PlacementPosition @default(FRONT)
+  widthMm              Float             @map("width_mm")
+  heightMm             Float             @map("height_mm")
+  safeMarginMm         Float             @default(3) @map("safe_margin_mm")
+  syncedAt             DateTime          @default(now()) @map("synced_at")
+
+  @@map("blueprint_print_areas")
 }

@@ -3,6 +3,8 @@ import { validateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { getAiProvider } from "@/lib/ai/factory";
 import { generateCacheKey, getCachedContent, saveToCache } from "@/lib/ai/cache";
+import { parseAIError } from "@/lib/ai/errors";
+import { withRetry } from "@/lib/ai/retry";
 
 export async function POST(
   request: Request,
@@ -58,20 +60,15 @@ export async function POST(
     const cached = await getCachedContent(cacheKey);
 
     if (cached) {
-      // Update draft with cached DB info
       await prisma.wizardDraft.update({
         where: { id: draftId },
         data: { aiContent: cached as any },
       });
-
-      return NextResponse.json({
-        content: cached,
-        cached: true,
-      });
+      return NextResponse.json({ content: cached, cached: true });
     }
 
-    // Call Provider
-    const result = await generator.generate(input);
+    // Call provider with retry (handles 503, 502, 500 transiently)
+    const result = await withRetry(() => generator.generate(input), { maxAttempts: 3 });
 
     // Save to Cache
     await saveToCache(cacheKey, result, config.provider, config.model);
@@ -89,15 +86,22 @@ export async function POST(
       data: { aiContent },
     });
 
-    return NextResponse.json({
-      content: result,
-      cached: false,
-    });
+    return NextResponse.json({ content: result, cached: false });
   } catch (error) {
     console.error("[Wizard] AI Content Generation Error:", error);
+
+    // Parse into user-friendly error — NEVER expose raw error.message or JSON
+    const parsed = parseAIError(error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to generate content" },
-      { status: 500 },
+      {
+        error: parsed.code,
+        message: parsed.userMessage,
+        retryable: parsed.retryable,
+        ...(parsed.supportHint ? { supportHint: parsed.supportHint } : {}),
+      },
+      { status: parsed.retryable ? 503 : 500 },
     );
   }
 }
+
+

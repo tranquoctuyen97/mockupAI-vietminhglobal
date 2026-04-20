@@ -8,13 +8,6 @@ interface SelectedColor {
   hex: string;
 }
 
-interface Placement {
-  x: number;
-  y: number;
-  scale: number;
-  position: "FRONT" | "BACK" | "SLEEVE";
-}
-
 interface MockupJob {
   id: string;
   colorName: string;
@@ -32,15 +25,27 @@ interface DraftData {
   blueprintId: number | null;
   printProviderId: number | null;
   selectedColors: SelectedColor[] | null;
-  placement: Placement | null;
+  placement: unknown | null;
   aiContent: unknown | null;
   currentStep: number;
   status: string;
   mockupJobs: MockupJob[];
+  mockupsStale?: boolean;
+  mockupsStaleReason?: string | null;
+}
+
+// Phase 6.10 Bug #7: Checklist type shared with layout for Tiếp theo gate
+export interface ChecklistData {
+  mockupsMatchColors: boolean;
+  contentComplete: boolean;
+  placementValid: boolean;
+  mockupsNotStale: boolean;
+  readyToPublish: boolean;
 }
 
 interface WizardStore {
   draft: DraftData | null;
+  checklist: ChecklistData | null;
   loading: boolean;
   saving: boolean;
   saveTimer: ReturnType<typeof setTimeout> | null;
@@ -49,10 +54,12 @@ interface WizardStore {
   updateDraft: (patch: Record<string, unknown>) => Promise<void>;
   setDraft: (draft: DraftData) => void;
   updateMockupJob: (jobId: string, update: Partial<MockupJob>) => void;
+  setChecklist: (cl: ChecklistData) => void;
 }
 
 export const useWizardStore = create<WizardStore>((set, get) => ({
   draft: null,
+  checklist: null,
   loading: false,
   saving: false,
   saveTimer: null,
@@ -62,8 +69,10 @@ export const useWizardStore = create<WizardStore>((set, get) => ({
     try {
       const res = await fetch(`/api/wizard/drafts/${id}`);
       if (res.ok) {
-        const draft = await res.json();
-        set({ draft, loading: false });
+        const data = await res.json();
+        // GET /api/wizard/drafts/:id now includes checklist (Phase 6.9)
+        const { checklist, ...draft } = data;
+        set({ draft, checklist: checklist ?? null, loading: false });
       } else {
         set({ loading: false });
       }
@@ -107,6 +116,8 @@ export const useWizardStore = create<WizardStore>((set, get) => ({
   },
 
   setDraft: (draft: DraftData) => set({ draft }),
+
+  setChecklist: (cl: ChecklistData) => set({ checklist: cl }),
 
   updateMockupJob: (jobId: string, update: Partial<MockupJob>) => {
     const { draft } = get();

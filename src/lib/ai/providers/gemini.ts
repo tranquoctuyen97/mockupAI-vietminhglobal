@@ -40,7 +40,7 @@ Colors: ${input.colors.join(", ")}
             tags: {
               type: Type.ARRAY,
               items: { type: Type.STRING },
-              description: "10-15 relevant SEO tags",
+              description: "Exactly 15 relevant SEO tags, lowercase, distinct",
             },
             altText: {
               type: Type.STRING,
@@ -62,10 +62,14 @@ Colors: ${input.colors.join(", ")}
 
     try {
       const parsed = JSON.parse(resultText);
+      // Defense-in-depth: server-side truncate to MAX 15 (Shopify allowed)
+      const tags: string[] = Array.isArray(parsed.tags)
+        ? parsed.tags.slice(0, 15)
+        : [];
       return {
         title: parsed.title,
         description: parsed.description,
-        tags: parsed.tags,
+        tags,
         altText: parsed.altText,
         tokensIn,
         tokensOut,

@@ -36,7 +36,7 @@ export default function WizardLayout({
   const { draftId } = useParams<{ draftId: string }>();
   const pathname = usePathname();
   const router = useRouter();
-  const { draft, loading, saving, loadDraft } = useWizardStore();
+  const { draft, loading, saving, loadDraft, checklist } = useWizardStore();
 
   useEffect(() => {
     if (draftId) loadDraft(draftId);
@@ -171,9 +171,19 @@ export default function WizardLayout({
         {currentStep < STEPS.length && (
           <button
             className="btn btn-primary"
+            disabled={currentStep === 6 && checklist ? !checklist.readyToPublish : false}
+            title={
+              currentStep === 6 && checklist && !checklist.readyToPublish
+                ? "Hoàn tất checklist để tiếp tục"
+                : undefined
+            }
+            style={{
+              opacity: currentStep === 6 && checklist && !checklist.readyToPublish ? 0.5 : 1,
+              cursor: currentStep === 6 && checklist && !checklist.readyToPublish ? "not-allowed" : "pointer",
+            }}
             onClick={() => {
+              if (currentStep === 6 && checklist && !checklist.readyToPublish) return;
               if (draft) {
-                // Update currentStep
                 useWizardStore.getState().updateDraft({
                   currentStep: Math.max(draft.currentStep, currentStep + 1),
                 });

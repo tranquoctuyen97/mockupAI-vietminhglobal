@@ -10,7 +10,7 @@ INPUT DATA:
 OUTPUT REQUIREMENTS:
 1. title: A catchy, concise product title (max 60 characters). Must include the main design concept and product type.
 2. description: Engaging product description formatted in HTML. Must be around 150-200 words. Use <strong> for emphasis. Include bullet points for key features (e.g., comfy fit, durable print, ideal gift).
-3. tags: Exactly 10 to 15 relevant SEO keywords/tags. Mix broad and niche search terms. All lowercase, distinct strings.
+3. tags: EXACTLY 15 relevant SEO keywords/tags. Mix broad and niche search terms. All lowercase, distinct strings. Must be exactly 15, no more, no fewer.
 4. altText: Alt-text for the primary product image (max 125 characters) that concisely describes the visual appearance of the product and design for accessibility and image SEO.
 
 STYLE GUIDELINES:
