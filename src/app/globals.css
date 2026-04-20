@@ -290,6 +290,41 @@ body {
   transform: scale(0.95);
 }
 
+/* Size variant for compact table rows */
+.btn-sm {
+  padding: 0.375rem 0.75rem !important;
+  font-size: 0.8125rem !important;
+  gap: 0.375rem;
+}
+
+/* Ghost danger — outline style for less visual weight */
+.btn-danger-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  background-color: rgba(208, 50, 56, 0.08);
+  color: var(--color-danger);
+  font-weight: 600;
+  font-size: 0.8125rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(208, 50, 56, 0.2);
+  cursor: pointer;
+  transition: all 150ms ease-out;
+}
+
+.btn-danger-ghost:hover {
+  background-color: var(--color-danger);
+  color: #ffffff;
+  border-color: var(--color-danger);
+  transform: scale(1.05);
+}
+
+.btn-danger-ghost:active {
+  transform: scale(0.95);
+}
+
 /* ============================================================
    CARD STYLES — Wise Rounded + Ring Shadow
    ============================================================ */

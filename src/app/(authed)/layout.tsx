@@ -20,6 +20,7 @@ import {
   Menu,
   X,
   ChevronRight,
+  Puzzle,
 } from "lucide-react";
 
 interface NavItemConfig {
@@ -43,6 +44,10 @@ const ADMIN_ITEMS: NavItemConfig[] = [
   { label: "Feature Flags", href: "/admin/feature-flags", icon: <ToggleLeft size={18} />, adminOnly: true },
   { label: "Pricing", href: "/admin/pricing", icon: <DollarSign size={18} />, adminOnly: true },
   { label: "AI Settings", href: "/admin/ai-settings", icon: <Bot size={18} />, adminOnly: true },
+];
+
+const INTEGRATION_ITEMS: NavItemConfig[] = [
+  { label: "Printify", href: "/integrations/printify", icon: <Puzzle size={18} />, adminOnly: true },
 ];
 
 export default function AuthedLayout({
@@ -158,6 +163,20 @@ export default function AuthedLayout({
           {NAV_ITEMS.map((item) => (
             <NavItem key={item.href} item={item} />
           ))}
+
+          {/* Integrations section (ADMIN only) */}
+          {userRole === "ADMIN" && (
+            <>
+              <div className="px-5 mt-6 mb-2">
+                <span className="text-small" style={{ color: "rgba(255,255,255,0.4)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                  Integrations
+                </span>
+              </div>
+              {INTEGRATION_ITEMS.map((item) => (
+                <NavItem key={item.href} item={item} />
+              ))}
+            </>
+          )}
 
           {/* Admin section */}
           {userRole === "ADMIN" && (

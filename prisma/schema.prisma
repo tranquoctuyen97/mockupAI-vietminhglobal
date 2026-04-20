@@ -106,6 +106,53 @@ model FeatureFlag {
 }
 
 // ============================================================
+// PHASE 6.5 — Printify Integration (workspace-level)
+// ============================================================
+
+model PrintifyAccount {
+  id              String                @id @default(cuid())
+  tenantId        String                @map("tenant_id")
+  nickname        String                // "Main Account", "Backup"
+  apiKeyEncrypted Bytes                 @map("api_key_encrypted")
+  encryptionKeyId String                @map("encryption_key_id")
+  status          PrintifyAccountStatus @default(ACTIVE)
+  lastSyncAt      DateTime?             @map("last_sync_at")
+  lastHealthCheck DateTime?             @map("last_health_check")
+  createdBy       String?               @map("created_by")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  rotatedAt       DateTime              @default(now()) @map("rotated_at")
+
+  shops PrintifyShop[]
+
+  @@unique([tenantId, nickname])
+  @@index([tenantId, status])
+  @@map("printify_accounts")
+}
+
+enum PrintifyAccountStatus {
+  ACTIVE
+  TOKEN_INVALID
+  DISABLED
+}
+
+model PrintifyShop {
+  id                String   @id @default(cuid())
+  printifyAccountId String   @map("printify_account_id")
+  externalShopId    Int      @map("external_shop_id") // Printify's numeric shop ID
+  title             String
+  salesChannel      String?  @map("sales_channel") // shopify|custom|etsy
+  externalDomain    String?  @map("external_domain") // domain if native Shopify
+  disconnected      Boolean  @default(false)
+  syncedAt          DateTime @default(now()) @map("synced_at")
+
+  account PrintifyAccount @relation(fields: [printifyAccountId], references: [id], onDelete: Cascade)
+  stores  Store[]         // reverse relation — shops linked by stores
+
+  @@unique([printifyAccountId, externalShopId])
+  @@map("printify_shops")
+}
+
+// ============================================================
 // PHASE 1 — Store Connection
 // ============================================================
 
@@ -115,7 +162,7 @@ model Store {
   name            String
   shopifyDomain   String      @map("shopify_domain") // mystore.myshopify.com
   shopifyShopId   String?     @map("shopify_shop_id") // gid://shopify/Shop/...
-  printifyShopId  String?     @map("printify_shop_id")
+  printifyShopId  String?     @unique @map("printify_shop_id") // 1 shop = 1 store
   status          StoreStatus @default(ACTIVE)
   lastHealthCheck DateTime?   @map("last_health_check")
   createdBy       String?     @map("created_by")
@@ -124,6 +171,7 @@ model Store {
   deletedAt       DateTime?   @map("deleted_at")
 
   tenant       Tenant                @relation(fields: [tenantId], references: [id])
+  printifyShop PrintifyShop?         @relation(fields: [printifyShopId], references: [id], onDelete: SetNull)
   credentials  StoreCredentials?
   colors       StoreColor[]
   templates    StoreMockupTemplate[]
@@ -141,13 +189,12 @@ enum StoreStatus {
 }
 
 model StoreCredentials {
-  storeId                  String   @id @map("store_id")
-  shopifyClientId          String   @map("shopify_client_id")
-  shopifyClientSecretEnc   Bytes    @map("shopify_client_secret_enc")
-  shopifyTokenEncrypted    Bytes?   @map("shopify_token_encrypted")
-  printifyApiKeyEncrypted  Bytes?   @map("printify_api_key_encrypted")
-  encryptionKeyId          String   @map("encryption_key_id")
-  rotatedAt                DateTime @default(now()) @map("rotated_at")
+  storeId                String   @id @map("store_id")
+  shopifyClientId        String   @map("shopify_client_id")
+  shopifyClientSecretEnc Bytes    @map("shopify_client_secret_enc")
+  shopifyTokenEncrypted  Bytes?   @map("shopify_token_encrypted")
+  encryptionKeyId        String   @map("encryption_key_id")
+  rotatedAt              DateTime @default(now()) @map("rotated_at")
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 

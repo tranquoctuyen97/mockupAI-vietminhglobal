@@ -31,7 +31,9 @@ export async function GET() {
 
 // POST /api/admin/users — Create user
 const createUserSchema = z.object({
-  email: z.string().email("Email không hợp lệ"),
+  email: z.string()
+    .transform((v) => v.replace(/^["'\s]+|["'\s]+$/g, "").toLowerCase())
+    .pipe(z.string().email("Email không hợp lệ")),
   password: z.string().min(8, "Mật khẩu tối thiểu 8 ký tự"),
   role: z.enum(["ADMIN", "OPERATOR"]),
 });

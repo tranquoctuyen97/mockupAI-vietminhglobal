@@ -221,50 +221,46 @@ function SettingsTab({ store, onRefresh }: { store: StoreDetail; onRefresh: () =
   );
 }
 
-/* ========== Printify Tab ========== */
+/* ========== Printify Tab (Phase 6.5: dropdown shop picker) ========== */
 function PrintifyTab({ store, onRefresh }: { store: StoreDetail; onRefresh: () => void }) {
-  const [apiKey, setApiKey] = useState("");
-  const [shops, setShops] = useState<PrintifyShop[]>([]);
-  const [selectedShop, setSelectedShop] = useState("");
-  const [testing, setTesting] = useState(false);
+  const [availableShops, setAvailableShops] = useState<Array<{
+    id: string; externalShopId: number; title: string; salesChannel: string | null;
+    account: { id: string; nickname: string };
+  }>>([]);
+  const [selectedShopId, setSelectedShopId] = useState<string>("");
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [testOk, setTestOk] = useState(false);
+  const [unlinking, setUnlinking] = useState(false);
+  const [userRole, setUserRole] = useState<string | null>(null);
 
-  async function handleTest() {
-    if (!apiKey.trim()) return;
-    setTesting(true);
-    setTestOk(false);
-    try {
-      // We test by calling Printify directly (via our proxy later)
-      // For now, we'll save and let the backend test
-      const res = await fetch(`/api/stores/${store.id}/printify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: apiKey.trim(), shopId: "test" }),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        toast.error(err.error || "Lỗi kết nối");
-        return;
+  useEffect(() => {
+    fetch("/api/auth/me").then(r => r.json()).then(d => setUserRole(d.role)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/integrations/printify/shops?available=true");
+        if (res.ok) setAvailableShops(await res.json());
+      } finally {
+        setLoading(false);
       }
-      setTestOk(true);
-      toast.success("Kết nối Printify OK!");
-    } finally {
-      setTesting(false);
     }
-  }
+    load();
+  }, []);
 
-  async function handleSave() {
-    if (!apiKey.trim()) return;
+  async function handleLink() {
+    if (!selectedShopId) return;
     setSaving(true);
     try {
       const res = await fetch(`/api/stores/${store.id}/printify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: apiKey.trim(), shopId: selectedShop || undefined }),
+        body: JSON.stringify({ printifyShopId: selectedShopId }),
       });
       if (res.ok) {
-        toast.success("Đã lưu Printify API key!");
+        toast.success("Đã gắn Printify shop!");
         onRefresh();
       } else {
         const err = await res.json();
@@ -275,51 +271,113 @@ function PrintifyTab({ store, onRefresh }: { store: StoreDetail; onRefresh: () =
     }
   }
 
+  async function handleUnlink() {
+    if (!confirm("Gỡ liên kết Printify shop khỏi store này?")) return;
+    setUnlinking(true);
+    try {
+      const res = await fetch(`/api/stores/${store.id}/printify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ printifyShopId: null }),
+      });
+      if (res.ok) {
+        toast.success("Đã gỡ liên kết!");
+        onRefresh();
+      } else {
+        const err = await res.json();
+        toast.error(err.error || "Lỗi");
+      }
+    } finally {
+      setUnlinking(false);
+    }
+  }
+
+  // Already linked — show read-only info
   if (store.printifyShopId) {
     return (
       <div className="card" style={{ padding: 32 }}>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3" style={{ marginBottom: 16 }}>
           <CheckCircle2 size={20} style={{ color: "var(--color-wise-green)" }} />
           <div>
-            <p style={{ fontWeight: 700, margin: 0 }}>Printify đã kết nối</p>
+            <p style={{ fontWeight: 700, margin: 0 }}>Printify shop đã liên kết</p>
             <p style={{ opacity: 0.6, fontSize: "0.875rem", margin: 0 }}>
               Shop ID: {store.printifyShopId}
             </p>
           </div>
         </div>
+        {userRole === "ADMIN" && (
+          <button onClick={handleUnlink} disabled={unlinking} className="btn" style={{ color: "#ef4444", fontSize: "0.85rem" }}>
+            {unlinking ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+            Gỡ liên kết
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // Not linked — show dropdown (ADMIN only) or hint (operator)
+  if (userRole !== "ADMIN") {
+    return (
+      <div className="card" style={{ padding: 32, textAlign: "center" }}>
+        <AlertTriangle size={24} style={{ color: "#f59e0b", margin: "0 auto 12px" }} />
+        <p style={{ fontWeight: 600, marginBottom: 4 }}>Chưa gắn Printify shop</p>
+        <p style={{ opacity: 0.6, fontSize: "0.85rem" }}>Liên hệ Admin để cấu hình Printify cho store này.</p>
       </div>
     );
   }
 
   return (
     <div className="card" style={{ padding: 32 }}>
-      <h3 style={{ fontWeight: 700, marginBottom: 20 }}>Kết nối Printify</h3>
+      <h3 style={{ fontWeight: 700, marginBottom: 20 }}>Chọn Printify Shop</h3>
 
-      <div style={{ marginBottom: 16 }}>
-        <label htmlFor="printify-key" style={{ display: "block", fontWeight: 600, marginBottom: 8, fontSize: "0.875rem" }}>
-          Printify API Key
-        </label>
-        <input
-          id="printify-key"
-          type="password"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder="Nhập API key từ Printify Settings → Connections"
-          className="input"
-          style={{ width: "100%" }}
-        />
-      </div>
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 20 }}>
+          <Loader2 size={20} className="animate-spin" />
+        </div>
+      ) : availableShops.length === 0 ? (
+        <div style={{ padding: 20, textAlign: "center" }}>
+          <AlertTriangle size={24} style={{ color: "#f59e0b", margin: "0 auto 12px" }} />
+          <p style={{ fontWeight: 600, marginBottom: 4 }}>Không có shop khả dụng</p>
+          <p style={{ opacity: 0.6, fontSize: "0.85rem", marginBottom: 12 }}>
+            Chưa kết nối Printify account, hoặc tất cả shops đã được gắn store khác.
+          </p>
+          <Link href="/integrations/printify" className="btn btn-primary" style={{ textDecoration: "none" }}>
+            Kết nối Printify Account
+          </Link>
+        </div>
+      ) : (
+        <>
+          <div style={{ marginBottom: 16 }}>
+            <label htmlFor="printify-shop-select" style={{ display: "block", fontWeight: 600, marginBottom: 8, fontSize: "0.875rem" }}>
+              Printify Shop
+            </label>
+            <select
+              id="printify-shop-select"
+              className="input"
+              value={selectedShopId}
+              onChange={(e) => setSelectedShopId(e.target.value)}
+              style={{ width: "100%" }}
+            >
+              <option value="">-- Chọn shop --</option>
+              {availableShops.map((shop) => (
+                <option key={shop.id} value={shop.id}>
+                  {shop.title} ({shop.account.nickname}) — ID: {shop.externalShopId}
+                </option>
+              ))}
+            </select>
+          </div>
 
-      <div className="flex items-center gap-3">
-        <button onClick={handleSave} disabled={saving || !apiKey.trim()} className="btn btn-primary">
-          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-          Lưu
-        </button>
-      </div>
-
-      <p style={{ fontSize: "0.75rem", opacity: 0.5, marginTop: 12 }}>
-        Lấy API key: Printify → Account → Connections → Personal Access Token
-      </p>
+          <div className="flex items-center gap-3">
+            <button onClick={handleLink} disabled={saving || !selectedShopId} className="btn btn-primary">
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              Gắn Shop
+            </button>
+            <Link href="/integrations/printify" style={{ fontSize: "0.85rem", color: "var(--color-wise-green)" }}>
+              Quản lý Printify accounts →
+            </Link>
+          </div>
+        </>
+      )}
     </div>
   );
 }

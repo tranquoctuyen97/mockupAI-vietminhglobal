@@ -5,7 +5,7 @@
 import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
-import { decrypt } from "@/lib/crypto/envelope";
+
 import { runPrintifyStage } from "@/lib/publish/worker";
 import { getStorage } from "@/lib/storage/local-disk";
 
@@ -48,20 +48,19 @@ export async function POST(
     return NextResponse.json({ error: "Draft not found" }, { status: 400 });
   }
 
-  // Get store + credentials
+  // Get store + Printify connection (Phase 6.5: workspace-level)
   const store = await prisma.store.findUnique({
     where: { id: listing.storeId },
   });
 
-  const creds = await prisma.storeCredentials.findUnique({
-    where: { storeId: listing.storeId },
-  });
-
-  if (!creds?.printifyApiKeyEncrypted) {
-    return NextResponse.json({ error: "No Printify API key configured" }, { status: 400 });
+  let printifyApiKey: string;
+  try {
+    const { getClientForStore } = await import("@/lib/printify/account");
+    const result = await getClientForStore(listing.storeId);
+    printifyApiKey = (result.client as any).apiKey;
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Printify not linked" }, { status: 400 });
   }
-
-  const printifyApiKey = decrypt(creds.printifyApiKeyEncrypted);
 
   // Reset Printify job
   const printifyJob = listing.publishJobs.find((j) => j.stage === "PRINTIFY");

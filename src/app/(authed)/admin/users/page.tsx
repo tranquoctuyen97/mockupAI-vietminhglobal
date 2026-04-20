@@ -138,8 +138,7 @@ export default function AdminUsersPage() {
                   <td>
                     <div className="flex items-center justify-end gap-2">
                       <button
-                        className="btn-secondary"
-                        style={{ padding: "0.375rem 0.75rem", fontSize: "0.8125rem" }}
+                        className="btn-secondary btn-sm"
                         onClick={() => setShowResetDialog(user)}
                         title="Reset mật khẩu"
                       >
@@ -147,8 +146,7 @@ export default function AdminUsersPage() {
                         Reset
                       </button>
                       <button
-                        className={user.status === "ACTIVE" ? "btn-danger" : "btn-primary"}
-                        style={{ padding: "0.375rem 0.75rem", fontSize: "0.8125rem" }}
+                        className={user.status === "ACTIVE" ? "btn-danger-ghost" : "btn-primary btn-sm"}
                         onClick={() => toggleStatus(user)}
                         title={user.status === "ACTIVE" ? "Vô hiệu hóa" : "Kích hoạt"}
                       >

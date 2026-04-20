@@ -54,7 +54,6 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
     if (!creds || !creds.shopifyTokenEncrypted) throw new Error("Store credentials not found or Shopify not connected");
 
     const shopifyAccessToken = decrypt(creds.shopifyTokenEncrypted);
-    const hasPrintify = !!creds.printifyApiKeyEncrypted;
 
     // Load draft for mockup paths
     const draft = await prisma.wizardDraft.findUnique({
@@ -150,19 +149,29 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
 
     // ─── Stage 2: Printify ──────────────────────────────
 
-    if (!hasPrintify) {
+    // Phase 6.5: Lookup Printify key via workspace-level account
+    let printifyApiKey: string | null = null;
+    let externalShopId: number | null = null;
+    try {
+      const { getClientForStore } = await import("@/lib/printify/account");
+      const result = await getClientForStore(store.id);
+      printifyApiKey = (result.client as any).apiKey; // access private field for worker
+      externalShopId = result.externalShopId;
+    } catch {
+      // No Printify linked
+    }
+
+    if (!printifyApiKey) {
       await prisma.listing.update({
         where: { id: listingId },
         data: { status: "PARTIAL_FAILURE" },
       });
       sseChannels.emit(channelId, {
         type: "publish.complete",
-        data: { status: "PARTIAL_FAILURE", reason: "No Printify API key configured" },
+        data: { status: "PARTIAL_FAILURE", reason: "No Printify shop linked" },
       });
       return;
     }
-
-    const printifyApiKey = decrypt(creds.printifyApiKeyEncrypted!);
 
     await runPrintifyStage(listingId, listing, draft, store, printifyApiKey, storage, isDryRun, channelId);
   } catch (error) {

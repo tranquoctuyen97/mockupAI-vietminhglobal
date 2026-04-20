@@ -5,8 +5,7 @@
 
 import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
-import { getDecryptedTokens } from "@/lib/stores/store-service";
-import { PrintifyClient } from "@/lib/printify/client";
+import { getClientForStore } from "@/lib/printify/account";
 import { prisma } from "@/lib/db";
 
 export async function GET(
@@ -29,11 +28,14 @@ export async function GET(
     return NextResponse.json({ error: "Store not found" }, { status: 404 });
   }
 
-  // Get Printify API key
-  const tokens = await getDecryptedTokens(storeId);
-  if (!tokens.printifyApiKey) {
+  // Phase 6.5: Get Printify client via workspace-level account
+  let client;
+  try {
+    const result = await getClientForStore(storeId);
+    client = result.client;
+  } catch (e) {
     return NextResponse.json(
-      { error: "Printify chưa được kết nối cho store này" },
+      { error: e instanceof Error ? e.message : "Printify chưa được kết nối cho store này" },
       { status: 400 },
     );
   }
@@ -42,8 +44,6 @@ export async function GET(
   const action = searchParams.get("action") || "blueprints";
   const blueprintId = searchParams.get("blueprintId");
   const printProviderId = searchParams.get("printProviderId");
-
-  const client = new PrintifyClient(tokens.printifyApiKey);
 
   try {
     switch (action) {

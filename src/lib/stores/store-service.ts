@@ -5,7 +5,6 @@
 import { prisma } from "@/lib/db";
 import { encrypt, decrypt } from "@/lib/crypto/envelope";
 import { ShopifyClient } from "@/lib/shopify/client";
-import { PrintifyClient } from "@/lib/printify/client";
 import type { Prisma } from "@prisma/client";
 
 /**
@@ -48,33 +47,7 @@ export async function saveShopifyConnection(input: {
 }
 
 /**
- * Save Printify API key for an existing store
- */
-export async function savePrintifyConnection(
-  storeId: string,
-  printifyApiKey: string,
-  printifyShopId: string,
-) {
-  const { encrypted: keyEncrypted, keyId } = encrypt(printifyApiKey);
-
-  await prisma.$transaction([
-    prisma.store.update({
-      where: { id: storeId },
-      data: { printifyShopId },
-    }),
-    prisma.storeCredentials.update({
-      where: { storeId },
-      data: {
-        printifyApiKeyEncrypted: keyEncrypted,
-        encryptionKeyId: keyId,
-        rotatedAt: new Date(),
-      },
-    }),
-  ]);
-}
-
-/**
- * Get decrypted tokens for a store
+ * Get decrypted Shopify tokens for a store
  */
 export async function getDecryptedTokens(storeId: string) {
   const creds = await prisma.storeCredentials.findUnique({
@@ -88,19 +61,23 @@ export async function getDecryptedTokens(storeId: string) {
   const shopifyToken = creds.shopifyTokenEncrypted
     ? decrypt(creds.shopifyTokenEncrypted)
     : null;
-  const printifyApiKey = creds.printifyApiKeyEncrypted
-    ? decrypt(creds.printifyApiKeyEncrypted)
-    : null;
 
-  return { shopifyToken, printifyApiKey };
+  return { shopifyToken };
 }
 
 /**
- * Test connection for a store (both Shopify + Printify)
+ * Test connection for a store (Shopify + Printify if linked)
  */
 export async function testStoreConnection(storeId: string) {
   const store = await prisma.store.findUniqueOrThrow({
     where: { id: storeId },
+    include: {
+      printifyShop: {
+        include: {
+          account: { select: { apiKeyEncrypted: true, status: true } },
+        },
+      },
+    },
   });
 
   const tokens = await getDecryptedTokens(storeId);
@@ -113,11 +90,17 @@ export async function testStoreConnection(storeId: string) {
   const shopifyClient = new ShopifyClient(store.shopifyDomain, tokens.shopifyToken);
   const shopifyResult = await shopifyClient.testConnection();
 
-  // Test Printify (if configured)
+  // Test Printify (via workspace-level account if linked)
   let printifyResult: { ok: boolean; error?: string } = { ok: true };
-  if (tokens.printifyApiKey) {
-    const printifyClient = new PrintifyClient(tokens.printifyApiKey);
-    printifyResult = await printifyClient.testConnection();
+  if (store.printifyShop && store.printifyShop.account.status === "ACTIVE") {
+    try {
+      const { PrintifyClient } = await import("@/lib/printify/client");
+      const apiKey = decrypt(store.printifyShop.account.apiKeyEncrypted);
+      const client = new PrintifyClient(apiKey);
+      printifyResult = await client.testConnection();
+    } catch (e) {
+      printifyResult = { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+    }
   }
 
   // Update store status
