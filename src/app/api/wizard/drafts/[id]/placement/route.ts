@@ -3,7 +3,23 @@ import { db } from "@/lib/db";
 import { validatePlacement } from "@/lib/placement/validate";
 import { calculateDpi } from "@/lib/placement/dpi";
 import { DEFAULT_PRINT_AREA } from "@/lib/placement/types";
-import type { Placement, PlacementData, VariantViews, ViewKey } from "@/lib/placement/types";
+import type { PlacementData, ViewKey } from "@/lib/placement/types";
+import { z } from "zod";
+
+const PlacementPatchSchema = z.object({
+  variantKey: z.string().min(1, "variantKey is required"),
+  view: z.enum(["front", "back", "sleeve_left", "sleeve_right"]),
+  placement: z.object({
+    xMm: z.number(),
+    yMm: z.number(),
+    widthMm: z.number().positive("widthMm must be positive"),
+    heightMm: z.number().positive("heightMm must be positive"),
+    rotationDeg: z.number().min(-360).max(360).optional(),
+    lockAspect: z.boolean().optional(),
+    mirrored: z.boolean().optional(),
+    placementMode: z.enum(["stretch", "preserve", "exact"]).optional(),
+  }),
+});
 
 export async function PATCH(
   request: Request,
@@ -12,18 +28,26 @@ export async function PATCH(
   try {
     const { id: draftId } = await params;
     const body = await request.json();
-    const { variantKey, view, placement } = body as {
-      variantKey: string;
-      view: ViewKey;
-      placement: Placement;
-    };
+    const parsed = PlacementPatchSchema.safeParse(body);
 
-    if (!variantKey || !view || !placement) {
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "variantKey, view, and placement are required" },
+        { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
         { status: 400 },
       );
     }
+
+    const { variantKey, view, placement: rawPlacement } = parsed.data;
+    const placement = {
+      xMm: rawPlacement.xMm,
+      yMm: rawPlacement.yMm,
+      widthMm: rawPlacement.widthMm,
+      heightMm: rawPlacement.heightMm,
+      rotationDeg: rawPlacement.rotationDeg ?? 0,
+      lockAspect: rawPlacement.lockAspect ?? true,
+      mirrored: rawPlacement.mirrored ?? false,
+      placementMode: rawPlacement.placementMode ?? "preserve" as const,
+    };
 
     const draft = await db.wizardDraft.findUnique({
       where: { id: draftId },

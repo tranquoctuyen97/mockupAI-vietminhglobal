@@ -225,10 +225,14 @@ model StoreMockupTemplate {
   previewUrl              String?          @map("preview_url")
   position                TemplatePosition @default(FRONT)
   isDefault               Boolean          @default(false) @map("is_default")
+  // Placement override (mm) — null = use Printify default (center)
+  placementOffsetXMm      Float?           @map("placement_offset_x_mm")
+  placementOffsetYMm      Float?           @map("placement_offset_y_mm")
+  placementScalePercent   Float?           @map("placement_scale_percent") // 100 = full area
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
-  @@index([storeId])
+  @@unique([storeId]) // 1 store = 1 template config
   @@map("store_mockup_templates")
 }
 

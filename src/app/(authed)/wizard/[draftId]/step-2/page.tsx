@@ -7,13 +7,7 @@ import {
   Package, Truck, Palette,
 } from "lucide-react";
 
-interface StoreItem {
-  id: string;
-  name: string;
-  shopifyDomain: string;
-  printifyShopId: string | null;
-  status: string;
-}
+
 
 interface Blueprint {
   id: number;
@@ -240,12 +234,12 @@ function SearchCombobox<T extends { id: number | string }>({
 export default function Step2ProductPage() {
   const { draft, updateDraft } = useWizardStore();
 
-  const [stores, setStores] = useState<StoreItem[]>([]);
+
   const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [colors, setColors] = useState<ColorOption[]>([]);
 
-  const [loadingStores, setLoadingStores] = useState(true);
+
   const [loadingBlueprints, setLoadingBlueprints] = useState(false);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [loadingColors, setLoadingColors] = useState(false);
@@ -256,17 +250,7 @@ export default function Step2ProductPage() {
   const selectedBlueprint = blueprints.find((b) => b.id === draft?.blueprintId) || null;
   const selectedProvider = providers.find((p) => p.id === draft?.printProviderId) || null;
 
-  // Load stores
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/stores");
-        const data = await res.json();
-        if (res.ok) setStores(Array.isArray(data) ? data : data.stores || []);
-      } catch { /* ignore */ }
-      finally { setLoadingStores(false); }
-    })();
-  }, []);
+
 
   // Load blueprints when store changes
   useEffect(() => {
@@ -334,42 +318,11 @@ export default function Step2ProductPage() {
   return (
     <div>
       <h2 style={{ fontWeight: 700, fontSize: "1.1rem", margin: "0 0 4px" }}>
-        Chọn Store & Product
+        Chọn Product
       </h2>
       <p style={{ opacity: 0.5, fontSize: "0.85rem", margin: "0 0 24px" }}>
-        Chọn store, blueprint sản phẩm và màu sắc
+        Chọn blueprint sản phẩm, print provider và màu sắc
       </p>
-
-      {/* ── Store selector ── */}
-      <div style={{ marginBottom: 24 }}>
-        <label style={{ fontWeight: 600, fontSize: "0.85rem", display: "block", marginBottom: 6 }}>
-          Store
-        </label>
-        {loadingStores ? (
-          <LoadingRow label="Loading stores..." />
-        ) : (
-          <select
-            className="input"
-            value={draft?.storeId || ""}
-            onChange={(e) => {
-              updateDraft({
-                storeId: e.target.value || null,
-                blueprintId: null,
-                printProviderId: null,
-                selectedColors: [],
-              });
-            }}
-            style={{ minHeight: 44 }}
-          >
-            <option value="">-- Chọn store --</option>
-            {stores.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name} ({s.shopifyDomain})
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
 
       {/* ── Blueprint selector (searchable) ── */}
       {draft?.storeId && (

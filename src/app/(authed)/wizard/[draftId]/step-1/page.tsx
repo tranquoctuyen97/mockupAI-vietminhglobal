@@ -2,52 +2,72 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useWizardStore } from "@/lib/wizard/use-wizard-store";
-import { Image as ImageIcon, Check, Loader2, Search } from "lucide-react";
+import {
+  Store as StoreIcon,
+  Check,
+  Loader2,
+  Search,
+  AlertCircle,
+  Link2,
+} from "lucide-react";
 
-interface Design {
+interface StoreItem {
   id: string;
   name: string;
-  previewUrl: string | null;
-  width: number;
-  height: number;
+  shopifyDomain: string;
+  printifyShopId: string | null;
+  status: string;
 }
 
-export default function Step1DesignPage() {
+export default function Step1StorePage() {
   const { draft, updateDraft } = useWizardStore();
-  const [designs, setDesigns] = useState<Design[]>([]);
+  const [stores, setStores] = useState<StoreItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
-  const fetchDesigns = useCallback(async () => {
+  const fetchStores = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limit: "50" });
-      if (search) params.set("q", search);
-      const res = await fetch(`/api/designs?${params}`);
+      const res = await fetch("/api/stores");
       const data = await res.json();
-      if (res.ok) setDesigns(data.designs);
+      if (res.ok) setStores(Array.isArray(data) ? data : data.stores || []);
     } catch {
       // ignore
     } finally {
       setLoading(false);
     }
-  }, [search]);
+  }, []);
 
   useEffect(() => {
-    fetchDesigns();
-  }, [fetchDesigns]);
+    fetchStores();
+  }, [fetchStores]);
 
-  function handleSelect(designId: string) {
-    updateDraft({ designId });
+  const filtered = stores.filter((s) => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (
+      s.name.toLowerCase().includes(q) ||
+      s.shopifyDomain.toLowerCase().includes(q)
+    );
+  });
+
+  function handleSelect(storeId: string) {
+    updateDraft({
+      storeId,
+      // Reset downstream selections when store changes
+      blueprintId: null,
+      printProviderId: null,
+      selectedColors: [],
+    });
   }
 
   return (
     <div>
       <h2 style={{ fontWeight: 700, fontSize: "1.1rem", margin: "0 0 4px" }}>
-        Chọn Design
+        Chọn Store
       </h2>
       <p style={{ opacity: 0.5, fontSize: "0.85rem", margin: "0 0 20px" }}>
-        Chọn 1 design từ thư viện để sử dụng
+        Chọn store Shopify để tạo listing
       </p>
 
       {/* Search */}
@@ -59,7 +79,7 @@ export default function Step1DesignPage() {
         <input
           type="text"
           className="input"
-          placeholder="Tìm design..."
+          placeholder="Tìm store..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{ paddingLeft: 38 }}
@@ -72,46 +92,57 @@ export default function Step1DesignPage() {
         </div>
       )}
 
-      {!loading && designs.length === 0 && (
+      {!loading && filtered.length === 0 && (
         <div className="card" style={{ padding: 48, textAlign: "center" }}>
-          <ImageIcon size={32} style={{ opacity: 0.3, margin: "0 auto 12px" }} />
-          <p style={{ fontWeight: 600 }}>Chưa có design nào</p>
-          <p style={{ opacity: 0.5, fontSize: "0.85rem" }}>Upload design trước rồi quay lại</p>
+          <StoreIcon size={32} style={{ opacity: 0.3, margin: "0 auto 12px" }} />
+          <p style={{ fontWeight: 600 }}>Chưa có store nào</p>
+          <p style={{ opacity: 0.5, fontSize: "0.85rem" }}>
+            <a href="/stores/new" style={{ color: "var(--color-wise-green)", fontWeight: 600 }}>
+              Kết nối store Shopify
+            </a>{" "}
+            trước rồi quay lại
+          </p>
         </div>
       )}
 
-      {!loading && designs.length > 0 && (
+      {!loading && filtered.length > 0 && (
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
             gap: 12,
           }}
         >
-          {designs.map((d) => {
-            const isSelected = draft?.designId === d.id;
+          {filtered.map((s) => {
+            const isSelected = draft?.storeId === s.id;
+            const hasPrintify = !!s.printifyShopId;
+            const isActive = s.status === "ACTIVE";
+
             return (
               <div
-                key={d.id}
-                onClick={() => handleSelect(d.id)}
+                key={s.id}
+                onClick={() => {
+                  if (!hasPrintify) return; // Can't select stores without Printify
+                  handleSelect(s.id);
+                }}
                 className="card"
                 style={{
-                  padding: 0,
-                  overflow: "hidden",
-                  cursor: "pointer",
+                  padding: "16px 20px",
+                  cursor: hasPrintify ? "pointer" : "not-allowed",
                   border: isSelected
                     ? "2px solid var(--color-wise-green)"
                     : "1px solid var(--border-default)",
                   transition: "all 0.15s",
                   position: "relative",
+                  opacity: hasPrintify ? 1 : 0.5,
                 }}
               >
                 {isSelected && (
                   <div
                     style={{
                       position: "absolute",
-                      top: 8,
-                      right: 8,
+                      top: 10,
+                      right: 10,
                       width: 24,
                       height: 24,
                       borderRadius: "50%",
@@ -119,49 +150,91 @@ export default function Step1DesignPage() {
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      zIndex: 2,
                     }}
                   >
                     <Check size={14} color="white" />
                   </div>
                 )}
 
-                <div
-                  style={{
-                    aspectRatio: "1/1",
-                    backgroundColor: "var(--bg-tertiary)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  {d.previewUrl ? (
-                    <img
-                      src={d.previewUrl}
-                      alt={d.name}
-                      style={{ width: "100%", height: "100%", objectFit: "contain", padding: 8 }}
-                    />
-                  ) : (
-                    <ImageIcon size={28} style={{ opacity: 0.2 }} />
-                  )}
-                </div>
-
-                <div style={{ padding: "8px 10px" }}>
-                  <p
+                <div className="flex items-center gap-3" style={{ marginBottom: 8 }}>
+                  <div
                     style={{
-                      fontWeight: 600,
-                      fontSize: "0.8rem",
-                      margin: 0,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
+                      width: 36,
+                      height: 36,
+                      borderRadius: "var(--radius-sm)",
+                      backgroundColor: "var(--bg-tertiary)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
                     }}
                   >
-                    {d.name}
-                  </p>
-                  <p style={{ fontSize: "0.7rem", opacity: 0.4, margin: "2px 0 0" }}>
-                    {d.width}×{d.height}
-                  </p>
+                    <StoreIcon size={18} style={{ opacity: 0.4 }} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p
+                      style={{
+                        fontWeight: 600,
+                        fontSize: "0.9rem",
+                        margin: 0,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {s.name}
+                    </p>
+                    <p style={{ fontSize: "0.75rem", opacity: 0.5, margin: "2px 0 0" }}>
+                      {s.shopifyDomain}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Status badges */}
+                <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                  <span
+                    style={{
+                      fontSize: "0.65rem",
+                      fontWeight: 600,
+                      padding: "2px 8px",
+                      borderRadius: 99,
+                      backgroundColor: isActive
+                        ? "rgba(34, 197, 94, 0.1)"
+                        : "rgba(239, 68, 68, 0.1)",
+                      color: isActive ? "#22c55e" : "#ef4444",
+                    }}
+                  >
+                    {isActive ? "Active" : s.status}
+                  </span>
+
+                  {hasPrintify ? (
+                    <span
+                      style={{
+                        fontSize: "0.65rem",
+                        fontWeight: 600,
+                        padding: "2px 8px",
+                        borderRadius: 99,
+                        backgroundColor: "rgba(59, 130, 246, 0.1)",
+                        color: "#3b82f6",
+                      }}
+                      className="flex items-center gap-1"
+                    >
+                      <Link2 size={10} /> Printify
+                    </span>
+                  ) : (
+                    <span
+                      className="flex items-center gap-1"
+                      style={{
+                        fontSize: "0.65rem",
+                        fontWeight: 500,
+                        padding: "2px 8px",
+                        borderRadius: 99,
+                        backgroundColor: "rgba(245, 158, 11, 0.1)",
+                        color: "#f59e0b",
+                      }}
+                    >
+                      <AlertCircle size={10} /> Chưa kết nối Printify
+                    </span>
+                  )}
                 </div>
               </div>
             );

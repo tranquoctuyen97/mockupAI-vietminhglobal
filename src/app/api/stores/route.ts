@@ -1,15 +1,20 @@
-/**
- * Store CRUD API
- * GET /api/stores — list stores
- * POST /api/stores — create store with per-store credentials
- */
-
 import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { listStores } from "@/lib/stores/store-service";
 import { prisma } from "@/lib/db";
 import { encrypt } from "@/lib/crypto/envelope";
 import { sanitizeShopDomain } from "@/lib/shopify/oauth";
+import { z } from "zod";
+
+const CreateStoreSchema = z.object({
+  name: z.string().min(1, "Store name is required").max(100),
+  shopifyDomain: z
+    .string()
+    .min(1, "Shopify domain is required")
+    .regex(/\.myshopify\.com$/, "Must be a valid .myshopify.com domain"),
+  shopifyClientId: z.string().min(10, "Client ID too short"),
+  shopifyClientSecret: z.string().min(10, "Client Secret too short"),
+});
 
 export async function GET() {
   const session = await validateSession();
@@ -32,14 +37,16 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { name, shopifyDomain, shopifyClientId, shopifyClientSecret } = body;
+  const parsed = CreateStoreSchema.safeParse(body);
 
-  if (!name || !shopifyDomain || !shopifyClientId || !shopifyClientSecret) {
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: "name, shopifyDomain, shopifyClientId, shopifyClientSecret required" },
+      { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
       { status: 400 },
     );
   }
+
+  const { name, shopifyDomain, shopifyClientId, shopifyClientSecret } = parsed.data;
 
   let cleanDomain: string;
   try {

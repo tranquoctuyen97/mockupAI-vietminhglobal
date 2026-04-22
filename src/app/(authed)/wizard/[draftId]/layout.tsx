@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useWizardStore } from "@/lib/wizard/use-wizard-store";
 import {
+  Store,
   Image as ImageIcon,
   ShoppingBag,
   Move,
@@ -19,13 +20,13 @@ import {
 import Link from "next/link";
 
 const STEPS = [
-  { num: 1, label: "Design", icon: ImageIcon, path: "step-1" },
-  { num: 2, label: "Product", icon: ShoppingBag, path: "step-2" },
-  { num: 3, label: "Placement", icon: Move, path: "step-3" },
-  { num: 4, label: "Mockups", icon: Sparkles, path: "step-4" },
-  { num: 5, label: "Content", icon: PenTool, path: "step-5" },
-  { num: 6, label: "Review", icon: ClipboardCheck, path: "step-6" },
-  { num: 7, label: "Publish", icon: Rocket, path: "step-7" },
+  { num: 1, label: "Store",     icon: Store,          path: "step-1" },
+  { num: 2, label: "Product",   icon: ShoppingBag,    path: "step-2" },
+  { num: 3, label: "Design",    icon: ImageIcon,      path: "step-3" },
+  { num: 4, label: "Placement", icon: Move,           path: "step-4" },
+  { num: 5, label: "Content",   icon: PenTool,        path: "step-5" },
+  { num: 6, label: "Review",    icon: ClipboardCheck, path: "step-6" },
+  { num: 7, label: "Publish",   icon: Rocket,         path: "step-7" },
 ];
 
 export default function WizardLayout({

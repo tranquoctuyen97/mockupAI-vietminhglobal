@@ -2,19 +2,36 @@ services:
   postgres:
     image: postgres:18-alpine3.23
     container_name: mockupai-postgres
+    restart: unless-stopped
     ports:
-      - '5432:5432'
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: mockupai
-      POSTGRES_PASSWORD: mockupai
+      POSTGRES_PASSWORD: MockupAI_DB_2024!
       POSTGRES_DB: mockupai
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U mockupai']
+      test: ["CMD-SHELL", "pg_isready -U mockupai"]
       interval: 5s
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:8.4-alpine
+    container_name: mockupai-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
 volumes:
   pgdata:
+  redisdata:
