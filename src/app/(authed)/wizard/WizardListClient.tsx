@@ -15,7 +15,7 @@ interface Draft {
   mockupJobs: { id: string; status: string }[];
 }
 
-const STEP_LABELS = ["Store", "Product", "Design", "Placement", "Content", "Review", "Publish"];
+const STEP_LABELS = ["Store", "Design", "Preview", "Content", "Review"];
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   DRAFT: { label: "Bản nháp", color: "#6b7280" },
   GENERATING: { label: "Đang tạo mockup", color: "#f59e0b" },

@@ -1,16 +1,19 @@
 /**
  * Shopify Publish — Create product via GraphQL Admin API
  *
- * Flow:
- * 1. productCreate — title, bodyHtml, tags, vendor, productType
- * 2. productVariantsBulkCreate — color variants with prices
- * 3. Upload mockup images via stagedUploadsCreate + productCreateMedia
- * 4. publishablePublish — make product visible
+ * Flow (API 2025-04+):
+ * 1. productSet — atomic: title, bodyHtml, tags, productType, options, variants (status: ACTIVE)
+ * 2. Upload mockup images via stagedUploadsCreate + productCreateMedia
+ * 3. publishablePublish — ensure product visible on Online Store (graceful, non-fatal)
  */
 
 import { ShopifyClient } from "@/lib/shopify/client";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
+
+export type ShopifyMockupImage =
+  | { kind: "local"; path: string; colorName?: string }
+  | { kind: "remote"; url: string; colorName?: string };
 
 export interface ShopifyPublishInput {
   title: string;
@@ -20,6 +23,8 @@ export interface ShopifyPublishInput {
   productType: string;
   colors: Array<{ name: string; hex: string }>;
   mockupPaths: string[]; // absolute file paths
+  mockupImages?: ShopifyMockupImage[];
+  existingProductId?: string | null; // for retry idempotency
 }
 
 export interface ShopifyPublishResult {
@@ -29,55 +34,112 @@ export interface ShopifyPublishResult {
 }
 
 /**
- * Extend ShopifyClient for publish operations
+ * Publish product to Shopify using productSet mutation (2025-04+)
+ *
+ * Idempotent: if existingProductId is provided, skips product creation
+ * and only uploads images + publishes.
  */
 export async function publishToShopify(
   client: ShopifyClient,
   domain: string,
   input: ShopifyPublishInput,
 ): Promise<ShopifyPublishResult> {
-  // Step 1: Create product with initial option and variant
-  const productCreateResult = await createProduct(client, input);
+  let productId: string;
+  let variantIds: string[];
+  let variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }> }> = [];
 
-  // Step 2: Create additional color variants if more than 1 color
-  let variantIds = [productCreateResult.initialVariantId];
-  if (input.colors.length > 1) {
-    const additionalVariants = await createVariants(
-      client,
-      productCreateResult.productId,
-      input.colors.slice(1),
-      input.priceUsd,
+  if (input.existingProductId) {
+    // Product already created in a previous attempt — skip creation
+    console.log(`[Shopify] Reusing existing product: ${input.existingProductId}`);
+    productId = input.existingProductId;
+    variantIds = []; // variants already exist
+  } else {
+    // Step 1: Create product + options + variants atomically
+    const productResult = await createProductWithSet(client, input);
+    productId = productResult.productId;
+    variantNodes = productResult.variantNodes;
+    variantIds = variantNodes.map(v => v.id);
+  }
+
+  // Step 2: Upload mockup images and link to variants
+  if (input.mockupImages && input.mockupImages.length > 0) {
+    const uploadedMedia = await uploadProductImages(client, productId, input.mockupImages);
+    
+    // Step 2.5: Link media to variants if we just created them
+    if (uploadedMedia.length > 0 && variantNodes.length > 0) {
+      const variantMediaPairs: Array<{ id: string, mediaId: string }> = [];
+      
+      for (const vNode of variantNodes) {
+        const colorOption = vNode.selectedOptions.find(o => o.name === "Color");
+        if (colorOption) {
+          const matchingMedia = uploadedMedia.find(m => m.colorName && m.colorName.toLowerCase() === colorOption.value.toLowerCase());
+          if (matchingMedia) {
+            variantMediaPairs.push({
+              id: vNode.id,
+              mediaId: matchingMedia.mediaId
+            });
+          }
+        }
+      }
+
+      if (variantMediaPairs.length > 0) {
+        const bulkUpdateMutation = `
+          mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+              userErrors { field message }
+            }
+          }
+        `;
+        const bulkUpdateRes = await client.graphql(bulkUpdateMutation, {
+          productId,
+          variants: variantMediaPairs.map(v => ({ id: v.id, mediaId: v.mediaId }))
+        }) as any;
+
+        if (bulkUpdateRes.productVariantsBulkUpdate?.userErrors?.length > 0) {
+          console.warn(`[Shopify] productVariantsBulkUpdate failed (non-fatal):`, bulkUpdateRes.productVariantsBulkUpdate.userErrors);
+        }
+      }
+    }
+  } else if (input.mockupPaths.length > 0) {
+    // Fallback for older code
+    await uploadProductImages(client, productId, input.mockupPaths.map(p => ({ kind: "local", path: p })));
+  }
+
+  // Step 3: Publish to Online Store (graceful — non-fatal if scope missing)
+  try {
+    await publishProduct(client, productId);
+  } catch (err) {
+    // If read_publications scope not yet added, product is already ACTIVE via productSet
+    console.warn(
+      `[Shopify] publishablePublish failed (non-fatal, product already ACTIVE):`,
+      err instanceof Error ? err.message : err,
     );
-    variantIds = [...variantIds, ...additionalVariants];
   }
-
-  // Step 3: Upload mockup images
-  if (input.mockupPaths.length > 0) {
-    await uploadProductImages(client, productCreateResult.productId, input.mockupPaths);
-  }
-
-  // Step 4: Publish the product
-  await publishProduct(client, productCreateResult.productId);
 
   return {
-    shopifyProductId: productCreateResult.productId,
+    shopifyProductId: productId,
     shopifyVariantIds: variantIds,
-    shopifyProductUrl: `https://${domain}/admin/products/${extractNumericId(productCreateResult.productId)}`,
+    shopifyProductUrl: `https://${domain}/admin/products/${extractNumericId(productId)}`,
   };
 }
 
-async function createProduct(
+/**
+ * Create product using productSet mutation (API 2025-04+)
+ * Sets status: ACTIVE so product is immediately visible without needing publishablePublish
+ */
+async function createProductWithSet(
   client: ShopifyClient,
   input: ShopifyPublishInput,
-): Promise<{ productId: string; initialVariantId: string }> {
+): Promise<{ productId: string; variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }> }> }> {
   const mutation = `
-    mutation productCreate($product: ProductCreateInput!) {
-      productCreate(product: $product) {
+    mutation productSet($synchronous: Boolean!, $productSet: ProductSetInput!) {
+      productSet(synchronous: $synchronous, input: $productSet) {
         product {
           id
-          variants(first: 1) {
-            edges {
-              node { id }
+          variants(first: 100) {
+            nodes {
+              id
+              selectedOptions { name value }
             }
           }
         }
@@ -86,88 +148,122 @@ async function createProduct(
     }
   `;
 
+  const hasColors = input.colors.length > 0;
+
   const variables = {
-    product: {
+    synchronous: true,
+    productSet: {
       title: input.title,
       descriptionHtml: input.descriptionHtml,
       tags: input.tags,
       productType: input.productType,
-      options: input.colors.length > 0 ? ["Color"] : undefined,
-      variants: input.colors.length > 0
+      status: "ACTIVE", // Publish immediately — no need for separate publishablePublish
+      productOptions: hasColors
         ? [
             {
-              optionValues: [{ optionName: "Color", name: input.colors[0].name }],
-              price: input.priceUsd.toFixed(2),
+              name: "Color",
+              position: 1,
+              values: input.colors.map((c) => ({ name: c.name })),
             },
           ]
-        : [{ price: input.priceUsd.toFixed(2) }],
+        : [],
+      variants: hasColors
+        ? input.colors.map((c) => ({
+            optionValues: [{ optionName: "Color", name: c.name }],
+            price: input.priceUsd,
+          }))
+        : [{ price: input.priceUsd }],
     },
   };
 
   const data = await client.graphql(mutation, variables) as {
-    productCreate: {
-      product: { id: string; variants: { edges: Array<{ node: { id: string } }> } };
+    productSet: {
+      product: {
+        id: string;
+        variants: {
+          nodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }> }>;
+        };
+      };
       userErrors: Array<{ field: string; message: string }>;
     };
   };
 
-  if (data.productCreate.userErrors.length > 0) {
+  if (data.productSet.userErrors.length > 0) {
     throw new Error(
-      `Shopify productCreate failed: ${data.productCreate.userErrors.map((e) => e.message).join("; ")}`,
+      `Shopify productSet failed: ${data.productSet.userErrors.map((e) => e.message).join("; ")}`,
     );
   }
 
   return {
-    productId: data.productCreate.product.id,
-    initialVariantId: data.productCreate.product.variants.edges[0]?.node.id || "",
+    productId: data.productSet.product.id,
+    variantNodes: data.productSet.product.variants.nodes,
   };
-}
-
-async function createVariants(
-  client: ShopifyClient,
-  productId: string,
-  colors: Array<{ name: string }>,
-  price: number,
-): Promise<string[]> {
-  const mutation = `
-    mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkCreate(productId: $productId, variants: $variants) {
-        productVariants {
-          id
-        }
-        userErrors { field message }
-      }
-    }
-  `;
-
-  const variables = {
-    productId,
-    variants: colors.map((c) => ({
-      optionValues: [{ optionName: "Color", name: c.name }],
-      price: price.toFixed(2),
-    })),
-  };
-
-  const data = await client.graphql(mutation, variables) as {
-    productVariantsBulkCreate: {
-      productVariants: Array<{ id: string }>;
-      userErrors: Array<{ field: string; message: string }>;
-    };
-  };
-
-  if (data.productVariantsBulkCreate.userErrors.length > 0) {
-    console.error("[Shopify] Variant creation warnings:", data.productVariantsBulkCreate.userErrors);
-  }
-
-  return data.productVariantsBulkCreate.productVariants.map((v) => v.id);
 }
 
 async function uploadProductImages(
   client: ShopifyClient,
   productId: string,
-  mockupPaths: string[],
-): Promise<void> {
-  // Step 1: Create staged uploads
+  mockupImages: ShopifyMockupImage[],
+): Promise<Array<{ mediaId: string; colorName?: string }>> {
+  if (mockupImages.length === 0) return [];
+
+  const mediaSources: Array<{ originalSource: string; colorName?: string }> = [];
+  const localImages = mockupImages.filter(
+    (image): image is Extract<ShopifyMockupImage, { kind: "local" }> => image.kind === "local",
+  );
+
+  for (const image of mockupImages) {
+    if (image.kind === "remote") {
+      mediaSources.push({
+        originalSource: image.url,
+        colorName: image.colorName,
+      });
+    }
+  }
+
+  if (localImages.length > 0) {
+    const uploadedLocalSources = await stageLocalProductImages(client, localImages);
+    mediaSources.push(...uploadedLocalSources);
+  }
+
+  if (mediaSources.length === 0) return [];
+
+  const mediaMutation = `
+    mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+      productCreateMedia(productId: $productId, media: $media) {
+        media { id }
+        mediaUserErrors { field message }
+      }
+    }
+  `;
+
+  const mediaResult = await client.graphql(mediaMutation, {
+    productId,
+    media: mediaSources.map((source) => ({
+      originalSource: source.originalSource,
+      mediaContentType: "IMAGE",
+    })),
+  }) as {
+    productCreateMedia: {
+      media: Array<{ id: string }>;
+      mediaUserErrors: Array<{ field: string; message: string }>;
+    };
+  };
+
+  if (mediaResult.productCreateMedia.mediaUserErrors.length > 0) {
+    throw new Error(`Shopify productCreateMedia failed: ${mediaResult.productCreateMedia.mediaUserErrors.map((e) => e.message).join("; ")}`);
+  }
+
+  return mediaResult.productCreateMedia.media.map((m, i) => ({
+    mediaId: m.id,
+    colorName: mediaSources[i].colorName,
+  }));
+}
+
+async function stageLocalProductImages(
+  client: ShopifyClient,
+  localImages: Array<Extract<ShopifyMockupImage, { kind: "local" }>>,
+): Promise<Array<{ originalSource: string; colorName?: string }>> {
   const stagesMutation = `
     mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
       stagedUploadsCreate(input: $input) {
@@ -181,8 +277,8 @@ async function uploadProductImages(
     }
   `;
 
-  const stagedInput = mockupPaths.map((p) => ({
-    filename: basename(p),
+  const stagedInput = localImages.map((img) => ({
+    filename: basename(img.path),
     mimeType: "image/png",
     httpMethod: "PUT",
     resource: "PRODUCT_IMAGE",
@@ -207,11 +303,9 @@ async function uploadProductImages(
 
   const targets = stagedData.stagedUploadsCreate.stagedTargets;
 
-  // Step 2: Upload files to staged URLs
   for (let i = 0; i < targets.length; i++) {
     const target = targets[i];
-    const filePath = mockupPaths[i];
-    const fileBuffer = await readFile(filePath);
+    const fileBuffer = await readFile(localImages[i].path);
 
     await fetch(target.url, {
       method: "PUT",
@@ -220,25 +314,10 @@ async function uploadProductImages(
     });
   }
 
-  // Step 3: Attach uploaded images to product
-  const mediaMutation = `
-    mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
-      productCreateMedia(productId: $productId, media: $media) {
-        media { id }
-        mediaUserErrors { field message }
-      }
-    }
-  `;
-
-  const mediaInput = targets.map((t) => ({
-    originalSource: t.resourceUrl,
-    mediaContentType: "IMAGE",
+  return targets.map((target, index) => ({
+    originalSource: target.resourceUrl,
+    colorName: localImages[index].colorName,
   }));
-
-  await client.graphql(mediaMutation, {
-    productId,
-    media: mediaInput,
-  });
 }
 
 async function publishProduct(client: ShopifyClient, productId: string): Promise<void> {

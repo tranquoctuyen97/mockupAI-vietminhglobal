@@ -65,18 +65,18 @@ function validateOne(
 
   // Rotation-aware bounding box
   const bb = rotatedBoundingBox(placement.widthMm, placement.heightMm, placement.rotationDeg);
-  const halfW = bb.width / 2;
-  const halfH = bb.height / 2;
-  const left = placement.xMm - halfW;
-  const right = placement.xMm + halfW;
-  const top = placement.yMm - halfH;
-  const bottom = placement.yMm + halfH;
 
-  // Print area bounds (origin = top-left of print area, center at widthMm/2, heightMm/2)
-  const areaHalfW = printArea.widthMm / 2;
-  const areaH = printArea.heightMm;
+  // Placement (xMm, yMm) = top-left corner of design within print area
+  // Calculate center of design, then compute rotated bounding box edges
+  const centerX = placement.xMm + placement.widthMm / 2;
+  const centerY = placement.yMm + placement.heightMm / 2;
+  const left = centerX - bb.width / 2;
+  const right = centerX + bb.width / 2;
+  const top = centerY - bb.height / 2;
+  const bottom = centerY + bb.height / 2;
 
-  if (left < -areaHalfW || right > areaHalfW || top < 0 || bottom > areaH) {
+  // Print area bounds: origin at (0,0), extends to (widthMm, heightMm)
+  if (left < 0 || right > printArea.widthMm || top < 0 || bottom > printArea.heightMm) {
     violations.push({
       variantId, view,
       issue: "outside_print_area",
@@ -88,7 +88,7 @@ function validateOne(
 
   // Safe zone check
   const m = printArea.safeMarginMm;
-  if (left < -areaHalfW + m || right > areaHalfW - m || top < m || bottom > areaH - m) {
+  if (left < m || right > printArea.widthMm - m || top < m || bottom > printArea.heightMm - m) {
     violations.push({
       variantId, view,
       issue: "outside_safe_zone",

@@ -36,4 +36,15 @@ export interface Placeholder {
   position: string;
   height: number;
   width: number;
+  images: {
+    id: string;
+    name: string;
+    type: string;
+    height: number;
+    width: number;
+    x: number;
+    y: number;
+    scale: number;
+    angle: number;
+  }[];
 }

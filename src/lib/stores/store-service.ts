@@ -5,6 +5,7 @@
 import { prisma } from "@/lib/db";
 import { encrypt, decrypt } from "@/lib/crypto/envelope";
 import { ShopifyClient } from "@/lib/shopify/client";
+import { getPresetStatusSync } from "@/lib/stores/preset";
 import type { Prisma } from "@prisma/client";
 
 /**
@@ -132,24 +133,35 @@ export async function testStoreConnection(storeId: string) {
  * List stores for a tenant
  */
 export async function listStores(tenantId: string) {
-  return prisma.store.findMany({
-    where: { tenantId, deletedAt: null },
+  const stores = await prisma.store.findMany({
+    where: { tenantId },
     include: {
       colors: { orderBy: { sortOrder: "asc" } },
-      templates: true,
+      template: true, // singular — 1:1 via @@unique([storeId])
     },
     orderBy: { createdAt: "desc" },
   });
+
+  // Compute presetStatus for each store + serialize Decimal fields
+  return stores.map((store) => ({
+    ...store,
+    defaultPriceUsd: Number(store.defaultPriceUsd), // Decimal → number for Client Components
+    presetStatus: getPresetStatusSync(store),
+  }));
 }
 
 /**
- * Soft delete a store
+ * Hard delete a store and all related data (credentials cascade via schema)
  */
-export async function softDeleteStore(storeId: string) {
-  // TODO Phase 5: Check if store has active listings before deleting
-  return prisma.store.update({
+export async function deleteStore(storeId: string) {
+  // Unlink Printify shop before deleting (set FK to null)
+  await prisma.store.update({
     where: { id: storeId },
-    data: { deletedAt: new Date() },
+    data: { printifyShopId: null },
+  });
+
+  return prisma.store.delete({
+    where: { id: storeId },
   });
 }
 
@@ -183,38 +195,69 @@ export async function upsertStoreColors(
 }
 
 /**
- * Save mockup templates for a store
+ * Upsert mockup template for a store (1:1 — one store = one template)
  */
-export async function saveStoreTemplates(
+export async function upsertStoreTemplate(
   storeId: string,
-  templates: Array<{
+  data: {
     name: string;
     printifyBlueprintId: number;
     printifyPrintProviderId: number;
+    blueprintTitle?: string;
+    printProviderTitle?: string;
     previewUrl?: string;
     position?: "FRONT" | "BACK" | "SLEEVE";
-    isDefault?: boolean;
-  }>,
+    enabledVariantIds?: number[];
+    defaultPlacement?: Prisma.JsonValue;
+    defaultPromptVersion?: string;
+    defaultAspectRatio?: string;
+    storePresetSnapshot?: Prisma.InputJsonValue;
+  },
 ) {
-  // Delete existing and recreate
-  await prisma.$transaction([
-    prisma.storeMockupTemplate.deleteMany({ where: { storeId } }),
-    ...templates.map((t) =>
-      prisma.storeMockupTemplate.create({
-        data: {
-          storeId,
-          name: t.name,
-          printifyBlueprintId: t.printifyBlueprintId,
-          printifyPrintProviderId: t.printifyPrintProviderId,
-          previewUrl: t.previewUrl ?? null,
-          position: t.position ?? "FRONT",
-          isDefault: t.isDefault ?? false,
-        },
-      }),
-    ),
-  ] as Prisma.PrismaPromise<unknown>[]);
-
-  return prisma.storeMockupTemplate.findMany({
+  return prisma.storeMockupTemplate.upsert({
     where: { storeId },
+    create: {
+      storeId,
+      name: data.name,
+      printifyBlueprintId: data.printifyBlueprintId,
+      printifyPrintProviderId: data.printifyPrintProviderId,
+      blueprintTitle: data.blueprintTitle ?? "",
+      printProviderTitle: data.printProviderTitle ?? "",
+      previewUrl: data.previewUrl ?? null,
+      position: data.position ?? "FRONT",
+      isDefault: true,
+      enabledVariantIds: data.enabledVariantIds ?? [],
+      defaultPlacement: data.defaultPlacement ?? undefined,
+      defaultPromptVersion: data.defaultPromptVersion ?? "v1",
+      defaultAspectRatio: data.defaultAspectRatio ?? "1:1",
+      storePresetSnapshot: data.storePresetSnapshot ?? undefined,
+    },
+    update: {
+      name: data.name,
+      printifyBlueprintId: data.printifyBlueprintId,
+      printifyPrintProviderId: data.printifyPrintProviderId,
+      blueprintTitle: data.blueprintTitle ?? undefined,
+      printProviderTitle: data.printProviderTitle ?? undefined,
+      previewUrl: data.previewUrl ?? null,
+      position: data.position ?? "FRONT",
+      ...(data.enabledVariantIds !== undefined && { enabledVariantIds: data.enabledVariantIds }),
+      defaultPlacement: data.defaultPlacement ?? undefined,
+      ...(data.defaultPromptVersion !== undefined && { defaultPromptVersion: data.defaultPromptVersion }),
+      ...(data.defaultAspectRatio !== undefined && { defaultAspectRatio: data.defaultAspectRatio }),
+      ...(data.storePresetSnapshot !== undefined && { storePresetSnapshot: data.storePresetSnapshot }),
+    },
+  });
+}
+
+/**
+ * Update just the placement preset for a store's template
+ */
+export async function updateTemplatePlacement(
+  storeId: string,
+  defaultPlacement: Prisma.InputJsonValue,
+) {
+  return prisma.storeMockupTemplate.update({
+    where: { storeId },
+    data: { defaultPlacement },
   });
 }

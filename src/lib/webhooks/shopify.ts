@@ -42,7 +42,7 @@ export async function verifyAndLogWebhook(
 
   // Lookup store by domain
   const store = await prisma.store.findFirst({
-    where: { shopifyDomain: shopDomain, deletedAt: null },
+    where: { shopifyDomain: shopDomain },
     include: { credentials: true },
   });
 

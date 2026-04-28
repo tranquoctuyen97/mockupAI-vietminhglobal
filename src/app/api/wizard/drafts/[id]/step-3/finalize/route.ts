@@ -4,6 +4,7 @@ import { validatePlacementSet } from "@/lib/placement/validate";
 import { migratePlacementOnRead } from "@/lib/placement/migrate";
 import { DEFAULT_PRINT_AREA } from "@/lib/placement/types";
 import type { DesignMeta, PlacementData } from "@/lib/placement/types";
+import { normalizePlacementData } from "@/lib/placement/views";
 
 /**
  * POST /api/wizard/drafts/:id/step-3/finalize
@@ -26,7 +27,7 @@ export async function POST(
 
     const draft = await db.wizardDraft.findUnique({
       where: { id: draftId },
-      include: { design: true },
+      include: { design: true, store: { include: { template: true } } },
     });
 
     if (!draft) {
@@ -43,14 +44,17 @@ export async function POST(
     });
     const isBoundaryStrict = boundaryStrictFlag?.enabled !== false; // default on
 
-    // 2. Migrate placement on-read
-    const placementData: PlacementData = migratePlacementOnRead(draft.placement);
+    // 2. Migrate placement on-read. If the draft has no override, validate the store preset.
+    const placementData: PlacementData = normalizePlacementData(
+      migratePlacementOnRead(draft.placementOverride ?? draft.store?.template?.defaultPlacement),
+      true,
+    );
 
     // 3. Resolve print area (use first-variant active view; finalize against FRONT as default)
     let printArea = DEFAULT_PRINT_AREA;
-    if (draft.blueprintId) {
+    if (draft.store?.template?.printifyBlueprintId) {
       const dbArea = await db.blueprintPrintArea.findFirst({
-        where: { printifyBlueprintId: draft.blueprintId, position: "FRONT" as any },
+        where: { printifyBlueprintId: draft.store.template.printifyBlueprintId, position: "FRONT" as any },
       });
       if (dbArea) {
         printArea = {

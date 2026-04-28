@@ -20,7 +20,7 @@ export async function POST(
 
   // Verify store belongs to tenant
   const store = await prisma.store.findFirst({
-    where: { id, tenantId: session.tenantId, deletedAt: null },
+    where: { id, tenantId: session.tenantId },
   });
   if (!store) {
     return NextResponse.json({ error: "Store not found" }, { status: 404 });

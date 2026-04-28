@@ -1,92 +1,77 @@
 /**
  * Mockup composite engine using sharp
- * Creates product mockup: colored background + design overlay
+ * Creates product mockup: colored background + design overlay (v1)
+ * OR overlays design onto actual printify mockup image (v2)
  */
 
 import sharp from "sharp";
+import { Placement } from "../placement/types";
 
-export interface CompositeOptions {
+export interface CompositeImageOptions {
+  mockupBuffer: Buffer;
   designBuffer: Buffer;
-  colorHex: string;
-  placement: {
-    x: number;   // 0-1 relative position
-    y: number;   // 0-1 relative position
-    scale: number; // 0.5-1.0
-    position: "FRONT" | "BACK" | "SLEEVE";
-  };
-  outputWidth?: number;
-  outputHeight?: number;
+  placement: Placement;
+  colorHex?: string;
+  outputPath: string;
 }
 
-const DEFAULT_SIZE = 1200;
-
-// Product template dimensions (design area within canvas)
-const DESIGN_AREA = {
-  FRONT: { x: 0.2, y: 0.15, w: 0.6, h: 0.55 },
-  BACK:  { x: 0.2, y: 0.15, w: 0.6, h: 0.55 },
-  SLEEVE: { x: 0.15, y: 0.3, w: 0.25, h: 0.3 },
-};
-
 /**
- * Generate a mockup image
- * 1. Create canvas with solid color background
- * 2. Resize design to fit placement area
- * 3. Composite design onto canvas
+ * Generate a mockup by overlaying design onto a mockup image
  */
-export async function generateMockup(options: CompositeOptions): Promise<Buffer> {
-  const {
-    designBuffer,
-    colorHex,
-    placement,
-    outputWidth = DEFAULT_SIZE,
-    outputHeight = DEFAULT_SIZE,
-  } = options;
+export async function compositeImage(options: CompositeImageOptions): Promise<void> {
+  const { mockupBuffer, designBuffer, placement, colorHex, outputPath } = options;
 
-  // Parse hex color to RGB
-  const hex = colorHex.replace("#", "");
-  const r = parseInt(hex.substring(0, 2), 16);
-  const g = parseInt(hex.substring(2, 4), 16);
-  const b = parseInt(hex.substring(4, 6), 16);
+  let baseImage = sharp(mockupBuffer);
+  const metadata = await baseImage.metadata();
+  const outputWidth = 1200; // Resvg fitTo.value is 1200
+  const outputHeight = 1400; // Because aspect ratio is 600x700 -> 1200x1400
 
-  // Get design area for position
-  const area = DESIGN_AREA[placement.position] || DESIGN_AREA.FRONT;
+  // Map LivePreview logic:
+  // SVG_VIEWBOX = 600x700
+  // output is 1200x1400 (scale factor = 2)
+  const scale = outputWidth / 600; // = 2
 
-  // Calculate design dimensions
-  const designAreaW = Math.round(outputWidth * area.w * placement.scale);
-  const designAreaH = Math.round(outputHeight * area.h * placement.scale);
+  // Print area from LivePreview:
+  const PRINT_AREA_SVG_HEIGHT = 280;
+  const PRINT_AREA_CENTER_X = 300;
+  const PRINT_AREA_CENTER_Y = 380;
 
-  // Resize design to fit area (maintain aspect ratio)
+  // We need to know the physical print area height to map mm -> SVG units
+  // Standard print area in mm for apparel front (from presets)
+  // Real implementation would pull this from DB print_areas_by_view,
+  // but for Option B v1 we'll use the standard apparel front dimensions:
+  const printAreaHeightMm = 406.4;
+  const printAreaWidthMm = 355.6;
+
+  // Compute print area dimensions in SVG coords
+  const mmToSvg = PRINT_AREA_SVG_HEIGHT / printAreaHeightMm;
+  const printAreaAspect = printAreaWidthMm / printAreaHeightMm;
+  const paSvgH = PRINT_AREA_SVG_HEIGHT;
+  const paSvgW = paSvgH * printAreaAspect;
+  const paSvgX = PRINT_AREA_CENTER_X - paSvgW / 2;
+  const paSvgY = PRINT_AREA_CENTER_Y - paSvgH / 2;
+
+  // Design position in SVG coords
+  const designSvgX = paSvgX + placement.xMm * mmToSvg;
+  const designSvgY = paSvgY + placement.yMm * mmToSvg;
+  const designSvgW = placement.widthMm * mmToSvg;
+  const designSvgH = placement.heightMm * mmToSvg;
+
+  // Convert SVG coords to final pixel output
+  const designW = Math.max(1, Math.round(designSvgW * scale));
+  const designH = Math.max(1, Math.round(designSvgH * scale));
+  const left = Math.round(designSvgX * scale);
+  const top = Math.round(designSvgY * scale);
+
   const resizedDesign = await sharp(designBuffer)
-    .resize(designAreaW, designAreaH, {
+    .resize(designW, designH, {
       fit: "inside",
       withoutEnlargement: false,
     })
     .png()
     .toBuffer();
 
-  // Get actual resized dimensions
-  const resizedMeta = await sharp(resizedDesign).metadata();
-  const actualW = resizedMeta.width || designAreaW;
-  const actualH = resizedMeta.height || designAreaH;
-
-  // Calculate position (centered within design area, adjusted by placement x/y)
-  const areaLeft = Math.round(outputWidth * area.x);
-  const areaTop = Math.round(outputHeight * area.y);
-  const offsetX = Math.round((outputWidth * area.w - actualW) * placement.x);
-  const offsetY = Math.round((outputHeight * area.h - actualH) * placement.y);
-
-  const left = areaLeft + offsetX;
-  const top = areaTop + offsetY;
-
-  // Create canvas + composite
-  const mockup = await sharp({
-    create: {
-      width: outputWidth,
-      height: outputHeight,
-      channels: 4,
-      background: { r, g, b, alpha: 1 },
-    },
-  })
+  await baseImage
     .composite([
       {
         input: resizedDesign,
@@ -94,8 +79,6 @@ export async function generateMockup(options: CompositeOptions): Promise<Buffer>
         top: Math.max(0, top),
       },
     ])
-    .webp({ quality: 85 })
-    .toBuffer();
-
-  return mockup;
+    .png()
+    .toFile(outputPath);
 }

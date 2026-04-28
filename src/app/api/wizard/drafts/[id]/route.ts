@@ -95,14 +95,45 @@ export async function DELETE(
 
 // ── Checklist builder ────────────────────────────────────────────────────────
 
-async function buildChecklist(draft: any) {
-  const jobs = (draft.mockupJobs ?? []) as Array<{ status: string; colorName: string }>;
-  const colors = (draft.selectedColors as Array<{ title: string }>) ?? [];
+export async function buildChecklist(
+  draft: any,
+  deps: {
+    getFeatureFlag?: (key: string) => Promise<{ enabled: boolean } | null>;
+  } = {},
+) {
+  const selectedColorIds = new Set((draft.enabledColorIds ?? []) as string[]);
+  const selectedColors = ((draft.store?.colors ?? []) as Array<{ id: string; name: string }>)
+    .filter((color) => selectedColorIds.has(color.id));
 
-  // 1. Mockup count matches selected color count
-  const succeededJobs = jobs.filter((j) => j.status === "SUCCEEDED");
+  const realMockupsFlag = deps.getFeatureFlag
+    ? await deps.getFeatureFlag("printify_real_mockups")
+    : await prisma.featureFlag.findFirst({
+        where: { key: "printify_real_mockups" },
+      });
+  const requireRealPrintifyMockups = realMockupsFlag?.enabled === true;
+
+  const completedJobs = ((draft.mockupJobs ?? []) as Array<{
+    status: string;
+    images?: Array<{
+      colorName: string;
+      included: boolean;
+      compositeUrl?: string | null;
+      sourceUrl?: string | null;
+    }>;
+  }>)
+    .filter((job) => job.status === "completed");
+  const includedImages = completedJobs
+    .flatMap((job) => job.images ?? [])
+    .filter((image) => image.included)
+    .filter((image) => !requireRealPrintifyMockups || isRealPrintifyMockup(image));
+
+  // 1. Every selected color needs at least one included image from a completed job.
+  const colorsWithMockup = new Set(
+    includedImages.map((image) => normalizeColorName(image.colorName)),
+  );
   const mockupsMatchColors =
-    colors.length > 0 && succeededJobs.length === colors.length;
+    selectedColors.length > 0 &&
+    selectedColors.every((color) => colorsWithMockup.has(normalizeColorName(color.name)));
 
   // 2. Content: title + description + tags present
   const content = draft.aiContent as {
@@ -118,11 +149,15 @@ async function buildChecklist(draft: any) {
   // If placement_boundary_strict flag is OFF, treat placement as valid
   let placementValid = true;
   try {
-    const strictFlag = await prisma.featureFlag.findFirst({
-      where: { key: "placement_boundary_strict" },
-    });
+    const strictFlag = deps.getFeatureFlag
+      ? await deps.getFeatureFlag("placement_boundary_strict")
+      : await prisma.featureFlag.findFirst({
+          where: { key: "placement_boundary_strict" },
+        });
     if (strictFlag?.enabled !== false) {
-      const placementData: PlacementData = migratePlacementOnRead(draft.placement);
+      const placementData: PlacementData = migratePlacementOnRead(
+        draft.placementOverride ?? draft.store?.template?.defaultPlacement,
+      );
       const design = draft.design as { width: number; height: number; dpi: number | null } | null;
       if (design) {
         const designMeta: DesignMeta = {
@@ -152,4 +187,14 @@ async function buildChecklist(draft: any) {
     mockupsNotStale,
     readyToPublish,
   };
+}
+
+function normalizeColorName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function isRealPrintifyMockup(image: { compositeUrl?: string | null; sourceUrl?: string | null }): boolean {
+  const url = image.compositeUrl ?? image.sourceUrl;
+  if (!url || !/^https?:\/\//i.test(url)) return false;
+  return !url.includes("via.placeholder.com");
 }

@@ -16,7 +16,7 @@ export function startHealthCheckWorker() {
       console.log("[HealthCheck] Starting store health check...");
 
       const stores = await prisma.store.findMany({
-        where: { deletedAt: null },
+        where: {},
         select: { id: true, name: true, status: true, tenantId: true },
       });
 

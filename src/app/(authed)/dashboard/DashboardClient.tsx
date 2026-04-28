@@ -305,7 +305,7 @@ export default function DashboardClient({ summary, chartData, topDesigns }: Prop
               },
               {
                 title: "Tạo Listing",
-                desc: "Wizard 7 bước",
+                desc: "Wizard 5 bước",
                 href: "/wizard",
               },
             ].map((action) => (

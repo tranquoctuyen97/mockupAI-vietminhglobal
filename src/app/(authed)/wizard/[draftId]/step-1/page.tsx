@@ -54,10 +54,10 @@ export default function Step1StorePage() {
   function handleSelect(storeId: string) {
     updateDraft({
       storeId,
-      // Reset downstream selections when store changes
-      blueprintId: null,
-      printProviderId: null,
-      selectedColors: [],
+      // Reset store-dependent selections when store changes.
+      enabledColorIds: [],
+      enabledVariantIdsOverride: [],
+      placementOverride: null,
     });
   }
 

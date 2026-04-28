@@ -163,6 +163,7 @@ model Store {
   shopifyDomain   String      @map("shopify_domain") // mystore.myshopify.com
   shopifyShopId   String?     @map("shopify_shop_id") // gid://shopify/Shop/...
   printifyShopId  String?     @unique @map("printify_shop_id") // 1 shop = 1 store
+  printifyShopTitle String?    @map("printify_shop_title") // Cached shop display name
   status          StoreStatus @default(ACTIVE)
   lastHealthCheck DateTime?   @map("last_health_check")
   createdBy       String?     @map("created_by")
@@ -170,12 +171,17 @@ model Store {
   updatedAt       DateTime    @updatedAt @map("updated_at")
   deletedAt       DateTime?   @map("deleted_at")
 
+  // Phase 6.10 — Store-level preset fields (price/publish stay on Store)
+  defaultPriceUsd      Decimal @default(24.99) @db.Decimal(10, 2) @map("default_price_usd")
+  publishMode          String  @default("draft") @map("publish_mode") // 'draft' | 'active'
+
   tenant       Tenant                @relation(fields: [tenantId], references: [id])
   printifyShop PrintifyShop?         @relation(fields: [printifyShopId], references: [id], onDelete: SetNull)
   credentials  StoreCredentials?
   colors       StoreColor[]
-  templates    StoreMockupTemplate[]
+  template     StoreMockupTemplate?  // 1:1 — @@unique([storeId])
   wizardDrafts WizardDraft[]
+  listings     Listing[]
 
   @@unique([tenantId, shopifyDomain])
   @@index([tenantId, status])
@@ -202,12 +208,13 @@ model StoreCredentials {
 }
 
 model StoreColor {
-  id              String  @id @default(cuid())
-  storeId         String  @map("store_id")
+  id              String   @id @default(cuid())
+  storeId         String   @map("store_id")
   name            String
   hex             String
-  printifyColorId String? @map("printify_color_id")
-  sortOrder       Int     @default(0) @map("sort_order")
+  printifyColorId String?  @map("printify_color_id")
+  enabled         Boolean  @default(true)
+  sortOrder       Int      @default(0) @map("sort_order")
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
@@ -222,13 +229,24 @@ model StoreMockupTemplate {
   name                    String
   printifyBlueprintId     Int              @map("printify_blueprint_id")
   printifyPrintProviderId Int              @map("printify_print_provider_id")
+  blueprintTitle          String           @default("") @map("blueprint_title")
+  printProviderTitle      String           @default("") @map("print_provider_title")
   previewUrl              String?          @map("preview_url")
   position                TemplatePosition @default(FRONT)
   isDefault               Boolean          @default(false) @map("is_default")
-  // Placement override (mm) — null = use Printify default (center)
-  placementOffsetXMm      Float?           @map("placement_offset_x_mm")
-  placementOffsetYMm      Float?           @map("placement_offset_y_mm")
-  placementScalePercent   Float?           @map("placement_scale_percent") // 100 = full area
+  // Phase 6.10 — Template-level preset fields
+  enabledVariantIds       Int[]            @default([]) @map("enabled_variant_ids")
+  enabledSizes            String[]         @default([]) @map("enabled_sizes")
+  defaultPlacement        Json?            @map("default_placement")
+  defaultPromptVersion    String           @default("v1") @map("default_prompt_version")
+  defaultAspectRatio      String           @default("1:1") @map("default_aspect_ratio")
+  storePresetSnapshot     Json?            @map("store_preset_snapshot")
+  schemaVersion           Int              @default(1) @map("schema_version")
+  // UI Improvement — dynamic print area per view (Sprint 2.1)
+  printAreasByView        Json?            @map("print_areas_by_view")
+  // UI Improvement — blueprint metadata cache (Sprint 4.1)
+  blueprintImageUrl       String?          @map("blueprint_image_url")
+  blueprintBrand          String?          @map("blueprint_brand")
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
@@ -296,17 +314,21 @@ model WizardDraft {
   tenantId        String      @map("tenant_id")
   designId        String?     @map("design_id")
   storeId         String?     @map("store_id")
-  productType     String?     @map("product_type") // e.g. "T-Shirt", "Hoodie"
-  blueprintId     Int?        @map("blueprint_id")
-  printProviderId Int?        @map("print_provider_id")
-  selectedColors  Json?       @map("selected_colors") // Extracted colors
-  placement       Json?       @map("placement") // e.g. { position: "FRONT", scale: 0.8, x: 0.5, y: 0.5 }
-  aiContent       Json?       @map("ai_content") // Added for Phase 4: title, desc, etc.
+
+  aiContent       Json?       @map("ai_content") // Phase 4: title, desc, tags, etc.
   currentStep     Int         @default(1) @map("current_step")
   status          DraftStatus @default(DRAFT)
-  // Phase 6.9: mockup stale detection (set by DB trigger, reset by regenerate worker)
+  // Phase 6.9: mockup stale detection
   mockupsStale       Boolean  @default(false) @map("mockups_stale")
-  mockupsStaleReason String?  @map("mockups_stale_reason") // "colors_changed" | "design_changed" | "placement_changed"
+  mockupsStaleReason String?  @map("mockups_stale_reason")
+  // Phase 6.10: variants user keeps after tick/untick at step-3 Preview
+  enabledVariantIdsOverride Int[] @default([]) @map("enabled_variant_ids_override")
+  // Phase 6.10: new fields
+  enabledColorIds    String[] @default([]) @map("enabled_color_ids")
+  enabledSizes       String[] @default([]) @map("enabled_sizes")
+  placementOverride  Json?    @map("placement_override")
+  printifyDraftProductId String? @map("printify_draft_product_id")
+  printifyImageId        String? @map("printify_image_id")
   updatedAt       DateTime    @updatedAt @map("updated_at")
 
   mockupJobs MockupJob[]
@@ -327,31 +349,49 @@ enum DraftStatus {
   ABANDONED
 }
 
-model MockupJob {
-  id                String          @id @default(cuid())
-  wizardDraftId     String          @map("wizard_draft_id")
-  colorName         String          @map("color_name")
-  colorHex          String          @map("color_hex")
-  templateId        String          @map("template_id")
-  templateName      String          @map("template_name")
-  status            MockupJobStatus @default(PENDING)
-  mockupStoragePath String?         @map("mockup_storage_path")
-  errorMessage      String?         @map("error_message")
-  attempts          Int             @default(0)
-  createdAt         DateTime        @default(now()) @map("created_at")
-  completedAt       DateTime?       @map("completed_at")
+model MockupImage {
+  id                  String   @id @default(cuid())
+  mockupJobId         String   @map("mockup_job_id")
+  printifyMockupId    String   @map("printify_mockup_id")
+  variantId           Int      @map("variant_id")
+  colorName           String   @map("color_name")
+  viewPosition        String   @map("view_position")
+  sourceUrl           String   @map("source_url")
+  compositeUrl        String?  @map("composite_url")
+  compositeStatus     String   @default("pending") @map("composite_status") // pending | processing | completed | failed
+  compositeError      String?  @map("composite_error")
+  included            Boolean  @default(false)
+  mockupType          String   @default("front") @map("mockup_type")
+  isDefault           Boolean  @default(false) @map("is_default")
+  cameraLabel         String?  @map("camera_label")
+  sortOrder           Int      @default(0) @map("sort_order")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
 
-  wizardDraft WizardDraft @relation(fields: [wizardDraftId], references: [id], onDelete: Cascade)
+  mockupJob           MockupJob @relation(fields: [mockupJobId], references: [id], onDelete: Cascade)
 
-  @@index([wizardDraftId, status])
-  @@map("mockup_jobs")
+  @@index([mockupJobId, variantId])
+  @@index([mockupJobId, isDefault])
+  @@map("mockup_images")
 }
 
-enum MockupJobStatus {
-  PENDING
-  RUNNING
-  SUCCEEDED
-  FAILED
+model MockupJob {
+  id                  String   @id @default(cuid())
+  draftId             String   @map("wizard_draft_id")
+  status              String   @default("pending")  // pending | running | completed | failed
+  totalImages         Int      @default(0) @map("total_images")
+  completedImages     Int      @default(0) @map("completed_images")
+  failedImages        Int      @default(0) @map("failed_images")
+  errorMessage        String?  @map("error_message")
+  placementSnapshot   Json     @map("placement_snapshot") // PlacementData at job creation time
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  draft               WizardDraft   @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  images              MockupImage[]
+
+  @@index([draftId, status])
+  @@map("mockup_jobs")
 }
 
 // ============================================================
@@ -416,7 +456,7 @@ enum PublishStage {
 model Listing {
   id                String        @id @default(cuid())
   tenantId          String        @map("tenant_id")
-  storeId           String        @map("store_id")
+  storeId           String?       @map("store_id")
   designId          String?       @map("design_id")
   wizardDraftId     String?       @unique @map("wizard_draft_id")
   shopifyProductId  String?       @map("shopify_product_id")
@@ -431,6 +471,7 @@ model Listing {
   createdBy         String        @map("created_by")
   createdAt         DateTime      @default(now()) @map("created_at")
 
+  store       Store?         @relation(fields: [storeId], references: [id], onDelete: SetNull)
   variants    ListingVariant[]
   publishJobs PublishJob[]
 
@@ -577,4 +618,25 @@ model BlueprintPrintArea {
   syncedAt             DateTime          @default(now()) @map("synced_at")
 
   @@map("blueprint_print_areas")
+}
+
+// ============================================================
+// Size Variants — Printify cost cache
+// ============================================================
+
+model PrintifyVariantCache {
+  blueprintId     Int      @map("blueprint_id")
+  printProviderId Int      @map("print_provider_id")
+  variantId       Int      @map("variant_id")
+  colorName       String   @map("color_name")
+  colorHex        String?  @map("color_hex")
+  size            String
+  sku             String?
+  costCents       Int      @default(0) @map("cost_cents")
+  isAvailable     Boolean  @default(true) @map("is_available")
+  fetchedAt       DateTime @default(now()) @map("fetched_at")
+
+  @@id([blueprintId, printProviderId, variantId])
+  @@index([blueprintId, printProviderId])
+  @@map("printify_variant_cache")
 }

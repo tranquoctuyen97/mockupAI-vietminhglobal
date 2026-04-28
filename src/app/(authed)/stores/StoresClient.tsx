@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { toast } from "sonner";
 import {
   Store,
   Plus,
@@ -21,8 +22,9 @@ interface StoreData {
   printifyShopId: string | null;
   status: "ACTIVE" | "TOKEN_EXPIRED" | "ERROR";
   lastHealthCheck: string | null;
-  colors: Array<{ id: string; name: string; hex: string }>;
+  colors: Array<{ id: string; name: string; hex: string; enabled?: boolean }>;
   templates: Array<{ id: string; name: string }>;
+  presetStatus?: { ready: boolean; missing: string[]; completionPercent: number };
   createdAt: string;
 }
 
@@ -54,22 +56,29 @@ export default function StoresClient({ initialStores, userRole }: Props) {
       const result = await res.json();
       await fetchStores();
       if (result.status === "ACTIVE") {
-        alert("✅ Kết nối OK!");
+        toast.success("Kết nối OK!");
       } else {
-        alert(`⚠️ Có lỗi: ${result.shopify?.error || result.printify?.error}`);
+        toast.error(`Lỗi: ${result.shopify?.error || result.printify?.error || "Không xác định"}`);
       }
     } catch {
-      alert("Lỗi kết nối");
+      toast.error("Lỗi kết nối");
     }
   }
 
   async function handleDelete(storeId: string, storeName: string) {
-    if (!confirm(`Bạn chắc muốn xóa store "${storeName}"?`)) return;
+    // Native confirm vẫn dùng cho destructive — user phải chủ động click OK,
+    // tránh accidental deletion từ keyboard shortcut. Toast confirm có thể auto-dismiss.
+    if (!confirm(`Bạn chắc muốn xóa store "${storeName}"?\n\nThao tác không thể hoàn tác.`)) return;
     try {
-      await fetch(`/api/stores/${storeId}`, { method: "DELETE" });
-      await fetchStores();
+      const res = await fetch(`/api/stores/${storeId}`, { method: "DELETE" });
+      if (res.ok) {
+        toast.success(`Đã xóa store "${storeName}"`);
+        await fetchStores();
+      } else {
+        toast.error("Lỗi khi xóa store");
+      }
     } catch {
-      alert("Lỗi khi xóa store");
+      toast.error("Lỗi khi xóa store");
     }
   }
 
@@ -163,11 +172,41 @@ export default function StoresClient({ initialStores, userRole }: Props) {
                   <div className="flex items-center gap-6" style={{ fontSize: "0.875rem" }}>
                     <div className="flex items-center gap-2" style={{ opacity: 0.6 }}>
                       <Palette size={14} />
-                      <span>{store.colors.length} màu</span>
+                      <span>{store.colors.filter(c => c.enabled !== false).length} màu</span>
                     </div>
                     <div style={{ opacity: 0.6 }}>
                       {store.printifyShopId ? "✅ Printify" : "❌ Chưa kết nối Printify"}
                     </div>
+                    {store.presetStatus && (
+                      <div style={{ minWidth: 110 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem", marginBottom: 2 }}>
+                          <span style={{ opacity: 0.6, fontWeight: 600 }}>Preset</span>
+                          <span
+                            style={{
+                              fontWeight: 700,
+                              color: store.presetStatus.ready
+                                ? "var(--color-wise-green)"
+                                : "#f59e0b",
+                            }}
+                          >
+                            {store.presetStatus.completionPercent}%
+                          </span>
+                        </div>
+                        <div style={{ height: 4, borderRadius: 2, background: "var(--bg-inset)" }}>
+                          <div
+                            style={{
+                              height: "100%",
+                              borderRadius: 2,
+                              width: `${store.presetStatus.completionPercent}%`,
+                              background: store.presetStatus.ready
+                                ? "var(--color-wise-green)"
+                                : "#f59e0b",
+                              transition: "width 0.3s",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
                     {store.lastHealthCheck && (
                       <div style={{ opacity: 0.4, fontSize: "0.8rem" }}>
                         Check: {new Date(store.lastHealthCheck).toLocaleDateString("vi-VN")}

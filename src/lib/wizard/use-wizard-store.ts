@@ -10,11 +10,33 @@ interface SelectedColor {
 
 interface MockupJob {
   id: string;
-  colorName: string;
-  colorHex: string;
   status: string;
-  mockupStoragePath: string | null;
   errorMessage: string | null;
+  totalImages?: number;
+  completedImages?: number;
+  failedImages?: number;
+  images?: MockupImage[];
+}
+
+interface MockupImage {
+  id: string;
+  colorName: string;
+  viewPosition: string;
+  sourceUrl: string;
+  compositeUrl: string | null;
+  compositeStatus: string;
+  included: boolean;
+  sortOrder: number;
+  mockupType?: string | null;
+  isDefault?: boolean;
+  cameraLabel?: string | null;
+}
+
+interface StoreColor {
+  id: string;
+  name: string;
+  hex: string;
+  enabled?: boolean;
 }
 
 interface DraftData {
@@ -25,6 +47,17 @@ interface DraftData {
   blueprintId: number | null;
   printProviderId: number | null;
   selectedColors: SelectedColor[] | null;
+  enabledColorIds: string[] | null;
+  enabledSizes: string[] | null;
+  store?: {
+    colors?: StoreColor[];
+    template?: {
+      blueprintTitle?: string;
+      defaultPlacement?: unknown;
+      enabledVariantIds?: number[];
+    } | null;
+  } | null;
+  placementOverride: unknown | null;
   placement: unknown | null;
   aiContent: unknown | null;
   currentStep: number;
@@ -50,11 +83,48 @@ interface WizardStore {
   saving: boolean;
   saveTimer: ReturnType<typeof setTimeout> | null;
 
+  pendingPatch: Record<string, unknown>;
+
   loadDraft: (id: string) => Promise<void>;
   updateDraft: (patch: Record<string, unknown>) => Promise<void>;
+  saveDraftImmediately: () => Promise<void>;
   setDraft: (draft: DraftData) => void;
   updateMockupJob: (jobId: string, update: Partial<MockupJob>) => void;
   setChecklist: (cl: ChecklistData) => void;
+}
+
+export function filterChangedDraftPatch(
+  draft: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const changed: Record<string, unknown> = {};
+
+  for (const [key, nextValue] of Object.entries(patch)) {
+    const currentValue = draft[key];
+    if (!areDraftValuesEqual(currentValue, nextValue)) {
+      changed[key] = nextValue;
+    }
+  }
+
+  return changed;
+}
+
+function areDraftValuesEqual(currentValue: unknown, nextValue: unknown): boolean {
+  if (currentValue === nextValue) return true;
+  if (currentValue == null && nextValue == null) return true;
+
+  if (Array.isArray(currentValue) || Array.isArray(nextValue)) {
+    return JSON.stringify(currentValue ?? null) === JSON.stringify(nextValue ?? null);
+  }
+
+  if (
+    typeof currentValue === "object" ||
+    typeof nextValue === "object"
+  ) {
+    return JSON.stringify(currentValue ?? null) === JSON.stringify(nextValue ?? null);
+  }
+
+  return false;
 }
 
 export const useWizardStore = create<WizardStore>((set, get) => ({
@@ -63,6 +133,7 @@ export const useWizardStore = create<WizardStore>((set, get) => ({
   loading: false,
   saving: false,
   saveTimer: null,
+  pendingPatch: {},
 
   loadDraft: async (id: string) => {
     set({ loading: true });
@@ -82,37 +153,64 @@ export const useWizardStore = create<WizardStore>((set, get) => ({
   },
 
   updateDraft: async (patch: Record<string, unknown>) => {
-    const { draft, saveTimer } = get();
+    const { draft, saveTimer, pendingPatch } = get();
     if (!draft) return;
+
+    const changedPatch = filterChangedDraftPatch(
+      draft as unknown as Record<string, unknown>,
+      patch,
+    );
+    if (Object.keys(changedPatch).length === 0) return;
+
+    const newPendingPatch = { ...pendingPatch, ...changedPatch };
 
     // Optimistic update
     set({
-      draft: { ...draft, ...patch } as DraftData,
+      draft: { ...draft, ...changedPatch } as DraftData,
+      pendingPatch: newPendingPatch
     });
 
     // Debounce save (1s)
     if (saveTimer) clearTimeout(saveTimer);
 
     const timer = setTimeout(async () => {
-      set({ saving: true });
-      try {
-        const res = await fetch(`/api/wizard/drafts/${draft.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(patch),
-        });
-        if (res.ok) {
-          const updated = await res.json();
-          set({ draft: { ...get().draft!, ...updated }, saving: false });
-        } else {
-          set({ saving: false });
-        }
-      } catch {
-        set({ saving: false });
-      }
+      await get().saveDraftImmediately();
     }, 1000);
 
     set({ saveTimer: timer });
+  },
+
+  saveDraftImmediately: async () => {
+    const { draft, saveTimer, pendingPatch } = get();
+    if (!draft) return;
+    if (Object.keys(pendingPatch).length === 0) return; // Nothing to save
+
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      set({ saveTimer: null });
+    }
+
+    set({ saving: true });
+    try {
+      const currentPatch = { ...get().pendingPatch };
+      // Clear pending patch before request so new updates can accumulate
+      set({ pendingPatch: {} });
+
+      const res = await fetch(`/api/wizard/drafts/${draft.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(currentPatch),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        set({ draft: { ...get().draft!, ...updated }, saving: false });
+      } else {
+        // Restore pending patch on failure?
+        set({ saving: false, pendingPatch: { ...currentPatch, ...get().pendingPatch } });
+      }
+    } catch {
+      set({ saving: false });
+    }
   },
 
   setDraft: (draft: DraftData) => set({ draft }),
