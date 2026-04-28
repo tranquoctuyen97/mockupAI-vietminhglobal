@@ -25,6 +25,7 @@ export async function POST(
     },
     include: {
       design: true,
+      store: { include: { colors: true, template: true } },
     },
   });
 
@@ -36,19 +37,16 @@ export async function POST(
   if (!draft.design) {
     return NextResponse.json({ error: "Design not selected" }, { status: 400 });
   }
-  if (!draft.productType) {
-    return NextResponse.json({ error: "Product type not selected" }, { status: 400 });
-  }
 
   // Cast JsonValue to structured fallback
-  const colors = (draft.selectedColors as Array<{ title: string }>) || [];
-  const colorNames = colors.map((c) => c.title);
-  const placementObj = (draft.placement as { position?: string }) || {};
+  const colors = draft.store?.colors?.filter((c: any) => draft.enabledColorIds.includes(c.id)).map((c: any) => c.name) || [];
+  const placementObj = (draft.placementOverride as { position?: string }) || {};
+  const productType = draft.store?.template?.blueprintTitle || draft.store?.name || "T-Shirt";
 
   const input = {
     designName: draft.design.name,
-    productType: draft.productType,
-    colors: colorNames.length > 0 ? colorNames : ["Default"],
+    productType,
+    colors: colors.length > 0 ? colors : ["Default"],
     placement: placementObj.position || "Front",
   };
 
@@ -67,8 +65,14 @@ export async function POST(
       return NextResponse.json({ content: cached, cached: true });
     }
 
-    // Call provider with retry (handles 503, 502, 500 transiently)
-    const result = await withRetry(() => generator.generate(input), { maxAttempts: 3 });
+    // Call provider with retry + overall timeout cap
+    const GENERATE_TIMEOUT_MS = 45_000;
+    const result = await Promise.race([
+      withRetry(() => generator.generate(input), { maxAttempts: 2 }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("AI provider timeout (45s)")), GENERATE_TIMEOUT_MS),
+      ),
+    ]);
 
     // Save to Cache
     await saveToCache(cacheKey, result, config.provider, config.model);

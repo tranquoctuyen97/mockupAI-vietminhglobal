@@ -7,6 +7,67 @@ import type { PrintifyShop, Blueprint, PrintProvider, Variant } from "./types";
 
 const PRINTIFY_BASE_URL = "https://api.printify.com/v1";
 
+export interface PrintifyUploadImageResponse {
+  id: string;
+  file_name?: string;
+  height?: number;
+  width?: number;
+  preview_url?: string;
+}
+
+export interface PrintifyProductImage {
+  id?: string;
+  src: string;
+  variant_ids?: number[];
+  position?: string;
+  is_default?: boolean;
+}
+
+export interface PrintifyProductOptionValue {
+  id: number;
+  title: string;
+  colors?: string[];
+}
+
+export interface PrintifyProductOption {
+  name: string;
+  type: string;
+  values: PrintifyProductOptionValue[];
+  display_in_preview?: boolean;
+}
+
+export interface PrintifyProductVariant {
+  id: number;
+  title?: string;
+  sku?: string;
+  cost?: number;           // cents (only in shop product, not catalog)
+  price?: number;          // cents
+  grams?: number;
+  is_enabled?: boolean;
+  is_default?: boolean;
+  is_available?: boolean;
+  options?: number[];      // option value IDs
+}
+
+export interface PrintifyProductResponse {
+  id: string;
+  title: string;
+  images?: PrintifyProductImage[];
+  variants?: PrintifyProductVariant[];
+  options?: PrintifyProductOption[];
+  external?: { id: string; handle?: string };
+}
+
+export interface PrintifyPublishPayload {
+  title: boolean;
+  description: boolean;
+  images: boolean;
+  variants: boolean;
+  tags: boolean;
+  keyFeatures?: boolean;
+  shipping_template?: boolean;
+}
+
 export class PrintifyClient {
   private apiKey: string;
 
@@ -34,6 +95,11 @@ export class PrintifyClient {
 
     if (response.status === 429) {
       throw new PrintifyRateLimitError("Rate limit exceeded. Try again later.");
+    }
+
+    if (response.status === 404) {
+      const text = await response.text();
+      throw new PrintifyNotFoundError(`Printify resource not found (404): ${text}`);
     }
 
     if (!response.ok) {
@@ -88,6 +154,81 @@ export class PrintifyClient {
       `/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`,
     );
   }
+
+  async uploadImageBase64(input: {
+    fileName: string;
+    contentsBase64: string;
+  }): Promise<PrintifyUploadImageResponse> {
+    return this.request<PrintifyUploadImageResponse>("/uploads/images.json", {
+      method: "POST",
+      body: JSON.stringify({
+        file_name: input.fileName,
+        contents: input.contentsBase64,
+      }),
+    });
+  }
+
+  async createProduct(
+    shopId: number,
+    payload: unknown,
+  ): Promise<PrintifyProductResponse> {
+    return this.request<PrintifyProductResponse>(`/shops/${shopId}/products.json`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateProduct(
+    shopId: number,
+    productId: string,
+    payload: unknown,
+  ): Promise<PrintifyProductResponse> {
+    return this.request<PrintifyProductResponse>(
+      `/shops/${shopId}/products/${productId}.json`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      },
+    );
+  }
+
+  async getProduct(
+    shopId: number,
+    productId: string,
+  ): Promise<PrintifyProductResponse> {
+    return this.request<PrintifyProductResponse>(
+      `/shops/${shopId}/products/${productId}.json`,
+    );
+  }
+
+  async getProducts(
+    shopId: number,
+    page: number = 1,
+  ): Promise<{ data: PrintifyProductResponse[] }> {
+    return this.request<{ data: PrintifyProductResponse[] }>(
+      `/shops/${shopId}/products.json?page=${page}`,
+    );
+  }
+
+  async deleteProduct(shopId: number, productId: string): Promise<void> {
+    await this.request<unknown>(`/shops/${shopId}/products/${productId}.json`, {
+      method: "DELETE",
+    });
+  }
+
+  async publishProduct(
+    shopId: number,
+    productId: string,
+    payload: PrintifyPublishPayload,
+  ): Promise<unknown> {
+    return this.request<unknown>(
+      `/shops/${shopId}/products/${productId}/publish.json`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  }
 }
 
 // Error classes
@@ -109,5 +250,12 @@ export class PrintifyRateLimitError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PrintifyRateLimitError";
+  }
+}
+
+export class PrintifyNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PrintifyNotFoundError";
   }
 }

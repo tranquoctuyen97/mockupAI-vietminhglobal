@@ -39,13 +39,18 @@ export interface PlacementData {
   variants: Record<string, VariantViews>;
 }
 
+export interface PlacementForView extends Placement {
+  // Option B upgrade slot — empty in Phase 6.10, populated when upgrading
+  imageOverrides?: Record<string, Partial<Placement>>;  // key = mockupImageId
+}
+
 export interface VariantViews {
-  front?: Placement | null;
-  back?: Placement | null;
-  sleeve_left?: Placement | null;
-  sleeve_right?: Placement | null;
-  neck_label?: Placement | null;
-  hem?: Placement | null;
+  front?: PlacementForView | null;
+  back?: PlacementForView | null;
+  sleeve_left?: PlacementForView | null;
+  sleeve_right?: PlacementForView | null;
+  neck_label?: PlacementForView | null;
+  hem?: PlacementForView | null;
 }
 
 export type ViewKey = keyof VariantViews;

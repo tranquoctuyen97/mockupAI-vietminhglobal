@@ -21,7 +21,7 @@ export async function POST(
   // Load draft with all data
   const draft = await prisma.wizardDraft.findFirst({
     where: { id: draftId, tenantId: session.tenantId },
-    include: { design: true, mockupJobs: true },
+    include: { design: true, mockupJobs: true, store: { include: { template: true, colors: true } } },
   });
 
   if (!draft) {
@@ -35,9 +35,11 @@ export async function POST(
   if (!draft.storeId) {
     return NextResponse.json({ error: "Store not selected" }, { status: 400 });
   }
-  if (!draft.productType) {
-    return NextResponse.json({ error: "Product type not selected" }, { status: 400 });
+  // Validate store still exists (prevent dangling refs after hard-delete)
+  if (!draft.store) {
+    return NextResponse.json({ error: "Store không tồn tại. Vui lòng chọn lại store." }, { status: 400 });
   }
+  const productType = draft.store?.template?.blueprintTitle || draft.store?.name || "T-Shirt";
 
   const aiContent = draft.aiContent as { title?: string; description?: string; tags?: string[] } | null;
   if (!aiContent?.title) {
@@ -59,13 +61,12 @@ export async function POST(
     });
   }
 
-  // Get pricing
   const pricingTemplate = await prisma.productPricingTemplate.findFirst({
-    where: { tenantId: session.tenantId, productType: draft.productType },
+    where: { tenantId: session.tenantId, productType },
   });
-  const priceUsd = pricingTemplate?.basePriceUsd || 24.99;
+  const priceUsd = pricingTemplate?.basePriceUsd || draft.store?.defaultPriceUsd?.toNumber() || 24.99;
 
-  const colors = (draft.selectedColors as Array<{ title: string; hex: string }>) || [];
+  const colors = draft.store?.colors?.filter((c: any) => draft.enabledColorIds.includes(c.id)).map((c: any) => ({ title: c.name, hex: c.hex })) || [];
 
   // Create listing
   const listing = await prisma.listing.create({

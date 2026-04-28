@@ -31,7 +31,7 @@ export async function POST(
       return NextResponse.json({ error: "Draft not found" }, { status: 404 });
     }
 
-    let placementData = draft.placement as unknown as PlacementData;
+    let placementData = draft.placementOverride as unknown as PlacementData;
     if (!placementData || placementData.version !== 2) {
       return NextResponse.json(
         { error: "No placement data to copy" },
@@ -53,7 +53,7 @@ export async function POST(
     await db.wizardDraft.update({
       where: { id: draftId },
       data: {
-        placement: placementData as any,
+        placementOverride: placementData as any,
       },
     });
 

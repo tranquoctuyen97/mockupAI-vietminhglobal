@@ -29,6 +29,16 @@ const DEFAULT_FLAGS = [
     description: "Publish simulate không gọi Shopify/Printify API thật.",
   },
   {
+    key: "printify_real_mockups",
+    enabled: false,
+    description: "Dùng product draft thật của Printify để lấy mockup image, thay cho local composite synthetic.",
+  },
+  {
+    key: "printify_orphan_cleanup_enabled",
+    enabled: true,
+    description: "Cho phép cleanup xóa Printify draft product bị orphan khi draft local đã bị xóa hoặc quá hạn.",
+  },
+  {
     key: "ai_prompt_version",
     enabled: true,
     description: "A/B test prompt mới. rollout_percent để điều chỉnh.",
@@ -145,6 +155,7 @@ async function main() {
       where: { key: flag.key },
       update: {
         description: flag.description,
+        rolloutPercent: 100,
       },
       create: {
         key: flag.key,

@@ -3,19 +3,44 @@
  */
 
 import { prisma } from "@/lib/db";
-import type { DraftStatus } from "@prisma/client";
+import { Prisma, type DraftStatus } from "@prisma/client";
+import { deleteDraftWithPrintifyCleanup } from "./cleanup";
 
 export interface DraftPatch {
-  designId?: string;
-  storeId?: string;
-  productType?: string;
-  blueprintId?: number;
-  printProviderId?: number;
-  selectedColors?: unknown;
-  placement?: unknown;
-  aiContent?: unknown;
+  designId?: string | null;
+  storeId?: string | null;
+  enabledColorIds?: string[];
+  enabledSizes?: string[];
+  enabledVariantIdsOverride?: number[];
+  placementOverride?: unknown | null;
+  aiContent?: unknown | null;
   currentStep?: number;
   status?: DraftStatus;
+}
+
+const draftPatchKeys = [
+  "designId",
+  "storeId",
+  "enabledColorIds",
+  "enabledSizes",
+  "enabledVariantIdsOverride",
+  "placementOverride",
+  "aiContent",
+  "currentStep",
+  "status",
+] as const;
+
+export function sanitizeDraftPatch(patch: DraftPatch | Record<string, unknown>): DraftPatch {
+  const sanitized: Record<string, unknown> = {};
+  const source = patch as Record<string, unknown>;
+
+  for (const key of draftPatchKeys) {
+    if (source[key] !== undefined) {
+      sanitized[key] = source[key];
+    }
+  }
+
+  return sanitized as DraftPatch;
 }
 
 export async function createDraft(tenantId: string) {
@@ -28,8 +53,22 @@ export async function getDraft(id: string, tenantId: string) {
   return prisma.wizardDraft.findFirst({
     where: { id, tenantId },
     include: {
+      design: true,
+      store: {
+        include: {
+          colors: {
+            orderBy: { sortOrder: "asc" },
+          },
+          template: true,
+        },
+      },
       mockupJobs: {
         orderBy: { createdAt: "asc" },
+        include: {
+          images: {
+            orderBy: { sortOrder: "asc" },
+          },
+        },
       },
     },
   });
@@ -42,30 +81,28 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
   });
   if (!draft) throw new Error("Draft not found");
 
+  const sanitized = sanitizeDraftPatch(patch);
+
   return prisma.wizardDraft.update({
     where: { id },
     data: {
-      ...patch,
-      selectedColors: patch.selectedColors !== undefined
-        ? (patch.selectedColors as object)
+      ...sanitized,
+      placementOverride: sanitized.placementOverride !== undefined
+        ? sanitized.placementOverride === null
+          ? Prisma.JsonNull
+          : (sanitized.placementOverride as Prisma.InputJsonValue)
         : undefined,
-      placement: patch.placement !== undefined
-        ? (patch.placement as object)
-        : undefined,
-      aiContent: patch.aiContent !== undefined
-        ? (patch.aiContent as object)
+      aiContent: sanitized.aiContent !== undefined
+        ? sanitized.aiContent === null
+          ? Prisma.JsonNull
+          : (sanitized.aiContent as Prisma.InputJsonValue)
         : undefined,
     },
   });
 }
 
 export async function deleteDraft(id: string, tenantId: string) {
-  const draft = await prisma.wizardDraft.findFirst({
-    where: { id, tenantId },
-  });
-  if (!draft) throw new Error("Draft not found");
-
-  return prisma.wizardDraft.delete({ where: { id } });
+  return deleteDraftWithPrintifyCleanup(id, tenantId);
 }
 
 export async function listDrafts(tenantId: string) {

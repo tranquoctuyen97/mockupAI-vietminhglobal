@@ -19,8 +19,22 @@ export interface PrintifyPublishInput {
   blueprintId: number;
   printProviderId: number;
   variantIds: number[]; // Printify variant IDs
+  variants?: Array<{ id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean }>;
   mockupPaths: string[]; // absolute file paths
+  selectedMockupIds?: string[]; // Printify mockup IDs selected by user
   designPath: string; // original design file path
+  // Phase 6.10: placement from store preset
+  placementMm?: {
+    xMm: number;
+    yMm: number;
+    widthMm: number;
+    heightMm: number;
+    rotationDeg: number;
+  };
+  printAreaMm?: {
+    widthMm: number;
+    heightMm: number;
+  };
 }
 
 export interface PrintifyPublishResult {
@@ -43,35 +57,44 @@ export async function publishToPrintify(
   );
 
   // Step 2: Create product
+  // When explicit variants provided, print_areas must reference ALL their IDs
+  const effectiveVariantIds = input.variants
+    ? input.variants.map(v => v.id)
+    : input.variantIds;
+
   const productPayload = {
     title: input.title,
     description: input.description,
     blueprint_id: input.blueprintId,
     print_provider_id: input.printProviderId,
-    variants: input.variantIds.map((id) => ({
+    variants: input.variants ?? input.variantIds.map((id) => ({
       id,
-      price: 0, // Price managed on Shopify side
+      price: 2000, // Fallback if variants list not provided
       is_enabled: true,
     })),
     print_areas: [
       {
-        variant_ids: input.variantIds,
+        variant_ids: effectiveVariantIds,
         placeholders: [
           {
             position: "front",
             images: [
               {
                 id: designImageId,
-                x: 0.5,
-                y: 0.5,
-                scale: 1,
-                angle: 0,
+                ...mmToPrintifyCoords(
+                  input.placementMm,
+                  input.printAreaMm ?? { widthMm: 355.6, heightMm: 406.4 },
+                ),
               },
             ],
           },
         ],
       },
     ],
+    // Tell Printify which mockups to generate/publish
+    ...(input.selectedMockupIds && input.selectedMockupIds.length > 0 
+      ? { visible_mockups: input.selectedMockupIds } 
+      : {}),
   };
 
   const createRes = await fetch(
@@ -122,4 +145,30 @@ async function uploadImageBase64(
 
   const data = (await res.json()) as { id: string };
   return data.id;
+}
+
+/**
+ * Convert mm placement → Printify relative coordinates
+ * Printify uses: x, y = center of image (0..1 relative to print area)
+ *                scale = image width / print area width
+ *                angle = rotation in degrees
+ */
+function mmToPrintifyCoords(
+  placement?: { xMm: number; yMm: number; widthMm: number; heightMm: number; rotationDeg: number },
+  printArea: { widthMm: number; heightMm: number } = { widthMm: 355.6, heightMm: 406.4 },
+): { x: number; y: number; scale: number; angle: number } {
+  if (!placement) {
+    return { x: 0.5, y: 0.5, scale: 1, angle: 0 };
+  }
+
+  // Printify x, y = center of design relative to print area (0..1)
+  const centerXMm = placement.xMm + placement.widthMm / 2;
+  const centerYMm = placement.yMm + placement.heightMm / 2;
+
+  return {
+    x: Math.round((centerXMm / printArea.widthMm) * 1000) / 1000,
+    y: Math.round((centerYMm / printArea.heightMm) * 1000) / 1000,
+    scale: Math.round((placement.widthMm / printArea.widthMm) * 1000) / 1000,
+    angle: placement.rotationDeg,
+  };
 }

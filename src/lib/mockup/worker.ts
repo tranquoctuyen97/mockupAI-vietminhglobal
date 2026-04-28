@@ -1,144 +1,222 @@
-/**
- * Mockup generation queue + worker
- * Uses in-process execution (no separate worker process needed for v1)
- */
+import { mkdir, readFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { Worker, Job } from "bullmq";
+import { prisma } from "../db";
+import { compositeImage } from "./composite";
+import { MockupJobPayload, MOCKUP_QUEUE_NAME } from "./queue";
+import { getStorage } from "../storage/local-disk";
+import { DEFAULT_PLACEMENT, type Placement } from "../placement/types";
+import {
+  isFinalBullMqAttempt,
+  shouldSkipMockupImageProcessing,
+} from "./progress";
+import {
+  isSyntheticMockupSource,
+  resolveMockupSourceBuffer,
+} from "./source";
 
-import { prisma } from "@/lib/db";
-import { getStorage } from "@/lib/storage/local-disk";
-import { generateMockup } from "@/lib/mockup/composite";
-import { sseChannels } from "@/lib/sse/channel";
-import { readFile } from "node:fs/promises";
+const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+const concurrency = parseInt(process.env.MOCKUP_WORKER_CONCURRENCY || "5", 10);
 
-export interface MockupJobData {
-  jobId: string;
-  draftId: string;
-  designStoragePath: string;
-  colorHex: string;
-  colorName: string;
-  placement: {
-    x: number;
-    y: number;
-    scale: number;
-    position: "FRONT" | "BACK" | "SLEEVE";
+const connection = {
+  url: redisUrl,
+};
+
+export const mockupWorker = new Worker<MockupJobPayload>(
+  MOCKUP_QUEUE_NAME,
+  async (job: Job<MockupJobPayload>) => {
+    const { mockupImageId, sourceUrl, designStoragePath, placementData, colorOverlayHex } = job.data;
+
+    try {
+      const currentImage = await prisma.mockupImage.findUnique({
+        where: { id: mockupImageId },
+        select: { compositeStatus: true },
+      });
+      if (shouldSkipMockupImageProcessing(currentImage)) {
+        return { success: true, skipped: true };
+      }
+
+      // 1. Update status to processing
+      await prisma.mockupImage.updateMany({
+        where: { id: mockupImageId },
+        data: { compositeStatus: "processing", compositeError: null },
+      });
+
+      // 2. Resolve storage path
+      const storage = getStorage();
+      const ext = ".png"; // Composite engine outputs PNG
+      const relativePath = `mockups/composite_${mockupImageId}${ext}`;
+      const absolutePath = storage.resolvePath(relativePath);
+      await mkdir(dirname(absolutePath), { recursive: true });
+
+      // 3. Composite image using existing engine
+      const sourceBuffer = await resolveMockupSourceBuffer(sourceUrl, {
+        colorHex: colorOverlayHex,
+      });
+
+      const designBuffer = await readFile(storage.resolvePath(designStoragePath));
+
+      await compositeImage({
+        mockupBuffer: sourceBuffer,
+        designBuffer: designBuffer,
+        placement: coercePlacement(placementData),
+        outputPath: absolutePath,
+      });
+
+      // 4. Update status to completed
+      await markImageCompleted(mockupImageId, relativePath);
+
+      console.log(`[MockupWorker] Successfully processed image ${mockupImageId}`);
+      return { success: true, relativePath };
+    } catch (error) {
+      console.error(`[MockupWorker] Failed to process image ${mockupImageId}`, error);
+
+      const message = error instanceof Error ? error.message : "Unknown error";
+      if (isFinalBullMqAttempt(job.attemptsMade, job.opts.attempts)) {
+        await markImageFailed(mockupImageId, message);
+      } else {
+        await prisma.mockupImage.updateMany({
+          where: {
+            id: mockupImageId,
+            compositeStatus: { notIn: ["completed", "failed"] },
+          },
+          data: {
+            compositeStatus: "processing",
+            compositeError: message,
+          },
+        });
+      }
+
+      throw error; // Let BullMQ handle retries
+    }
+  },
+  {
+    connection,
+    concurrency,
+  }
+);
+
+mockupWorker.on("failed", (job, err) => {
+  console.error(`Job ${job?.id} failed with ${err.message}`);
+});
+
+mockupWorker.on("completed", (job) => {
+  console.log(`Job ${job.id} completed successfully`);
+});
+
+function coercePlacement(value: unknown): Placement {
+  if (!value || typeof value !== "object") return DEFAULT_PLACEMENT;
+  const placement = value as Partial<Placement>;
+  if (
+    typeof placement.xMm !== "number" ||
+    typeof placement.yMm !== "number" ||
+    typeof placement.widthMm !== "number" ||
+    typeof placement.heightMm !== "number"
+  ) {
+    return DEFAULT_PLACEMENT;
+  }
+
+  return {
+    ...DEFAULT_PLACEMENT,
+    ...placement,
   };
 }
 
-/**
- * Process a single mockup job
- */
-export async function processMockupJob(data: MockupJobData): Promise<void> {
-  const { jobId, draftId, designStoragePath, colorHex, placement } = data;
+async function markImageCompleted(
+  mockupImageId: string,
+  relativePath: string,
+): Promise<void> {
+  const image = await prisma.mockupImage.findUnique({
+    where: { id: mockupImageId },
+    select: { mockupJobId: true },
+  });
+  if (!image) return;
 
-  try {
-    // Mark as running
-    await prisma.mockupJob.update({
-      where: { id: jobId },
-      data: { status: "RUNNING", attempts: { increment: 1 } },
-    });
-
-    // Emit SSE: started
-    sseChannels.emit(draftId, {
-      type: "mockup.progress",
-      data: { jobId, status: "RUNNING" },
-    });
-
-    // Load design from storage
-    const storage = getStorage();
-    const designPath = storage.resolvePath(designStoragePath);
-    const designBuffer = await readFile(designPath);
-
-    // Generate mockup
-    const mockupBuffer = await generateMockup({
-      designBuffer,
-      colorHex,
-      placement,
-    });
-
-    // Save mockup
-    const mockupKey = `mockups/${draftId}/${jobId}.webp`;
-    await storage.putBuffer(mockupKey, mockupBuffer);
-
-    // Update job
-    await prisma.mockupJob.update({
-      where: { id: jobId },
+  const updated = await prisma.$transaction(async (tx) => {
+    const result = await tx.mockupImage.updateMany({
+      where: {
+        id: mockupImageId,
+        compositeStatus: { notIn: ["completed", "failed"] },
+      },
       data: {
-        status: "SUCCEEDED",
-        mockupStoragePath: mockupKey,
-        completedAt: new Date(),
+        compositeUrl: relativePath,
+        compositeStatus: "completed",
+        compositeError: null,
       },
     });
 
-    // Emit SSE: completed
-    sseChannels.emit(draftId, {
-      type: "mockup.completed",
-      data: {
-        jobId,
-        status: "SUCCEEDED",
-        previewUrl: storage.getPublicUrl(mockupKey),
-      },
-    });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : "Unknown error";
-    console.error(`[MockupWorker] Job ${jobId} failed:`, msg);
+    if (result.count > 0) {
+      await tx.mockupJob.update({
+        where: { id: image.mockupJobId },
+        data: { completedImages: { increment: 1 } },
+      });
+    }
 
-    await prisma.mockupJob.update({
-      where: { id: jobId },
-      data: {
-        status: "FAILED",
-        errorMessage: msg,
-        completedAt: new Date(),
-      },
-    });
+    return result.count;
+  });
 
-    sseChannels.emit(draftId, {
-      type: "mockup.failed",
-      data: { jobId, status: "FAILED", error: msg },
-    });
+  if (updated > 0) {
+    await refreshMockupJobStatus(image.mockupJobId);
   }
 }
 
-/**
- * Enqueue mockup jobs for a draft
- * v1: In-process async execution (no Redis/BullMQ needed)
- * v2: Migrate to BullMQ worker
- */
-export async function enqueueMockupJobs(
-  draftId: string,
-  jobs: MockupJobData[],
+async function markImageFailed(
+  mockupImageId: string,
+  message: string,
 ): Promise<void> {
-  // Process all jobs concurrently (max 4 at a time)
-  const concurrency = 4;
-  const chunks: MockupJobData[][] = [];
-
-  for (let i = 0; i < jobs.length; i += concurrency) {
-    chunks.push(jobs.slice(i, i + concurrency));
-  }
-
-  for (const chunk of chunks) {
-    await Promise.all(chunk.map((job) => processMockupJob(job)));
-  }
-
-  // Check if all jobs completed
-  const allJobs = await prisma.mockupJob.findMany({
-    where: { wizardDraftId: draftId },
+  const image = await prisma.mockupImage.findUnique({
+    where: { id: mockupImageId },
+    select: { mockupJobId: true },
   });
+  if (!image) return;
 
-  const allDone = allJobs.every((j) => j.status === "SUCCEEDED" || j.status === "FAILED");
-  const anySucceeded = allJobs.some((j) => j.status === "SUCCEEDED");
-
-  if (allDone) {
-    await prisma.wizardDraft.update({
-      where: { id: draftId },
-      data: { status: anySucceeded ? "READY" : "DRAFT" },
-    });
-
-    sseChannels.emit(draftId, {
-      type: "generation.complete",
+  const updated = await prisma.$transaction(async (tx) => {
+    const result = await tx.mockupImage.updateMany({
+      where: {
+        id: mockupImageId,
+        compositeStatus: { notIn: ["completed", "failed"] },
+      },
       data: {
-        total: allJobs.length,
-        succeeded: allJobs.filter((j) => j.status === "SUCCEEDED").length,
-        failed: allJobs.filter((j) => j.status === "FAILED").length,
+        compositeStatus: "failed",
+        compositeError: message,
       },
     });
+
+    if (result.count > 0) {
+      await tx.mockupJob.update({
+        where: { id: image.mockupJobId },
+        data: { failedImages: { increment: 1 } },
+      });
+    }
+
+    return result.count;
+  });
+
+  if (updated > 0) {
+    await refreshMockupJobStatus(image.mockupJobId);
   }
+}
+
+async function refreshMockupJobStatus(mockupJobId: string): Promise<void> {
+  const job = await prisma.mockupJob.findUnique({
+    where: { id: mockupJobId },
+    select: {
+      totalImages: true,
+      completedImages: true,
+      failedImages: true,
+      status: true,
+    },
+  });
+  if (!job || job.status !== "running") return;
+
+  const finishedImages = job.completedImages + job.failedImages;
+  if (finishedImages < job.totalImages) return;
+
+  await prisma.mockupJob.update({
+    where: { id: mockupJobId },
+    data: {
+      status: job.failedImages > 0 ? "failed" : "completed",
+      errorMessage: job.failedImages > 0 ? "Some mockup images failed" : null,
+    },
+  });
 }

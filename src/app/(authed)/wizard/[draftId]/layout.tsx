@@ -18,15 +18,14 @@ import {
   Save,
 } from "lucide-react";
 import Link from "next/link";
+import { shouldShowWizardBlockingLoader } from "@/lib/wizard/layout-loading";
 
 const STEPS = [
   { num: 1, label: "Store",     icon: Store,          path: "step-1" },
-  { num: 2, label: "Product",   icon: ShoppingBag,    path: "step-2" },
-  { num: 3, label: "Design",    icon: ImageIcon,      path: "step-3" },
-  { num: 4, label: "Placement", icon: Move,           path: "step-4" },
-  { num: 5, label: "Content",   icon: PenTool,        path: "step-5" },
-  { num: 6, label: "Review",    icon: ClipboardCheck, path: "step-6" },
-  { num: 7, label: "Publish",   icon: Rocket,         path: "step-7" },
+  { num: 2, label: "Design",    icon: ImageIcon,      path: "step-2" },
+  { num: 3, label: "Preview",   icon: Sparkles,       path: "step-3" },
+  { num: 4, label: "Content",   icon: PenTool,        path: "step-4" },
+  { num: 5, label: "Review",    icon: Rocket,         path: "step-5" },
 ];
 
 export default function WizardLayout({
@@ -47,7 +46,7 @@ export default function WizardLayout({
   const currentStepMatch = pathname.match(/step-(\d)/);
   const currentStep = currentStepMatch ? parseInt(currentStepMatch[1], 10) : 1;
 
-  if (loading) {
+  if (shouldShowWizardBlockingLoader({ loading, hasDraft: Boolean(draft) })) {
     return (
       <div className="flex items-center justify-center" style={{ padding: 64 }}>
         <Loader2 size={24} className="animate-spin" style={{ opacity: 0.5 }} />
@@ -172,22 +171,13 @@ export default function WizardLayout({
         {currentStep < STEPS.length && (
           <button
             className="btn btn-primary"
-            disabled={currentStep === 6 && checklist ? !checklist.readyToPublish : false}
-            title={
-              currentStep === 6 && checklist && !checklist.readyToPublish
-                ? "Hoàn tất checklist để tiếp tục"
-                : undefined
-            }
-            style={{
-              opacity: currentStep === 6 && checklist && !checklist.readyToPublish ? 0.5 : 1,
-              cursor: currentStep === 6 && checklist && !checklist.readyToPublish ? "not-allowed" : "pointer",
-            }}
-            onClick={() => {
-              if (currentStep === 6 && checklist && !checklist.readyToPublish) return;
+            onClick={async () => {
               if (draft) {
-                useWizardStore.getState().updateDraft({
+                const store = useWizardStore.getState();
+                store.updateDraft({
                   currentStep: Math.max(draft.currentStep, currentStep + 1),
                 });
+                await store.saveDraftImmediately();
               }
               router.push(`/wizard/${draftId}/step-${currentStep + 1}`);
             }}

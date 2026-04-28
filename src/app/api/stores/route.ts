@@ -57,7 +57,7 @@ export async function POST(request: Request) {
 
   // Check duplicate
   const existing = await prisma.store.findFirst({
-    where: { tenantId: session.tenantId, shopifyDomain: cleanDomain, deletedAt: null },
+    where: { tenantId: session.tenantId, shopifyDomain: cleanDomain },
   });
   if (existing) {
     return NextResponse.json({ error: "Store already connected" }, { status: 409 });

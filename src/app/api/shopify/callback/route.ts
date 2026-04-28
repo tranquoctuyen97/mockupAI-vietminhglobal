@@ -92,6 +92,7 @@ export async function GET(request: Request) {
 
     // Update store with Shopify info + encrypted access token
     const { encrypted: tokenEncrypted } = encrypt(accessToken);
+
     await prisma.store.update({
       where: { id: storeId },
       data: {

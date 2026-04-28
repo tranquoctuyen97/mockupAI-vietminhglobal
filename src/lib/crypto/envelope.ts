@@ -42,10 +42,8 @@ export function encrypt(plaintext: string): { encrypted: Uint8Array<ArrayBuffer>
   // Pack: iv (12) + authTag (16) + ciphertext (N)
   const packed = Buffer.concat([iv, authTag, encrypted]);
 
-  // Copy into a fresh ArrayBuffer to satisfy Prisma Bytes type
-  const result = new Uint8Array(packed.length);
-  result.set(packed);
-
+  // Return as Uint8Array backed by a proper ArrayBuffer (Prisma Bytes compat)
+  const result = new Uint8Array(packed.buffer, packed.byteOffset, packed.byteLength);
   return { encrypted: result, keyId: getKeyId() };
 }
 

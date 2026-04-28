@@ -29,9 +29,9 @@ export async function POST(
     return NextResponse.json({ error: "Listing not found" }, { status: 404 });
   }
 
-  if (listing.status !== "PARTIAL_FAILURE") {
+  if (!["PARTIAL_FAILURE", "FAILED"].includes(listing.status)) {
     return NextResponse.json(
-      { error: "Can only retry Printify for partial_failure listings" },
+      { error: `Listing status is ${listing.status}. Retry only allowed for PARTIAL_FAILURE or FAILED.` },
       { status: 400 },
     );
   }
@@ -40,7 +40,7 @@ export async function POST(
   const draft = listing.wizardDraftId
     ? await prisma.wizardDraft.findUnique({
         where: { id: listing.wizardDraftId },
-        include: { design: true, mockupJobs: true },
+        include: { design: true, mockupJobs: true, store: { include: { template: true } } },
       })
     : null;
 
@@ -48,16 +48,25 @@ export async function POST(
     return NextResponse.json({ error: "Draft not found" }, { status: 400 });
   }
 
+  if (!listing.storeId) {
+    return NextResponse.json({ error: "Listing has no store" }, { status: 400 });
+  }
+
   // Get store + Printify connection (Phase 6.5: workspace-level)
   const store = await prisma.store.findUnique({
     where: { id: listing.storeId },
   });
+  if (!store) {
+    return NextResponse.json({ error: "Store not found" }, { status: 400 });
+  }
 
   let printifyApiKey: string;
+  let externalShopId: number;
   try {
     const { getClientForStore } = await import("@/lib/printify/account");
-    const result = await getClientForStore(listing.storeId);
+    const result = await getClientForStore(listing.storeId!);
     printifyApiKey = (result.client as any).apiKey;
+    externalShopId = result.externalShopId;
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Printify not linked" }, { status: 400 });
   }
@@ -67,7 +76,7 @@ export async function POST(
   if (printifyJob) {
     await prisma.publishJob.update({
       where: { id: printifyJob.id },
-      data: { status: "PENDING", lastError: null },
+      data: { status: "PENDING", attempts: 0, lastError: null, completedAt: null },
     });
   }
 
@@ -75,7 +84,7 @@ export async function POST(
   const channelId = `publish:${listing.id}`;
 
   // Run async
-  runPrintifyStage(listing.id, listing, draft, store, printifyApiKey, storage, false, channelId).catch(
+  runPrintifyStage(listing.id, listing, draft, store, printifyApiKey, externalShopId, storage, false, channelId, draft.id).catch(
     (err) => console.error("[RetryPrintify] Error:", err),
   );
 

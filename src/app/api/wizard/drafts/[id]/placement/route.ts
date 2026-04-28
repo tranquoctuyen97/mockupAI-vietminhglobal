@@ -3,22 +3,14 @@ import { db } from "@/lib/db";
 import { validatePlacement } from "@/lib/placement/validate";
 import { calculateDpi } from "@/lib/placement/dpi";
 import { DEFAULT_PRINT_AREA } from "@/lib/placement/types";
-import type { PlacementData, ViewKey } from "@/lib/placement/types";
+import { PlacementSchema, ViewKeySchema } from "@/lib/placement/schema";
+import { normalizePlacementData, setPlacementForView } from "@/lib/placement/views";
 import { z } from "zod";
 
 const PlacementPatchSchema = z.object({
   variantKey: z.string().min(1, "variantKey is required"),
-  view: z.enum(["front", "back", "sleeve_left", "sleeve_right"]),
-  placement: z.object({
-    xMm: z.number(),
-    yMm: z.number(),
-    widthMm: z.number().positive("widthMm must be positive"),
-    heightMm: z.number().positive("heightMm must be positive"),
-    rotationDeg: z.number().min(-360).max(360).optional(),
-    lockAspect: z.boolean().optional(),
-    mirrored: z.boolean().optional(),
-    placementMode: z.enum(["stretch", "preserve", "exact"]).optional(),
-  }),
+  view: ViewKeySchema,
+  placement: PlacementSchema.nullable(),
 });
 
 export async function PATCH(
@@ -37,37 +29,40 @@ export async function PATCH(
       );
     }
 
-    const { variantKey, view, placement: rawPlacement } = parsed.data;
-    const placement = {
-      xMm: rawPlacement.xMm,
-      yMm: rawPlacement.yMm,
-      widthMm: rawPlacement.widthMm,
-      heightMm: rawPlacement.heightMm,
-      rotationDeg: rawPlacement.rotationDeg ?? 0,
-      lockAspect: rawPlacement.lockAspect ?? true,
-      mirrored: rawPlacement.mirrored ?? false,
-      placementMode: rawPlacement.placementMode ?? "preserve" as const,
-    };
+    const { view, placement: rawPlacement } = parsed.data;
+    const placement = rawPlacement
+      ? {
+          xMm: rawPlacement.xMm,
+          yMm: rawPlacement.yMm,
+          widthMm: rawPlacement.widthMm,
+          heightMm: rawPlacement.heightMm,
+          rotationDeg: rawPlacement.rotationDeg ?? 0,
+          lockAspect: rawPlacement.lockAspect ?? true,
+          mirrored: rawPlacement.mirrored ?? false,
+          placementMode: rawPlacement.placementMode ?? "preserve" as const,
+          presetKey: rawPlacement.presetKey,
+        }
+      : null;
 
     const draft = await db.wizardDraft.findUnique({
       where: { id: draftId },
-      include: { design: true },
+      include: { design: true, store: { include: { template: true } } },
     });
 
     if (!draft) {
       return NextResponse.json({ error: "Draft not found" }, { status: 404 });
     }
 
-    if (!draft.design) {
+    if (placement && !draft.design) {
       return NextResponse.json({ error: "Draft has no design" }, { status: 400 });
     }
 
     // 1. Get print area (fallback if not synced)
     let printArea = DEFAULT_PRINT_AREA;
-    if (draft.blueprintId) {
+    if (draft.store?.template?.printifyBlueprintId) {
       const dbArea = await db.blueprintPrintArea.findFirst({
         where: {
-          printifyBlueprintId: draft.blueprintId,
+          printifyBlueprintId: draft.store.template.printifyBlueprintId,
           position: view.toUpperCase() as any, // Simple mapping for now
         },
       });
@@ -80,46 +75,45 @@ export async function PATCH(
       }
     }
 
-    // 2. Validate placement
-    const validation = validatePlacement(placement, printArea);
+    let validation = null;
+    let dpi = null;
+    if (placement && draft.design) {
+      // 2. Validate placement
+      validation = validatePlacement(placement, printArea);
 
-    // 3. Calculate DPI
-    const dpi = calculateDpi(
-      {
-        widthPx: draft.design.width,
-        heightPx: draft.design.height,
-        dpi: draft.design.dpi,
-      },
-      placement,
-    );
-
-    // If there is any ERROR severity, we block saving (Client should prevent this too)
-    // For DPI < 150, user said "only warn", so we do not block. But if validatePlacement returns valid: false, we stop.
-    if (!validation.valid) {
-      return NextResponse.json(
-        { error: "Invalid placement", details: validation.errors },
-        { status: 400 },
+      // 3. Calculate DPI
+      dpi = calculateDpi(
+        {
+          widthPx: draft.design.width,
+          heightPx: draft.design.height,
+          dpi: draft.design.dpi,
+        },
+        placement,
       );
+
+      // If there is any ERROR severity, we block saving (Client should prevent this too)
+      // For DPI < 150, user said "only warn", so we do not block. But if validatePlacement returns valid: false, we stop.
+      if (!validation.valid) {
+        return NextResponse.json(
+          { error: "Invalid placement", details: validation.errors },
+          { status: 400 },
+        );
+      }
     }
 
     // 4. Transform and save placement data
-    let placementData = draft.placement as unknown as PlacementData;
-    if (!placementData || placementData.version !== 2) {
-      // Migrate or initialize
-      placementData = { version: 2, variants: {} };
-    }
-
-    if (!placementData.variants[variantKey]) {
-      placementData.variants[variantKey] = {};
-    }
-
-    placementData.variants[variantKey][view] = placement;
+    const basePlacementData = draft.placementOverride ?? draft.store?.template?.defaultPlacement;
+    const placementData = setPlacementForView(
+      normalizePlacementData(basePlacementData, true),
+      view,
+      placement,
+    );
 
     // Save to DB
     await db.wizardDraft.update({
       where: { id: draftId },
       data: {
-        placement: placementData as any,
+        placementOverride: placementData as any,
       },
     });
 
