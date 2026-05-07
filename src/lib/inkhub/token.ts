@@ -14,7 +14,11 @@ function parseJwtExp(token: string): number {
 async function login(): Promise<void> {
   const res = await fetch(LOGIN_URL, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "origin": "https://inkhub.grabink.co",
+      "referer": "https://inkhub.grabink.co/",
+    },
     body: JSON.stringify({
       username: process.env.INKHUB_USERNAME,
       password: process.env.INKHUB_PASSWORD,
