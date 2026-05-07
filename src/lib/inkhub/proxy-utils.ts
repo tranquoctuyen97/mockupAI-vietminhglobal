@@ -21,6 +21,6 @@ export function rewriteAbsolutePaths(html: string, proxyBase: string): string {
 
 export function injectTokenScript(html: string, token: string, orgId: string): string {
   if (!html.includes("</head>")) return html;
-  const script = `<script>localStorage.setItem('token','${token}');localStorage.setItem('organizationId','${orgId}');</script>`;
+  const script = `<script>localStorage.setItem('token','${token}');localStorage.setItem('organizationId','${orgId}');history.replaceState({},'','/');</script>`;
   return html.replace("</head>", `${script}</head>`);
 }
