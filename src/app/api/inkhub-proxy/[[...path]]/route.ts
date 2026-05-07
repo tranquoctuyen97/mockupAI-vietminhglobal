@@ -1,5 +1,5 @@
 import { getToken } from "@/lib/inkhub/token";
-import { injectTokenScript, isTextContent, rewriteApiUrls } from "@/lib/inkhub/proxy-utils";
+import { injectTokenScript, isTextContent, rewriteAbsolutePaths, rewriteApiUrls } from "@/lib/inkhub/proxy-utils";
 import type { NextRequest } from "next/server";
 
 const UPSTREAM_UI = "https://inkhub.grabink.co";
@@ -46,6 +46,7 @@ async function handler(
   body = rewriteApiUrls(body, host);
 
   if (contentType.includes("text/html")) {
+    body = rewriteAbsolutePaths(body, "/api/inkhub-proxy");
     body = injectTokenScript(body, token, orgId);
   }
 
