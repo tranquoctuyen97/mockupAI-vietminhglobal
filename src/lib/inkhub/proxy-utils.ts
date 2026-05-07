@@ -8,7 +8,7 @@ export function isTextContent(contentType: string): boolean {
 }
 
 export function rewriteApiUrls(body: string, host: string): string {
-  return body.replaceAll("api-inkhub-v2.grabink.co", `${host}/api/inkhub-api`);
+  return body.replace(/https?:\/\/api-inkhub-v2\.grabink\.co/g, `${host}/api/inkhub-api`);
 }
 
 // Rewrite absolute paths (src="/..." href="/...") to go through the proxy.

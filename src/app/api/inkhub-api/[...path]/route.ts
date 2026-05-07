@@ -19,6 +19,8 @@ async function handler(
   headers.set("authorization", `Bearer ${token}`);
   headers.set("origin", "https://inkhub.grabink.co");
   headers.set("referer", "https://inkhub.grabink.co/");
+  const orgId = request.headers.get("organization-id");
+  if (orgId) headers.set("organization-id", orgId);
 
   const body =
     request.method !== "GET" && request.method !== "HEAD"
