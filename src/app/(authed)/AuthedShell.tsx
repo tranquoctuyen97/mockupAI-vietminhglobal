@@ -11,8 +11,8 @@ import {
   Palette,
   Wand2,
   ShoppingBag,
+  Truck,
   Users,
-  ToggleLeft,
   DollarSign,
   Bot,
   LogOut,
@@ -37,11 +37,11 @@ const NAV_ITEMS: NavItemConfig[] = [
   { label: "Designs", href: "/designs", icon: <Palette size={18} /> },
   { label: "Wizard", href: "/wizard", icon: <Wand2 size={18} /> },
   { label: "Listings", href: "/listings", icon: <ShoppingBag size={18} /> },
+  { label: "Auto Fulfill", href: "/auto-fulfill", icon: <Truck size={18} /> },
 ];
 
 const ADMIN_ITEMS: NavItemConfig[] = [
   { label: "Users", href: "/admin/users", icon: <Users size={18} />, adminOnly: true },
-  { label: "Feature Flags", href: "/admin/feature-flags", icon: <ToggleLeft size={18} />, adminOnly: true },
   { label: "Pricing", href: "/admin/pricing", icon: <DollarSign size={18} />, adminOnly: true },
   { label: "AI Settings", href: "/admin/ai-settings", icon: <Bot size={18} />, adminOnly: true },
 ];
@@ -228,10 +228,14 @@ export default function AuthedShell({
         </header>
 
         {/* Page content */}
-        <div className="p-6 lg:p-8 max-w-7xl">
-          <TokenExpiredBanner />
-          {children}
-        </div>
+        {pathname.startsWith("/auto-fulfill") ? (
+          children
+        ) : (
+          <div className="p-6 lg:p-8 max-w-7xl">
+            <TokenExpiredBanner />
+            {children}
+          </div>
+        )}
       </main>
     </div>
   );
