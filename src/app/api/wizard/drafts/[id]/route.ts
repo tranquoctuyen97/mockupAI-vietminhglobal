@@ -8,7 +8,9 @@ import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { getDraft, updateDraft, deleteDraft } from "@/lib/wizard/state";
 import { prisma } from "@/lib/db";
+import { PRODUCT_DEFAULTS } from "@/lib/config/runtime-controls";
 import { hasActiveMockupJob, regenerateMockupsForDraft } from "@/lib/mockup/regenerate";
+import { isRealPrintifyMockupMedia } from "@/lib/mockup/real-printify-media";
 import { validatePlacementSet } from "@/lib/placement/validate";
 import { migratePlacementOnRead } from "@/lib/placement/migrate";
 import { DEFAULT_PRINT_AREA } from "@/lib/placement/types";
@@ -97,20 +99,12 @@ export async function DELETE(
 
 export async function buildChecklist(
   draft: any,
-  deps: {
-    getFeatureFlag?: (key: string) => Promise<{ enabled: boolean } | null>;
-  } = {},
 ) {
   const selectedColorIds = new Set((draft.enabledColorIds ?? []) as string[]);
   const selectedColors = ((draft.store?.colors ?? []) as Array<{ id: string; name: string }>)
     .filter((color) => selectedColorIds.has(color.id));
 
-  const realMockupsFlag = deps.getFeatureFlag
-    ? await deps.getFeatureFlag("printify_real_mockups")
-    : await prisma.featureFlag.findFirst({
-        where: { key: "printify_real_mockups" },
-      });
-  const requireRealPrintifyMockups = realMockupsFlag?.enabled === true;
+  const requireRealPrintifyMockups = PRODUCT_DEFAULTS.mockup.requireRealPrintifyMockups;
 
   const completedJobs = ((draft.mockupJobs ?? []) as Array<{
     status: string;
@@ -145,16 +139,10 @@ export async function buildChecklist(
     (content?.tags?.length ?? 0) > 0,
   );
 
-  // 3. Placement valid — re-use Phase 6.8 validator
-  // If placement_boundary_strict flag is OFF, treat placement as valid
+  // 3. Placement valid — always strict for seller-facing publish safety.
   let placementValid = true;
   try {
-    const strictFlag = deps.getFeatureFlag
-      ? await deps.getFeatureFlag("placement_boundary_strict")
-      : await prisma.featureFlag.findFirst({
-          where: { key: "placement_boundary_strict" },
-        });
-    if (strictFlag?.enabled !== false) {
+    if (PRODUCT_DEFAULTS.placement.boundaryStrict) {
       const placementData: PlacementData = migratePlacementOnRead(
         draft.placementOverride ?? draft.store?.template?.defaultPlacement,
       );
@@ -170,8 +158,7 @@ export async function buildChecklist(
       }
     }
   } catch {
-    // On error, treat as valid to avoid blocking publish
-    placementValid = true;
+    placementValid = false;
   }
 
   // 4. Mockups not stale
@@ -194,7 +181,5 @@ function normalizeColorName(value: string): string {
 }
 
 function isRealPrintifyMockup(image: { compositeUrl?: string | null; sourceUrl?: string | null }): boolean {
-  const url = image.compositeUrl ?? image.sourceUrl;
-  if (!url || !/^https?:\/\//i.test(url)) return false;
-  return !url.includes("via.placeholder.com");
+  return isRealPrintifyMockupMedia(image);
 }

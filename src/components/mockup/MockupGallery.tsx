@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { AlertTriangle, Check, Loader2 } from "lucide-react";
+import { isAllowedRemoteMockupUrl } from "@/lib/mockup/real-printify-media";
 import { viewLabel } from "@/lib/placement/views";
 
 interface MockupImage {
@@ -38,10 +39,6 @@ function normalizeImageUrl(url: string | null | undefined): string | null {
   return `/api/files/${url.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-function isRemoteImageUrl(url: string | null | undefined): boolean {
-  return !!url && /^https?:\/\//i.test(url) && !url.includes("via.placeholder.com");
-}
-
 /** Sort views in a natural order for display */
 const VIEW_ORDER: Record<string, number> = {
   front: 0,
@@ -59,10 +56,20 @@ function viewSortKey(pos: string): number {
 export function MockupGallery({ draftId, images: propImages, isPolling, progress, onSelectionChange }: MockupGalleryProps) {
   // Local images state for optimistic updates
   const [localImages, setLocalImages] = useState<MockupImage[]>(propImages);
+  const [fallbackImageIds, setFallbackImageIds] = useState<Set<string>>(new Set());
+  const [brokenImageIds, setBrokenImageIds] = useState<Set<string>>(new Set());
 
   // Sync from parent when prop changes (e.g. polling brings new images)
   useEffect(() => {
     setLocalImages(propImages);
+    setFallbackImageIds((current) => {
+      const validIds = new Set(propImages.map((image) => image.id));
+      return new Set([...current].filter((id) => validIds.has(id)));
+    });
+    setBrokenImageIds((current) => {
+      const validIds = new Set(propImages.map((image) => image.id));
+      return new Set([...current].filter((id) => validIds.has(id)));
+    });
   }, [propImages]);
   // Group images by color, then sub-group by viewPosition
   const groupedByColor = useMemo(() => {
@@ -79,6 +86,7 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
     }
     return groups;
   }, [localImages]);
+  const hasBrokenImages = brokenImageIds.size > 0;
 
   const toggleImage = async (imgId: string, currentIncluded: boolean) => {
     // Optimistic update
@@ -135,6 +143,26 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
 
   return (
     <div style={{ display: "grid", gap: 20 }}>
+      {hasBrokenImages && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "10px 12px",
+            borderRadius: 10,
+            color: "var(--color-danger, #ef4444)",
+            background: "rgba(239,68,68,0.06)",
+            border: "1px solid rgba(239,68,68,0.18)",
+            fontSize: "0.78rem",
+            fontWeight: 800,
+          }}
+        >
+          <AlertTriangle size={16} />
+          <span>Mockup cũ không còn tải được ảnh. Hãy tạo lại mockup từ Printify.</span>
+        </div>
+      )}
+
       {/* Polling progress bar */}
       {isPolling && (
         <div
@@ -230,9 +258,21 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
               }}
             >
               {groupImages.map(img => {
-                const imageUrl = normalizeImageUrl(img.compositeUrl) ?? normalizeImageUrl(img.sourceUrl);
-                const isPrintifyImage = isRemoteImageUrl(img.compositeUrl ?? img.sourceUrl);
+                const primaryImageUrl = normalizeImageUrl(img.compositeUrl);
+                const fallbackImageUrl = normalizeImageUrl(img.sourceUrl);
+                const usingFallbackImage = fallbackImageIds.has(img.id);
+                const imageUrl = usingFallbackImage
+                  ? fallbackImageUrl
+                  : primaryImageUrl ?? fallbackImageUrl;
+                const canUseFallbackImage =
+                  !usingFallbackImage &&
+                  !!fallbackImageUrl &&
+                  fallbackImageUrl !== primaryImageUrl;
+                const isPrintifyImage =
+                  isAllowedRemoteMockupUrl(img.sourceUrl) ||
+                  isAllowedRemoteMockupUrl(img.compositeUrl);
                 const label = img.cameraLabel || viewLabel(img.mockupType ?? img.viewPosition);
+                const imageBroken = brokenImageIds.has(img.id);
 
                 return (
                   <div
@@ -269,12 +309,43 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
                       <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-danger, #ef4444)", backgroundColor: "rgba(239,68,68,0.04)" }}>
                         <span style={{ fontSize: "0.68rem" }}>Lỗi</span>
                       </div>
-                    ) : imageUrl ? (
+                    ) : imageUrl && !imageBroken ? (
                       <img
                         src={imageUrl}
-                        alt={`${color} ${viewLabel(img.viewPosition)}`}
+                        alt=""
+                        onError={() => {
+                          if (canUseFallbackImage) {
+                            setFallbackImageIds((current) => new Set(current).add(img.id));
+                            return;
+                          }
+                          setBrokenImageIds((current) => new Set(current).add(img.id));
+                        }}
                         style={{ width: "100%", height: "100%", objectFit: "cover" }}
                       />
+                    ) : imageBroken ? (
+                      <div
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 7,
+                          textAlign: "center",
+                          padding: 14,
+                          color: "var(--color-danger, #ef4444)",
+                          backgroundColor: "rgba(239,68,68,0.04)",
+                        }}
+                      >
+                        <AlertTriangle size={20} />
+                        <span style={{ fontSize: "0.68rem", fontWeight: 800, lineHeight: 1.25 }}>
+                          Ảnh Printify không còn truy cập được
+                        </span>
+                        <span style={{ fontSize: "0.62rem", fontWeight: 800, color: "var(--text-muted)" }}>
+                          Cần tạo lại
+                        </span>
+                      </div>
                     ) : (
                       <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.45 }}>
                         <span style={{ fontSize: "0.68rem" }}>Không có ảnh</span>
@@ -354,6 +425,7 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
                         backgroundColor: "rgba(255,255,255,0.75)",
                         backdropFilter: "blur(4px)",
                         fontWeight: 500,
+                        lineHeight: 1.2,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",

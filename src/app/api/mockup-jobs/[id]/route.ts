@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { isTerminalMockupJobStatus } from "@/lib/mockup/job-sync";
 
 export async function GET(
   request: Request,
@@ -22,12 +23,9 @@ export async function GET(
 
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
-  // Compute status if needed, though worker updates it.
-  // Actually, wait, the worker updates individual images and the completed/failed counts.
-  // We should check if job is finished.
   const isFinished = job.totalImages > 0 && job.completedImages + job.failedImages >= job.totalImages;
   
-  if (isFinished && job.status === "running") {
+  if (isFinished && !isTerminalMockupJobStatus(job.status)) {
     await prisma.mockupJob.update({
       where: { id },
       data: { status: job.failedImages > 0 ? "failed" : "completed" }

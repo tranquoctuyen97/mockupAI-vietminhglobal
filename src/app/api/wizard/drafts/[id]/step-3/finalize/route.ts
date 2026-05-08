@@ -38,19 +38,13 @@ export async function POST(
       return NextResponse.json({ error: "Draft has no design" }, { status: 400 });
     }
 
-    // 1. Read feature flag — boundary_strict off → downgrade all errors to warn
-    const boundaryStrictFlag = await db.featureFlag.findFirst({
-      where: { key: "placement_boundary_strict" },
-    });
-    const isBoundaryStrict = boundaryStrictFlag?.enabled !== false; // default on
-
-    // 2. Migrate placement on-read. If the draft has no override, validate the store preset.
+    // 1. Migrate placement on-read. If the draft has no override, validate the store preset.
     const placementData: PlacementData = normalizePlacementData(
       migratePlacementOnRead(draft.placementOverride ?? draft.store?.template?.defaultPlacement),
       true,
     );
 
-    // 3. Resolve print area (use first-variant active view; finalize against FRONT as default)
+    // 2. Resolve print area (use first-variant active view; finalize against FRONT as default)
     let printArea = DEFAULT_PRINT_AREA;
     if (draft.store?.template?.printifyBlueprintId) {
       const dbArea = await db.blueprintPrintArea.findFirst({
@@ -65,25 +59,20 @@ export async function POST(
       }
     }
 
-    // 4. Design meta for DPI check
+    // 3. Design meta for DPI check
     const design: DesignMeta = {
       widthPx: draft.design.width,
       heightPx: draft.design.height,
       dpi: draft.design.dpi,
     };
 
-    // 5. Run full validation
-    const allViolations = validatePlacementSet(placementData, printArea, design);
-
-    // 6. Apply boundary_strict flag (downgrade errors → warn when flag is off)
-    const violations = isBoundaryStrict
-      ? allViolations
-      : allViolations.map((v) => ({ ...v, severity: "warn" as const }));
+    // 4. Run full strict validation. Seller-facing publish must not bypass placement errors.
+    const violations = validatePlacementSet(placementData, printArea, design);
 
     const errors = violations.filter((v) => v.severity === "error");
     const warnings = violations.filter((v) => v.severity === "warn");
 
-    // 7. Block on errors
+    // 5. Block on errors
     if (errors.length > 0) {
       return NextResponse.json(
         { ok: false, errors, warnings },
@@ -91,12 +80,12 @@ export async function POST(
       );
     }
 
-    // 8. Warn-only path: if FE has not acknowledged, return 200 + warnings so FE can show confirm
+    // 6. Warn-only path: if FE has not acknowledged, return 200 + warnings so FE can show confirm
     if (warnings.length > 0 && !body.acknowledge_warnings) {
       return NextResponse.json({ ok: false, requiresAcknowledge: true, warnings });
     }
 
-    // 9. All clear — mark step as complete
+    // 7. All clear — mark step as complete
     await db.wizardDraft.update({
       where: { id: draftId },
       data: {

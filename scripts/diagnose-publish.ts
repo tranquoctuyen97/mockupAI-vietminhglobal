@@ -1,6 +1,7 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 import * as dotenv from "dotenv";
+import { isPublishDryRun, PRODUCT_DEFAULTS } from "../src/lib/config/runtime-controls";
 dotenv.config({ path: ".env.local" });
 
 const connectionString = process.env.DATABASE_URL!;
@@ -101,26 +102,15 @@ async function main() {
     }
   }
 
-  // 3. Check feature flags
+  // 3. Check runtime controls
   console.log("\n" + "=" .repeat(70));
-  console.log("🏁 RELEVANT FEATURE FLAGS");
+  console.log("🏁 RELEVANT RUNTIME CONTROLS");
   console.log("=" .repeat(70));
 
-  const flags = await prisma.featureFlag.findMany({
-    where: {
-      key: {
-        in: ["publish_dry_run", "printify_real_mockups", "printify_orphan_cleanup_enabled"],
-      },
-    },
-  });
-
-  for (const f of flags) {
-    const emoji = f.enabled ? "🟢" : "🔴";
-    console.log(`  ${emoji} ${f.key}: ${f.enabled}`);
-  }
-  if (!flags.find(f => f.key === "publish_dry_run")) {
-    console.log("  ⚠️  publish_dry_run flag NOT FOUND in DB (defaults to disabled — real publish)");
-  }
+  const dryRunEnabled = isPublishDryRun();
+  console.log(`  ${dryRunEnabled ? "🟡" : "🟢"} PUBLISH_DRY_RUN: ${dryRunEnabled}`);
+  console.log(`  🟢 REAL_PRINTIFY_MOCKUPS_REQUIRED: ${PRODUCT_DEFAULTS.mockup.requireRealPrintifyMockups}`);
+  console.log(`  🟢 PRINTIFY_ORPHAN_CLEANUP_ENABLED: ${PRODUCT_DEFAULTS.cleanup.printifyOrphanCleanupEnabled}`);
 
   // 4. Check store credentials
   console.log("\n" + "=" .repeat(70));
@@ -188,9 +178,8 @@ async function main() {
     }
   }
 
-  const dryRunFlag = flags.find(f => f.key === "publish_dry_run");
-  if (dryRunFlag?.enabled) {
-    console.log(`\n  ⚠️  CRITICAL: publish_dry_run IS ENABLED — nothing is actually published!`);
+  if (dryRunEnabled) {
+    console.log(`\n  ⚠️  CRITICAL: PUBLISH_DRY_RUN IS ENABLED — nothing is actually published!`);
   }
 
   console.log("\n" + "=" .repeat(70));

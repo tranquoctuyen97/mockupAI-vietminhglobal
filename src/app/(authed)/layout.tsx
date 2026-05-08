@@ -1,25 +1,26 @@
 import { validateSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
+import { hasFeature, FEATURES, type Feature } from "@/lib/auth/roles";
 import AuthedShell from "./AuthedShell";
 
-/**
- * Server Component layout for authed area.
- * Validates session and fetches user role on the server.
- * Passes userRole to client shell as a prop (no client-side fetch needed).
- */
 export default async function AuthedLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const user = await validateSession();
+  if (!user) redirect("/login");
 
-  if (!user) {
-    redirect("/login");
+  // Compute all permissions for this user in one pass
+  const permissions: Feature[] = [];
+  for (const feature of FEATURES) {
+    if (await hasFeature(user.tenantId, user.role, feature)) {
+      permissions.push(feature);
+    }
   }
 
   return (
-    <AuthedShell userRole={user.role}>
+    <AuthedShell userRole={user.role} permissions={permissions}>
       {children}
     </AuthedShell>
   );

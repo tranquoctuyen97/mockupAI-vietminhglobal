@@ -3,7 +3,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { validateSession } from "@/lib/auth/session";
+import { requireFeature } from "@/lib/auth/guards";
 import { syncPrintifyShops } from "@/lib/printify/account";
 import { logAudit, getRequestInfo } from "@/lib/audit";
 import { prisma } from "@/lib/db";
@@ -12,10 +12,8 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const session = await validateSession();
-  if (!session || session.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const { session, response } = await requireFeature("integrations");
+  if (response) return response;
 
   const { id } = await params;
 

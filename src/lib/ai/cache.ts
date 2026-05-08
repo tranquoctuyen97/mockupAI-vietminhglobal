@@ -2,9 +2,6 @@ import { createHash } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { ContentInput, ContentOutput } from "./types";
 
-const COST_PER_1M_TOKENS_IN = 0.3; // $0.30 per 1M input tokens (Gemini 2.5 Flash)
-const COST_PER_1M_TOKENS_OUT = 2.5; // $2.50 per 1M output tokens (Gemini 2.5 Flash)
-
 /**
  * Calculates deterministic cache key based on inputs and provider
  */
@@ -12,10 +9,11 @@ export function generateCacheKey(
   input: ContentInput,
   provider: string,
   model: string,
-  promptVersion: number,
+  systemPrompt: string,
 ): string {
   const sortedColors = [...input.colors].sort().join(",");
-  const raw = `${input.designName}|${input.productType}|${sortedColors}|${input.placement}|${provider}|${model}|${promptVersion}`;
+  const promptHash = createHash("sha256").update(systemPrompt).digest("hex");
+  const raw = `${input.designName}|${input.productType}|${sortedColors}|${input.placement}|${provider}|${model}|${promptHash}`;
   return createHash("sha256").update(raw).digest("hex");
 }
 
@@ -43,10 +41,6 @@ export async function saveToCache(
   model: string,
   ttlDays: number = 7,
 ): Promise<void> {
-  const costUsd =
-    (result.tokensIn / 1_000_000) * COST_PER_1M_TOKENS_IN +
-    (result.tokensOut / 1_000_000) * COST_PER_1M_TOKENS_OUT;
-
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + ttlDays);
 
@@ -66,14 +60,12 @@ export async function saveToCache(
       model,
       tokensIn: result.tokensIn,
       tokensOut: result.tokensOut,
-      costUsd,
       expiresAt,
     },
     update: {
       payload,
       tokensIn: result.tokensIn,
       tokensOut: result.tokensOut,
-      costUsd,
       expiresAt,
     },
   });

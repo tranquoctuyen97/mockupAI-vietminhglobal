@@ -45,7 +45,6 @@ interface StoreDetail {
     enabledVariantIds: number[];
     position: string;
     defaultPlacement: unknown;
-    defaultPromptVersion: string;
     defaultAspectRatio: string;
     storePresetSnapshot: unknown;
   } | null;

@@ -8,8 +8,7 @@ export default async function AdminLayout({
 }) {
   const session = await validateSession();
 
-  if (!session || session.role !== "ADMIN") {
-    // Redirect non-admins out of the entire /admin zone
+  if (!session || (session.role !== "ADMIN" && session.role !== "SUPER_ADMIN")) {
     redirect("/dashboard");
   }
 

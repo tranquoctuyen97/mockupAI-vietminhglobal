@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
+import { requireFeature } from "@/lib/auth/guards";
 import { listStores } from "@/lib/stores/store-service";
 import { prisma } from "@/lib/db";
 import { encrypt } from "@/lib/crypto/envelope";
@@ -27,14 +28,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const session = await validateSession();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  if (session.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden - Admins only" }, { status: 403 });
-  }
+  const { session, response } = await requireFeature("stores");
+  if (response) return response;
 
   const body = await request.json();
   const parsed = CreateStoreSchema.safeParse(body);

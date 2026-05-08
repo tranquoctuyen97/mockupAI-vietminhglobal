@@ -15,16 +15,6 @@ export async function cleanupExpiredAssets(): Promise<{
   const errors: string[] = [];
   let purgedCount = 0;
 
-  // Check feature flag
-  const flag = await prisma.featureFlag.findUnique({
-    where: { key: "retention_cleanup_enabled" },
-  });
-
-  if (flag && !flag.enabled) {
-    console.log("[Cleanup] retention_cleanup_enabled is OFF — skipping");
-    return { purgedCount: 0, errors: [] };
-  }
-
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
   // Find expired designs

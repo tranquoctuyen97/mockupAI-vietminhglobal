@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Wand2, Trash2, Loader2, ChevronRight } from "lucide-react";
+import { Plus, Wand2, Trash2, Loader2, ChevronRight, CheckCircle2, Pencil } from "lucide-react";
 
 interface Draft {
   id: string;
@@ -16,11 +16,11 @@ interface Draft {
 }
 
 const STEP_LABELS = ["Store", "Design", "Preview", "Content", "Review"];
-const STATUS_LABELS: Record<string, { label: string; color: string }> = {
-  DRAFT: { label: "Bản nháp", color: "#6b7280" },
-  GENERATING: { label: "Đang tạo mockup", color: "#f59e0b" },
-  READY: { label: "Sẵn sàng", color: "#22c55e" },
-  PUBLISHED: { label: "Đã publish", color: "#3b82f6" },
+const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }> = {
+  DRAFT: { label: "Bản nháp", color: "#6b7280", bg: "rgba(107,114,128,0.12)" },
+  GENERATING: { label: "Đang tạo mockup", color: "#f59e0b", bg: "rgba(245,158,11,0.12)" },
+  READY: { label: "Sẵn sàng", color: "#22c55e", bg: "rgba(34,197,94,0.12)" },
+  PUBLISHED: { label: "Đã publish", color: "#3b82f6", bg: "rgba(59,130,246,0.12)" },
 };
 
 interface Props {
@@ -106,6 +106,7 @@ export default function WizardListClient({ initialDrafts }: Props) {
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {drafts.map((d) => {
             const statusInfo = STATUS_LABELS[d.status] || STATUS_LABELS.DRAFT;
+            const isPublished = d.status === "PUBLISHED";
             return (
               <div
                 key={d.id}
@@ -114,36 +115,54 @@ export default function WizardListClient({ initialDrafts }: Props) {
                   padding: "16px 20px",
                   display: "flex", alignItems: "center", justifyContent: "space-between",
                   cursor: "pointer",
-                  transition: "transform 0.1s",
+                  transition: "transform 0.15s, box-shadow 0.15s",
+                  borderLeft: isPublished ? `3px solid #3b82f6` : "3px solid transparent",
                 }}
                 onClick={() => router.push(`/wizard/${d.id}/step-${d.currentStep}`)}
                 onMouseEnter={(e) => {
                   (e.currentTarget as HTMLElement).style.transform = "translateX(2px)";
+                  (e.currentTarget as HTMLElement).style.boxShadow = "0 2px 12px rgba(0,0,0,0.1)";
                 }}
                 onMouseLeave={(e) => {
                   (e.currentTarget as HTMLElement).style.transform = "";
+                  (e.currentTarget as HTMLElement).style.boxShadow = "";
                 }}
               >
                 <div className="flex items-center gap-4">
                   <div
                     style={{
                       width: 40, height: 40, borderRadius: "var(--radius-sm)",
-                      backgroundColor: "var(--bg-tertiary)",
+                      backgroundColor: isPublished ? "rgba(59,130,246,0.1)" : "var(--bg-tertiary)",
                       display: "flex", alignItems: "center", justifyContent: "center",
                     }}
                   >
-                    <Wand2 size={18} style={{ opacity: 0.4 }} />
+                    {isPublished
+                      ? <CheckCircle2 size={18} style={{ color: "#3b82f6" }} />
+                      : <Wand2 size={18} style={{ opacity: 0.4 }} />
+                    }
                   </div>
                   <div>
                     <p style={{ fontWeight: 600, fontSize: "0.9rem", margin: 0 }}>
                       Draft #{d.id.slice(-6)}
                     </p>
-                    <div className="flex items-center gap-3" style={{ fontSize: "0.75rem", opacity: 0.5, marginTop: 2 }}>
-                      <span>Step {d.currentStep}/{STEP_LABELS.length}: {STEP_LABELS[d.currentStep - 1]}</span>
-                      <span style={{ color: statusInfo.color, fontWeight: 600, opacity: 1 }}>
+                    <div className="flex items-center gap-3" style={{ fontSize: "0.75rem", marginTop: 4 }}>
+                      <span style={{ opacity: 0.5 }}>
+                        {isPublished
+                          ? "Hoàn thành"
+                          : `Step ${d.currentStep}/${STEP_LABELS.length}: ${STEP_LABELS[d.currentStep - 1]}`
+                        }
+                      </span>
+                      <span style={{
+                        color: statusInfo.color,
+                        backgroundColor: statusInfo.bg,
+                        fontWeight: 600,
+                        padding: "1px 8px",
+                        borderRadius: 99,
+                        fontSize: "0.7rem",
+                      }}>
                         {statusInfo.label}
                       </span>
-                      <span>{new Date(d.updatedAt).toLocaleDateString("vi-VN")}</span>
+                      <span style={{ opacity: 0.4 }}>{new Date(d.updatedAt).toLocaleDateString("vi-VN")}</span>
                     </div>
                   </div>
                 </div>
@@ -158,7 +177,10 @@ export default function WizardListClient({ initialDrafts }: Props) {
                   >
                     <Trash2 size={16} />
                   </button>
-                  <ChevronRight size={16} style={{ opacity: 0.3 }} />
+                  {isPublished
+                    ? <Pencil size={14} style={{ opacity: 0.45, color: "#3b82f6" }} />
+                    : <ChevronRight size={16} style={{ opacity: 0.3 }} />
+                  }
                 </div>
               </div>
             );

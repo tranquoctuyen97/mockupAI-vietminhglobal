@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isTextContent, rewriteApiUrls, injectTokenScript, rewriteAbsolutePaths } from "./proxy-utils";
+import { isTextContent, rewriteApiUrls, injectTokenScript, rewriteAbsolutePaths, rewriteRootAssets } from "./proxy-utils";
 
 test("isTextContent: returns true for text types", () => {
   assert.equal(isTextContent("text/html; charset=utf-8"), true);
@@ -66,4 +66,43 @@ test("rewriteAbsolutePaths: does not rewrite full https URLs", () => {
   const html = '<script src="https://cdn.example.com/lib.js"></script>';
   const result = rewriteAbsolutePaths(html, "/api/inkhub-proxy");
   assert.equal(result, html);
+});
+
+test("rewriteRootAssets: rewrites root-relative asset paths in JS double-quotes", () => {
+  const js = 'const logo = "/shopify-logo.ico"; const img = "/brand.png";';
+  const result = rewriteRootAssets(js, "/api/inkhub-proxy");
+  assert.ok(result.includes('"/api/inkhub-proxy/shopify-logo.ico"'));
+  assert.ok(result.includes('"/api/inkhub-proxy/brand.png"'));
+});
+
+test("rewriteRootAssets: rewrites root-relative asset paths in JS single-quotes", () => {
+  const js = "const logo = '/shopify-logo.ico';";
+  const result = rewriteRootAssets(js, "/api/inkhub-proxy");
+  assert.ok(result.includes("'/api/inkhub-proxy/shopify-logo.ico'"));
+});
+
+test("rewriteRootAssets: does not rewrite already-proxied paths", () => {
+  const js = 'const logo = "/api/inkhub-proxy/shopify-logo.ico";';
+  const result = rewriteRootAssets(js, "/api/inkhub-proxy");
+  assert.equal(result, js);
+});
+
+test("rewriteRootAssets: does not rewrite non-asset paths", () => {
+  const js = 'router.push("/orders"); router.push("/login");';
+  const result = rewriteRootAssets(js, "/api/inkhub-proxy");
+  assert.equal(result, js);
+});
+
+test("rewriteRootAssets: handles query strings", () => {
+  const js = 'const url = "/favicon.ico?v=2";';
+  const result = rewriteRootAssets(js, "/api/inkhub-proxy");
+  assert.ok(result.includes('"/api/inkhub-proxy/favicon.ico?v=2"'));
+});
+
+test("rewriteRootAssets: rewrites svg, webp, woff2 extensions", () => {
+  const js = '"/icon.svg" "/hero.webp" "/font.woff2"';
+  const result = rewriteRootAssets(js, "/api/inkhub-proxy");
+  assert.ok(result.includes('"/api/inkhub-proxy/icon.svg"'));
+  assert.ok(result.includes('"/api/inkhub-proxy/hero.webp"'));
+  assert.ok(result.includes('"/api/inkhub-proxy/font.woff2"'));
 });

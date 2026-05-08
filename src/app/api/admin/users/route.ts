@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { validateSession } from "@/lib/auth/session";
+import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { hashPassword } from "@/lib/auth/password";
 import { logAudit, getRequestInfo } from "@/lib/audit";
@@ -7,10 +7,8 @@ import { z } from "zod";
 
 // GET /api/admin/users — List users (paginated)
 export async function GET() {
-  const currentUser = await validateSession();
-  if (!currentUser || currentUser.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-  }
+  const { session: currentUser, response } = await requireFeature("users");
+  if (response) return response;
 
   const users = await prisma.user.findMany({
     where: { tenantId: currentUser.tenantId },
@@ -39,10 +37,8 @@ const createUserSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const currentUser = await validateSession();
-  if (!currentUser || currentUser.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-  }
+  const { session: currentUser, response } = await requireFeature("users");
+  if (response) return response;
 
   try {
     const body = await request.json();

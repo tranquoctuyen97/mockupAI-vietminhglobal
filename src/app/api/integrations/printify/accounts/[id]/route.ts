@@ -4,7 +4,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { validateSession } from "@/lib/auth/session";
+import { requireFeature } from "@/lib/auth/guards";
 import { rotatePrintifyKey, deletePrintifyAccount, LinkedStoresError } from "@/lib/printify/account";
 import { logAudit, getRequestInfo } from "@/lib/audit";
 import { prisma } from "@/lib/db";
@@ -13,10 +13,8 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const session = await validateSession();
-  if (!session || session.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const { session, response } = await requireFeature("integrations");
+  if (response) return response;
 
   const { id } = await params;
 
@@ -69,10 +67,8 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const session = await validateSession();
-  if (!session || session.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const { session, response } = await requireFeature("integrations");
+  if (response) return response;
 
   const { id } = await params;
 

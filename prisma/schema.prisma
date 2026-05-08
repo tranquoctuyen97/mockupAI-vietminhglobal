@@ -15,10 +15,12 @@ model Tenant {
   name      String
   createdAt DateTime @default(now()) @map("created_at")
 
-  users        User[]
-  auditEvents  AuditEvent[]
-  stores       Store[]
-  wizardDrafts WizardDraft[]
+  users             User[]
+  auditEvents       AuditEvent[]
+  stores            Store[]
+  wizardDrafts      WizardDraft[]
+  rolePermissions   TenantRolePermission[]
+  inkhubCredential  InkhubCredential?
 
   @@map("tenants")
 }
@@ -45,6 +47,7 @@ model User {
 }
 
 enum UserRole {
+  SUPER_ADMIN
   ADMIN
   OPERATOR
 }
@@ -52,6 +55,32 @@ enum UserRole {
 enum UserStatus {
   ACTIVE
   DISABLED
+}
+
+model TenantRolePermission {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  role      UserRole
+  feature   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, role, feature])
+  @@index([tenantId, role])
+  @@map("tenant_role_permissions")
+}
+
+model InkhubCredential {
+  id                String   @id @default(cuid())
+  tenantId          String   @unique @map("tenant_id")
+  username          String
+  passwordEncrypted Bytes    @map("password_encrypted")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("inkhub_credentials")
 }
 
 model Session {
@@ -238,7 +267,6 @@ model StoreMockupTemplate {
   enabledVariantIds       Int[]            @default([]) @map("enabled_variant_ids")
   enabledSizes            String[]         @default([]) @map("enabled_sizes")
   defaultPlacement        Json?            @map("default_placement")
-  defaultPromptVersion    String           @default("v1") @map("default_prompt_version")
   defaultAspectRatio      String           @default("1:1") @map("default_aspect_ratio")
   storePresetSnapshot     Json?            @map("store_preset_snapshot")
   schemaVersion           Int              @default(1) @map("schema_version")
@@ -401,11 +429,10 @@ model MockupJob {
 model AiContentCache {
   cacheKey  String   @id @map("cache_key")
   payload   Json // {title, description, tags, altText}
-  provider  String // "gemini"
-  model     String // "gemini-2.5-flash"
+  provider  String // "gemini" | "openai" | "anthropic"
+  model     String
   tokensIn  Int      @map("tokens_in")
   tokensOut Int      @map("tokens_out")
-  costUsd   Float    @map("cost_usd")
   createdAt DateTime @default(now()) @map("created_at")
   expiresAt DateTime @map("expires_at")
 
@@ -426,15 +453,62 @@ model ProductPricingTemplate {
 }
 
 model AiSettings {
-  tenantId        String   @id @map("tenant_id")
-  provider        String   @default("gemini")
-  model           String   @default("gemini-2.5-flash")
-  apiKeyEncrypted Bytes    @map("api_key_encrypted")
-  encryptionKeyId String   @map("encryption_key_id")
-  promptVersion   Int      @default(1) @map("prompt_version")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  tenantId       String   @id @map("tenant_id")
+  activeProvider String   @default("gemini") @map("active_provider")
+  systemPrompt   String?  @map("system_prompt")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   @@map("ai_settings")
+}
+
+model AiProviderSettings {
+  id              String   @id @default(cuid())
+  tenantId        String   @map("tenant_id")
+  provider        String
+  model           String
+  apiKeyEncrypted Bytes?   @map("api_key_encrypted")
+  encryptionKeyId String?  @map("encryption_key_id")
+  configured      Boolean  @default(false)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, provider])
+  @@index([tenantId, configured])
+  @@map("ai_provider_settings")
+}
+
+model AiProviderModelCache {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  provider     String
+  modelsJson   Json     @map("models_json")
+  fetchedAt    DateTime @map("fetched_at")
+  errorMessage String?  @map("error_message")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, provider])
+  @@index([tenantId, fetchedAt])
+  @@map("ai_provider_model_cache")
+}
+
+model AiUsageEvent {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  provider  String
+  model     String
+  draftId   String?  @map("wizard_draft_id")
+  status    String
+  cacheHit  Boolean  @default(false) @map("cache_hit")
+  tokensIn  Int      @default(0) @map("tokens_in")
+  tokensOut Int      @default(0) @map("tokens_out")
+  errorCode String?  @map("error_code")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, provider, createdAt])
+  @@index([draftId])
+  @@map("ai_usage_events")
 }
 
 // ============================================================

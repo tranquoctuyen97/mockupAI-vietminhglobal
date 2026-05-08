@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { useWizardStore } from "@/lib/wizard/use-wizard-store";
+import { isRealPrintifyMockupMedia } from "@/lib/mockup/real-printify-media";
 import { viewLabel } from "@/lib/placement/views";
 import {
   ClipboardCheck,
@@ -123,12 +124,6 @@ function normalizeColorName(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function isRealPrintifyMockup(image: MockupImage): boolean {
-  const url = image.compositeUrl ?? image.sourceUrl;
-  if (!url || !/^https?:\/\//i.test(url)) return false;
-  return !url.includes("via.placeholder.com");
-}
-
 export default function Step6ReviewPage() {
   const { draftId } = useParams<{ draftId: string }>();
   const { draft, setDraft, setChecklist } = useWizardStore();
@@ -142,16 +137,19 @@ export default function Step6ReviewPage() {
     () => new Map(colors.map((color) => [color.name.toLowerCase(), color.hex])),
     [colors],
   );
+  // Use only the latest completed job's images — older jobs are stale runs
+  const latestCompletedJob = useMemo(
+    () => [...mockupJobs].reverse().find((job) => job.status === "completed") ?? null,
+    [mockupJobs],
+  );
   const allMockups = useMemo(
-    () => mockupJobs
-      .filter((job) => job.status === "completed")
-      .flatMap((job) => job.images ?? [])
+    () => (latestCompletedJob?.images ?? [])
       .filter((image) =>
         image.included &&
-        isRealPrintifyMockup(image) &&
+        isRealPrintifyMockupMedia(image) &&
         colorHexLookup.has(normalizeColorName(image.colorName)),
       ), // Only show real Printify mockups for selected colors
-    [mockupJobs, colorHexLookup],
+    [latestCompletedJob, colorHexLookup],
   );
   const latestMockupJob = mockupJobs[mockupJobs.length - 1] ?? null;
   const isPrintifyRendering = latestMockupJob?.status === "running" || latestMockupJob?.status === "pending";
@@ -193,6 +191,10 @@ export default function Step6ReviewPage() {
   const [publishStatus, setPublishStatus] = useState<"IDLE" | "PUBLISHING" | "SUCCESS" | "ERROR">("IDLE");
   const [publishLogs, setPublishLogs] = useState<{stage: string, message: string, status?: string}[]>([]);
   const [failedListingId, setFailedListingId] = useState<string | null>(null);
+  const [successListingId, setSuccessListingId] = useState<string | null>(null);
+  const [isAlreadyPublished, setIsAlreadyPublished] = useState(false);
+  const [showRepublishConfirm, setShowRepublishConfirm] = useState(false);
+  const [republishing, setRepublishing] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
   // Fetch pricing template & store sizes
@@ -278,6 +280,7 @@ export default function Step6ReviewPage() {
         }
         if (data.type === "publish.complete") {
           if (data.data.status === "ACTIVE") {
+            if (data.data.listingId) setSuccessListingId(data.data.listingId);
             setPublishStatus("SUCCESS");
             setPublishLogs(prev => [...prev, { stage: "DONE", message: "Publish hoàn tất!", status: "success" }]);
             toast.success("Publish thành công!");
@@ -316,6 +319,8 @@ export default function Step6ReviewPage() {
       }
       if (data.alreadyPublished) {
          if (data.status === "ACTIVE") {
+           if (data.listingId) setSuccessListingId(data.listingId);
+           setIsAlreadyPublished(true);
            setPublishStatus("SUCCESS");
            setPublishLogs([{ stage: "DONE", message: "Draft này đã được publish rồi.", status: "success" }]);
            toast.info("Draft này đã được publish rồi.");
@@ -390,6 +395,30 @@ export default function Step6ReviewPage() {
       toast.error(e.message);
       evtSource.close();
       setRetrying(false);
+    }
+  }
+
+  async function handleForceRepublish() {
+    if (!successListingId) return;
+    setRepublishing(true);
+    try {
+      const res = await fetch(`/api/listings/${successListingId}/force-republish`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        toast.error(data.error || "Không thể xóa listing cũ");
+        return;
+      }
+      // Reset all publish state then re-trigger publish
+      setPublishStatus("IDLE");
+      setPublishLogs([]);
+      setIsAlreadyPublished(false);
+      setShowRepublishConfirm(false);
+      setSuccessListingId(null);
+      await handlePublish();
+    } catch {
+      toast.error("Lỗi kết nối");
+    } finally {
+      setRepublishing(false);
     }
   }
 
@@ -647,11 +676,100 @@ export default function Step6ReviewPage() {
                   </div>
                 ))}
               </div>
-              {publishStatus === "SUCCESS" && (
+              {publishStatus === "SUCCESS" && !isAlreadyPublished && (
+                <div style={{ marginTop: 16, textAlign: "center" }}>
+                  <CheckCircle2 size={40} style={{ color: "var(--color-wise-green)", margin: "0 auto 12px" }} />
+                  <p style={{ fontWeight: 700, fontSize: "1rem", margin: "0 0 16px" }}>Đã publish thành công!</p>
+                  {allMockups[0] && (
+                    <div className="flex items-center gap-3" style={{ marginBottom: 16, padding: "10px 12px", backgroundColor: "var(--bg-tertiary)", borderRadius: "var(--radius-sm)", textAlign: "left" }}>
+                      <div style={{ width: 56, height: 56, borderRadius: "var(--radius-sm)", overflow: "hidden", flexShrink: 0, backgroundColor: "var(--bg-tertiary)" }}>
+                        <img
+                          src={toPublicUrl(allMockups[0].compositeUrl ?? allMockups[0].sourceUrl) ?? undefined}
+                          alt="mockup"
+                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                        />
+                      </div>
+                      <p style={{ margin: 0, fontWeight: 600, fontSize: "0.85rem", lineHeight: 1.4 }}>
+                        {aiContent?.title ?? "Sản phẩm của bạn"}
+                      </p>
+                    </div>
+                  )}
+                  <div className="flex gap-3">
+                    {successListingId && (
+                      <Link
+                        href={`/listings/${successListingId}`}
+                        className="btn btn-primary"
+                        style={{ textDecoration: "none", flex: 1, justifyContent: "center" }}
+                      >
+                        Xem Listing →
+                      </Link>
+                    )}
+                    <Link
+                      href="/wizard"
+                      className="btn btn-secondary"
+                      style={{ textDecoration: "none", flex: 1, justifyContent: "center" }}
+                    >
+                      + Tạo wizard mới
+                    </Link>
+                  </div>
+                </div>
+              )}
+
+          {publishStatus === "SUCCESS" && isAlreadyPublished && (
                 <div style={{ marginTop: 16 }}>
-                  <Link href="/products" className="btn btn-primary" style={{ textDecoration: "none", width: "100%", justifyContent: "center" }}>
-                    Xem sản phẩm
-                  </Link>
+                  {!showRepublishConfirm ? (
+                    <>
+                      <p style={{ fontSize: "0.85rem", margin: "0 0 12px", opacity: 0.7 }}>
+                        Draft này đã được publish trước đó.
+                      </p>
+                      <div className="flex gap-3">
+                        {successListingId && (
+                          <Link
+                            href={`/listings/${successListingId}`}
+                            className="btn btn-primary"
+                            style={{ textDecoration: "none", flex: 1, justifyContent: "center" }}
+                          >
+                            Xem Listing →
+                          </Link>
+                        )}
+                        <button
+                          className="btn btn-secondary"
+                          style={{ flex: 1 }}
+                          onClick={() => setShowRepublishConfirm(true)}
+                        >
+                          <RefreshCcw size={14} /> Publish lại
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ padding: "14px 16px", borderRadius: "var(--radius-md)", border: "1px solid var(--color-danger)", backgroundColor: "rgba(239,68,68,0.05)" }}>
+                      <p style={{ fontWeight: 700, fontSize: "0.88rem", margin: "0 0 6px", color: "var(--color-danger)" }}>
+                        ⚠️ Xác nhận Publish lại
+                      </p>
+                      <p style={{ fontSize: "0.82rem", margin: "0 0 14px", lineHeight: 1.5, opacity: 0.8 }}>
+                        Hành động này sẽ <strong>XÓA listing cũ</strong> và tạo sản phẩm mới trên Shopify &amp; Printify. Listing cũ sẽ không thể khôi phục.
+                      </p>
+                      <div className="flex gap-3">
+                        <button
+                          className="btn btn-secondary"
+                          style={{ flex: 1 }}
+                          onClick={() => setShowRepublishConfirm(false)}
+                          disabled={republishing}
+                        >
+                          Hủy
+                        </button>
+                        <button
+                          className="btn"
+                          style={{ flex: 1, backgroundColor: "var(--color-danger)", color: "#fff", border: "none", cursor: republishing ? "not-allowed" : "pointer", opacity: republishing ? 0.6 : 1 }}
+                          onClick={handleForceRepublish}
+                          disabled={republishing}
+                        >
+                          {republishing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCcw size={14} />}
+                          Xóa &amp; Publish lại
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               {publishStatus === "ERROR" && failedListingId && (

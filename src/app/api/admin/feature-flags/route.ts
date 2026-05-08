@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
-import { validateSession } from "@/lib/auth/session";
+import { requireSuperAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
+import { isInternalControlsDebugEnabled } from "@/lib/config/runtime-controls";
 import { invalidateFlag } from "@/lib/feature-flags";
 import { logAudit, getRequestInfo } from "@/lib/audit";
 import { z } from "zod";
 
 // GET /api/admin/feature-flags — List all flags
-export async function GET() {
-  const currentUser = await validateSession();
-  if (!currentUser || currentUser.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+export async function GET(request: Request) {
+  const { session: currentUser, response } = await requireSuperAdmin();
+  if (response) return response;
+  if (!canUseInternalFlags(request)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   const flags = await prisma.featureFlag.findMany({
@@ -27,9 +29,10 @@ const toggleSchema = z.object({
 });
 
 export async function PATCH(request: Request) {
-  const currentUser = await validateSession();
-  if (!currentUser || currentUser.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  const { session: currentUser, response } = await requireSuperAdmin();
+  if (response) return response;
+  if (!canUseInternalFlags(request)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   try {
@@ -84,4 +87,11 @@ export async function PATCH(request: Request) {
     console.error("[ADMIN/FLAGS] Toggle error:", error);
     return NextResponse.json({ error: "Đã xảy ra lỗi" }, { status: 500 });
   }
+}
+
+function canUseInternalFlags(request: Request): boolean {
+  if (!isInternalControlsDebugEnabled()) return false;
+
+  const url = new URL(request.url);
+  return url.searchParams.get("includeInternal") === "true";
 }

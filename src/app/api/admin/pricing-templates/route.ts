@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { validateSession } from "@/lib/auth/session";
+import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 
 /**
@@ -7,10 +7,8 @@ import { prisma } from "@/lib/db";
  * PUT /api/admin/pricing-templates — Upsert batch
  */
 export async function GET() {
-  const session = await validateSession();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, response } = await requireFeature("pricing");
+  if (response) return response;
 
   const templates = await prisma.productPricingTemplate.findMany({
     where: { tenantId: session.tenantId },
@@ -21,10 +19,8 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const session = await validateSession();
-  if (!session || session.role !== "ADMIN") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, response } = await requireFeature("pricing");
+  if (response) return response;
 
   const body = await request.json();
   const { templates } = body as {

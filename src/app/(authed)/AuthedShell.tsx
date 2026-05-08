@@ -21,6 +21,9 @@ import {
   X,
   ChevronRight,
   Puzzle,
+  ArrowLeft,
+  Shield,
+  Settings,
 } from "lucide-react";
 
 interface NavItemConfig {
@@ -28,43 +31,55 @@ interface NavItemConfig {
   href: string;
   icon: React.ReactNode;
   adminOnly?: boolean;
+  superAdminOnly?: boolean;
   badge?: string;
+  feature?: string;
 }
 
 const NAV_ITEMS: NavItemConfig[] = [
   { label: "Dashboard", href: "/dashboard", icon: <LayoutDashboard size={18} /> },
-  { label: "Stores", href: "/stores", icon: <Store size={18} /> },
-  { label: "Designs", href: "/designs", icon: <Palette size={18} /> },
-  { label: "Wizard", href: "/wizard", icon: <Wand2 size={18} /> },
-  { label: "Listings", href: "/listings", icon: <ShoppingBag size={18} /> },
-  { label: "Auto Fulfill", href: "/auto-fulfill", icon: <Truck size={18} /> },
+  { label: "Stores", href: "/stores", icon: <Store size={18} />, feature: "stores" },
+  { label: "Designs", href: "/designs", icon: <Palette size={18} />, feature: "designs" },
+  { label: "Wizard", href: "/wizard", icon: <Wand2 size={18} />, feature: "wizard" },
+  { label: "Listings", href: "/listings", icon: <ShoppingBag size={18} />, feature: "listings" },
+  { label: "Auto Fulfill", href: "/auto-fulfill", icon: <Truck size={18} />, feature: "auto_fulfill" },
 ];
 
 const ADMIN_ITEMS: NavItemConfig[] = [
-  { label: "Users", href: "/admin/users", icon: <Users size={18} />, adminOnly: true },
-  { label: "Pricing", href: "/admin/pricing", icon: <DollarSign size={18} />, adminOnly: true },
-  { label: "AI Settings", href: "/admin/ai-settings", icon: <Bot size={18} />, adminOnly: true },
+  { label: "Users", href: "/admin/users", icon: <Users size={18} />, adminOnly: true, feature: "users" },
+  { label: "Pricing", href: "/admin/pricing", icon: <DollarSign size={18} />, adminOnly: true, feature: "pricing" },
+  { label: "AI Settings", href: "/admin/ai-settings", icon: <Bot size={18} />, adminOnly: true, feature: "ai_settings" },
+  { label: "Permissions", href: "/admin/acl", icon: <Shield size={18} />, superAdminOnly: true },
 ];
 
 const INTEGRATION_ITEMS: NavItemConfig[] = [
-  { label: "Printify", href: "/integrations/printify", icon: <Puzzle size={18} />, adminOnly: true },
+  { label: "Printify", href: "/integrations/printify", icon: <Puzzle size={18} />, adminOnly: true, feature: "integrations" },
+  { label: "InkHub Config", href: "/admin/inkhub", icon: <Settings size={18} />, adminOnly: true, feature: "inkhub_config" },
 ];
 
-/**
- * Client shell: sidebar, topbar, mobile drawer.
- * Receives userRole from Server Component (no client-side fetch needed).
- */
 export default function AuthedShell({
   children,
   userRole,
+  permissions,
 }: {
   children: React.ReactNode;
   userRole: string;
+  permissions: string[];
 }) {
   const pathname = usePathname();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+
+  const isSuperAdmin = userRole === "SUPER_ADMIN";
+  const isAdminOrAbove = userRole === "ADMIN" || isSuperAdmin;
+
+  function canSee(item: NavItemConfig): boolean {
+    if (item.superAdminOnly && !isSuperAdmin) return false;
+    if (item.adminOnly && !isAdminOrAbove) return false;
+    if (item.feature && !isSuperAdmin && !permissions.includes(item.feature)) return false;
+    return true;
+  }
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -104,6 +119,35 @@ export default function AuthedShell({
         )}
         {isActive && <ChevronRight size={14} style={{ opacity: 0.5 }} />}
       </Link>
+    );
+  }
+
+  if (pathname.startsWith("/auto-fulfill")) {
+    return (
+      <div className="flex h-screen overflow-hidden" style={{ backgroundColor: "var(--bg-primary)" }}>
+        <aside
+          className="w-14 flex-shrink-0 flex flex-col items-center pt-4 pb-4 gap-3"
+          style={{ backgroundColor: "var(--bg-sidebar)", borderRight: "1px solid var(--border-default)" }}
+        >
+          <div
+            className="w-9 h-9 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: "var(--color-wise-green)" }}
+          >
+            <Sparkles size={16} style={{ color: "var(--color-wise-dark-green)" }} />
+          </div>
+          <Link
+            href="/dashboard"
+            className="w-9 h-9 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: "var(--color-wise-green)" }}
+            aria-label="Back to dashboard"
+          >
+            <ArrowLeft size={16} style={{ color: "var(--color-wise-dark-green)" }} />
+          </Link>
+        </aside>
+        <main className="flex-1 min-w-0 h-full">
+          {children}
+        </main>
+      </div>
     );
   }
 
@@ -156,33 +200,33 @@ export default function AuthedShell({
               Workspace
             </span>
           </div>
-          {NAV_ITEMS.map((item) => (
+          {NAV_ITEMS.filter(canSee).map((item) => (
             <NavItem key={item.href} item={item} />
           ))}
 
-          {/* Integrations section (ADMIN only) */}
-          {userRole === "ADMIN" && (
+          {/* Integrations section */}
+          {isAdminOrAbove && INTEGRATION_ITEMS.some(canSee) && (
             <>
               <div className="px-5 mt-6 mb-2">
                 <span className="text-small" style={{ color: "rgba(255,255,255,0.4)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" }}>
                   Integrations
                 </span>
               </div>
-              {INTEGRATION_ITEMS.map((item) => (
+              {INTEGRATION_ITEMS.filter(canSee).map((item) => (
                 <NavItem key={item.href} item={item} />
               ))}
             </>
           )}
 
           {/* Admin section */}
-          {userRole === "ADMIN" && (
+          {isAdminOrAbove && ADMIN_ITEMS.some(canSee) && (
             <>
               <div className="px-5 mt-6 mb-2">
                 <span className="text-small" style={{ color: "rgba(255,255,255,0.4)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" }}>
                   Admin
                 </span>
               </div>
-              {ADMIN_ITEMS.map((item) => (
+              {ADMIN_ITEMS.filter(canSee).map((item) => (
                 <NavItem key={item.href} item={item} />
               ))}
             </>
@@ -228,14 +272,10 @@ export default function AuthedShell({
         </header>
 
         {/* Page content */}
-        {pathname.startsWith("/auto-fulfill") ? (
-          children
-        ) : (
-          <div className="p-6 lg:p-8 max-w-7xl">
-            <TokenExpiredBanner />
-            {children}
-          </div>
-        )}
+        <div className="p-6 lg:p-8 max-w-7xl">
+          <TokenExpiredBanner />
+          {children}
+        </div>
       </main>
     </div>
   );

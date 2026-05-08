@@ -4,25 +4,21 @@
  */
 
 import { NextResponse } from "next/server";
-import { validateSession } from "@/lib/auth/session";
+import { requireFeature } from "@/lib/auth/guards";
 import { createPrintifyAccount, listPrintifyAccounts } from "@/lib/printify/account";
 import { logAudit, getRequestInfo } from "@/lib/audit";
 
 export async function GET() {
-  const session = await validateSession();
-  if (!session || session.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const { session, response } = await requireFeature("integrations");
+  if (response) return response;
 
   const accounts = await listPrintifyAccounts(session.tenantId);
   return NextResponse.json(accounts);
 }
 
 export async function POST(request: Request) {
-  const session = await validateSession();
-  if (!session || session.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const { session, response } = await requireFeature("integrations");
+  if (response) return response;
 
   const body = await request.json();
   const { nickname, apiKey } = body as { nickname: string; apiKey: string };

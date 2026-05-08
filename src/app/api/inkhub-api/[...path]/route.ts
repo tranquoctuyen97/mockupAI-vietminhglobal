@@ -1,4 +1,5 @@
 import { getToken } from "@/lib/inkhub/token";
+import { validateSession } from "@/lib/auth/session";
 import type { NextRequest } from "next/server";
 
 const UPSTREAM = "https://api-inkhub-v2.grabink.co";
@@ -7,10 +8,15 @@ async function handler(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
 ) {
+  const session = await validateSession();
+  if (!session) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const { path } = await params;
   const upstreamUrl = `${UPSTREAM}/${path.join("/")}${request.nextUrl.search}`;
 
-  const { token } = await getToken();
+  const { token } = await getToken(session.tenantId);
 
   const headers = new Headers();
   const ct = request.headers.get("content-type");
@@ -35,6 +41,9 @@ async function handler(
 
   const responseHeaders = new Headers(upstream.headers);
   responseHeaders.set("access-control-allow-origin", "*");
+  // Node fetch decompresses the body; strip encoding/length headers so the browser doesn't try to decompress again.
+  responseHeaders.delete("content-encoding");
+  responseHeaders.delete("content-length");
 
   return new Response(upstream.body, {
     status: upstream.status,

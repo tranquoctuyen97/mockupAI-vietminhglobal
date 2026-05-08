@@ -1,5 +1,6 @@
 import { getToken } from "@/lib/inkhub/token";
-import { injectTokenScript, isTextContent, rewriteAbsolutePaths, rewriteApiUrls } from "@/lib/inkhub/proxy-utils";
+import { injectTokenScript, isTextContent, rewriteAbsolutePaths, rewriteApiUrls, rewriteRootAssets } from "@/lib/inkhub/proxy-utils";
+import { validateSession } from "@/lib/auth/session";
 import type { NextRequest } from "next/server";
 
 const UPSTREAM_UI = "https://inkhub.grabink.co";
@@ -8,6 +9,11 @@ async function handler(
   request: NextRequest,
   { params }: { params: Promise<{ path?: string[] }> },
 ) {
+  const session = await validateSession();
+  if (!session) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const { path } = await params;
   const upstreamPath = path?.length ? `/${path.join("/")}` : "/";
   const upstreamUrl = `${UPSTREAM_UI}${upstreamPath}${request.nextUrl.search}`;
@@ -40,7 +46,7 @@ async function handler(
   }
 
   const host = request.nextUrl.origin;
-  const { token, orgId } = await getToken();
+  const { token, orgId } = await getToken(session.tenantId);
   let body = await upstream.text();
 
   body = rewriteApiUrls(body, host);
@@ -49,6 +55,8 @@ async function handler(
     body = rewriteAbsolutePaths(body, "/api/inkhub-proxy");
     body = injectTokenScript(body, token, orgId);
   }
+
+  body = rewriteRootAssets(body, "/api/inkhub-proxy");
 
   return new Response(body, { status: upstream.status, headers: responseHeaders });
 }

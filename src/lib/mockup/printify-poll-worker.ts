@@ -7,6 +7,7 @@ import {
   type ParsedPrintifyMockupImage,
 } from "../printify/product";
 import { isFinalBullMqAttempt } from "./progress";
+import { cacheRemoteMockupImage } from "./remote-media";
 
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
 const concurrency = parseInt(process.env.PRINTIFY_MOCKUP_WORKER_CONCURRENCY || "2", 10);
@@ -67,7 +68,7 @@ export async function processPrintifyMockupPollJob(
       client,
       externalShopId,
     });
-    const rows = buildMockupImageRows({ mockups, variantColorLookup });
+    const rows = await buildMockupImageRows({ mockups, variantColorLookup });
 
     if (rows.length === 0) {
       throw new Error("Printify returned no mockup images for the selected colors and enabled variants");
@@ -123,10 +124,11 @@ export async function processPrintifyMockupPollJob(
   }
 }
 
-export function buildMockupImageRows(input: {
+export async function buildMockupImageRows(input: {
   mockups: ParsedPrintifyMockupImage[];
   variantColorLookup: Map<number, { colorName: string }>;
-}): Array<{
+  cacheImage?: (url: string, keySeed: string) => Promise<string>;
+}): Promise<Array<{
   printifyMockupId: string;
   variantId: number;
   colorName: string;
@@ -139,7 +141,8 @@ export function buildMockupImageRows(input: {
   cameraLabel: string | null;
   included: boolean;
   sortOrder: number;
-}> {
+}>> {
+  const cacheImage = input.cacheImage ?? cacheRemoteMockupImage;
   const rows: Array<{
     printifyMockupId: string;
     variantId: number;
@@ -181,13 +184,21 @@ export function buildMockupImageRows(input: {
       if (seen.has(dedupeKey)) continue;
       seen.add(dedupeKey);
 
+      const keySeed = `${mockup.printifyMockupId || mockup.mockupType}_${representative.variantId}_${mockup.viewPosition}`;
+      let compositeUrl = mockup.sourceUrl;
+      try {
+        compositeUrl = await cacheImage(mockup.sourceUrl, keySeed);
+      } catch (error) {
+        console.warn("[PrintifyMockupPoll] Failed to cache Printify mockup image, keeping remote URL", error);
+      }
+
       rows.push({
         printifyMockupId: mockup.printifyMockupId,
         variantId: representative.variantId,
         colorName: representative.colorName,
         viewPosition: mockup.viewPosition,
         sourceUrl: mockup.sourceUrl,
-        compositeUrl: mockup.sourceUrl,
+        compositeUrl,
         compositeStatus: "completed",
         mockupType: mockup.mockupType,
         isDefault: mockup.isDefault,

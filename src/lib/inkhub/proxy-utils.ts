@@ -21,6 +21,15 @@ export function rewriteAbsolutePaths(html: string, proxyBase: string): string {
 
 export function injectTokenScript(html: string, token: string, orgId: string): string {
   if (!html.includes("</head>")) return html;
-  const script = `<script>localStorage.setItem('token','${token}');localStorage.setItem('organizationId','${orgId}');history.replaceState({},'','/');</script>`;
+  const script = `<script>localStorage.setItem('token','${token}');localStorage.setItem('organizationId','${orgId}');history.replaceState({},'','/orders');</script>`;
   return html.replace("</head>", `${script}</head>`);
+}
+
+// Rewrite root-relative static asset paths in JS/CSS string literals to go through the proxy.
+// Matches quoted strings like "/logo.png" or "/icon.ico?v=2". Skips already-proxied paths.
+export function rewriteRootAssets(body: string, proxyBase: string): string {
+  return body.replace(
+    /(["'])(\/(?!api\/)(?:[^"'?#]*\.)(?:ico|png|jpg|jpeg|gif|svg|webp|woff2?|ttf|eot|otf)(?:\?[^"']*)?)\1/g,
+    `$1${proxyBase}$2$1`,
+  );
 }

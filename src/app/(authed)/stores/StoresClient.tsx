@@ -31,10 +31,12 @@ interface StoreData {
 interface Props {
   initialStores: StoreData[];
   userRole: string;
+  canManageStores: boolean;
 }
 
-export default function StoresClient({ initialStores, userRole }: Props) {
+export default function StoresClient({ initialStores, userRole, canManageStores }: Props) {
   const [stores, setStores] = useState<StoreData[]>(initialStores);
+  const isAdmin = canManageStores;
 
   async function fetchStores() {
     try {
@@ -103,9 +105,11 @@ export default function StoresClient({ initialStores, userRole }: Props) {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="page-title">Stores</h1>
-          <p className="page-subtitle">Quản lý kết nối Shopify + Printify</p>
+          <p className="page-subtitle">
+            {isAdmin ? "Quản lý kết nối Shopify + Printify" : "Xem store đã sẵn sàng để tạo listing"}
+          </p>
         </div>
-        {userRole === "ADMIN" && (
+        {isAdmin && (
           <Link href="/stores/new" className="btn btn-primary">
             <Plus size={16} />
             Kết nối Store
@@ -119,11 +123,11 @@ export default function StoresClient({ initialStores, userRole }: Props) {
           <Store size={48} style={{ margin: "0 auto", opacity: 0.3, marginBottom: "16px" }} />
           <h3 style={{ marginBottom: "8px", fontWeight: 700 }}>Chưa có Store nào</h3>
           <p style={{ opacity: 0.6, marginBottom: "24px" }}>
-            {userRole === "ADMIN" 
+            {isAdmin 
               ? "Kết nối Shopify store đầu tiên để bắt đầu tạo sản phẩm"
               : "Vui lòng liên hệ Admin để kết nối Store"}
           </p>
-          {userRole === "ADMIN" && (
+          {isAdmin && (
             <Link href="/stores/new" className="btn btn-primary">
               <Plus size={16} />
               Kết nối Store đầu tiên
@@ -156,16 +160,20 @@ export default function StoresClient({ initialStores, userRole }: Props) {
                       <StatusBadge status={store.status} />
                     </div>
                     <div style={{ fontSize: "0.875rem", opacity: 0.6 }}>
-                      <a
-                        href={`https://${store.shopifyDomain}/admin`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1"
-                        style={{ color: "inherit", textDecoration: "none" }}
-                      >
-                        {store.shopifyDomain}
-                        <ExternalLink size={12} />
-                      </a>
+                      {isAdmin ? (
+                        <a
+                          href={`https://${store.shopifyDomain}/admin`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1"
+                          style={{ color: "inherit", textDecoration: "none" }}
+                        >
+                          {store.shopifyDomain}
+                          <ExternalLink size={12} />
+                        </a>
+                      ) : (
+                        <span>{store.shopifyDomain}</span>
+                      )}
                     </div>
                   </div>
 
@@ -216,7 +224,7 @@ export default function StoresClient({ initialStores, userRole }: Props) {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {userRole === "ADMIN" && (
+                  {isAdmin && (
                     <button
                       onClick={() => handleTestConnection(store.id)}
                       className="btn btn-secondary"
@@ -227,22 +235,24 @@ export default function StoresClient({ initialStores, userRole }: Props) {
                       Test
                     </button>
                   )}
-                  <Link
-                    href={`/stores/${store.id}/config`}
-                    className="btn btn-secondary"
-                    style={{ padding: "8px 12px" }}
-                  >
-                    <Settings size={14} />
-                    Cấu hình
-                  </Link>
-                  {userRole === "ADMIN" && (
-                    <button
-                      onClick={() => handleDelete(store.id, store.name)}
-                      className="btn btn-danger"
-                      style={{ padding: "8px 12px" }}
-                    >
-                      Xóa
-                    </button>
+                  {isAdmin && (
+                    <>
+                      <Link
+                        href={`/stores/${store.id}/config`}
+                        className="btn btn-secondary"
+                        style={{ padding: "8px 12px" }}
+                      >
+                        <Settings size={14} />
+                        Cấu hình
+                      </Link>
+                      <button
+                        onClick={() => handleDelete(store.id, store.name)}
+                        className="btn btn-danger"
+                        style={{ padding: "8px 12px" }}
+                      >
+                        Xóa
+                      </button>
+                    </>
                   )}
                 </div>
               </div>

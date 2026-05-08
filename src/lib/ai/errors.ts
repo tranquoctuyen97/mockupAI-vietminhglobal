@@ -1,6 +1,6 @@
 /**
  * AI Provider Error Parser — Phase 6.9
- * Converts raw Gemini/OpenAI error objects into user-friendly Vietnamese messages.
+ * Converts raw Gemini/OpenAI/Claude error objects into user-friendly Vietnamese messages.
  * Never leaks raw JSON or technical error strings to the UI.
  */
 
@@ -21,6 +21,34 @@ export interface AIProviderError {
  */
 export function parseAIError(raw: unknown): AIProviderError {
   const normalized = normalizeToObject(raw);
+  const rawMessage = extractMessage(raw, normalized);
+  if (isAuthErrorMessage(rawMessage, normalized)) {
+    return {
+      code: "auth_failed",
+      userMessage: "API key không hợp lệ hoặc không có quyền truy cập provider này. Vui lòng kiểm tra lại key trong AI Settings.",
+      retryable: false,
+      severity: "error",
+      supportHint: rawMessage,
+    };
+  }
+  if (isQuotaErrorMessage(rawMessage, normalized)) {
+    return {
+      code: "quota_or_billing_required",
+      userMessage: "API key hợp lệ nhưng tài khoản chưa có quota/billing cho model này. Vui lòng kiểm tra billing hoặc chọn model khác.",
+      retryable: false,
+      severity: "error",
+      supportHint: rawMessage,
+    };
+  }
+  if (isModelUnavailableMessage(rawMessage)) {
+    return {
+      code: "model_unavailable",
+      userMessage: "Model không khả dụng với API key này. Hãy làm mới danh sách model hoặc chọn model khác.",
+      retryable: false,
+      severity: "error",
+      supportHint: rawMessage,
+    };
+  }
 
   // Gemini error format: { error: { code: 503, status: "UNAVAILABLE" } }
   // or flat: { code: 503, message: "..." }
@@ -28,6 +56,7 @@ export function parseAIError(raw: unknown): AIProviderError {
     normalized?.error?.code ??
     normalized?.code ??
     normalized?.status ??
+    normalized?.statusCode ??
     (raw instanceof Error ? extractHttpCode(raw.message) : null);
 
   switch (Number(code)) {
@@ -54,7 +83,7 @@ export function parseAIError(raw: unknown): AIProviderError {
         userMessage: "Không xác thực được với AI. Vui lòng thử lại.",
         retryable: false,
         severity: "error",
-        supportHint: "Admin cần kiểm tra hoặc cập nhật Gemini API key trong AI Settings.",
+        supportHint: "Admin cần kiểm tra provider đang dùng, API key và quota trong AI Settings.",
       };
     case 400:
       return {
@@ -96,6 +125,54 @@ function normalizeToObject(raw: unknown): Record<string, any> | null {
 
 /** Extract HTTP status code from error messages like "503 UNAVAILABLE: ..." */
 function extractHttpCode(message: string): number | null {
-  const m = message.match(/^(\d{3})\b/);
-  return m ? Number(m[1]) : null;
+  const m = message.match(/^(\d{3})\b|\((\d{3})\)/);
+  return m ? Number(m[1] ?? m[2]) : null;
+}
+
+function extractMessage(raw: unknown, normalized: Record<string, any> | null): string {
+  if (raw instanceof Error) return raw.message;
+  if (typeof raw === "string") return raw;
+  return String(
+    normalized?.error?.message ??
+    normalized?.message ??
+    normalized?.error ??
+    "",
+  );
+}
+
+function isModelUnavailableMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  if (!normalized.includes("model")) return false;
+  return /(not found|does not exist|not exist|invalid|unsupported|unavailable|not available|permission|access)/.test(normalized);
+}
+
+function isAuthErrorMessage(message: string, normalized: Record<string, any> | null): boolean {
+  const code = String(normalized?.code ?? normalized?.error?.code ?? "");
+  const type = String(normalized?.type ?? normalized?.error?.type ?? "");
+  const lower = message.toLowerCase();
+  return (
+    code.includes("invalid_api_key") ||
+    type.includes("authentication") ||
+    lower.includes("incorrect api key") ||
+    lower.includes("invalid api key") ||
+    lower.includes("api key is invalid") ||
+    lower.includes("you didn't provide an api key") ||
+    lower.includes("authentication") ||
+    lower.includes("unauthorized")
+  );
+}
+
+function isQuotaErrorMessage(message: string, normalized: Record<string, any> | null): boolean {
+  const code = String(normalized?.code ?? normalized?.error?.code ?? "");
+  const type = String(normalized?.type ?? normalized?.error?.type ?? "");
+  const lower = message.toLowerCase();
+  return (
+    code.includes("insufficient_quota") ||
+    type.includes("insufficient_quota") ||
+    lower.includes("insufficient quota") ||
+    lower.includes("billing") ||
+    lower.includes("exceeded your current quota") ||
+    lower.includes("not supported in the api") ||
+    lower.includes("free tier")
+  );
 }

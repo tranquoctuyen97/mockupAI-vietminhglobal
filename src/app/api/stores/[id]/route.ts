@@ -4,7 +4,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { validateSession } from "@/lib/auth/session";
+import { requireFeature } from "@/lib/auth/guards";
 import { deleteStore, testStoreConnection } from "@/lib/stores/store-service";
 import { logAudit, getRequestInfo } from "@/lib/audit";
 import { prisma } from "@/lib/db";
@@ -13,10 +13,8 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const session = await validateSession();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, response } = await requireFeature("stores");
+  if (response) return response;
 
   const { id } = await params;
 
@@ -50,10 +48,8 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const session = await validateSession();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, response } = await requireFeature("stores");
+  if (response) return response;
 
   const { id } = await params;
 
@@ -68,7 +64,7 @@ export async function PATCH(
   const body = await request.json();
 
   // Phase 6.10: Accept Store-level preset fields (price/publish only)
-  // enabledVariantIds + defaultPromptVersion moved to StoreMockupTemplate
+  // Product template details live on StoreMockupTemplate.
   const updateData: Record<string, unknown> = {};
 
   if (body.defaultPriceUsd !== undefined) {

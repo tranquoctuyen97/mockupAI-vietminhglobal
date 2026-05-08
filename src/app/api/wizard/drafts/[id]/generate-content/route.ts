@@ -5,6 +5,7 @@ import { getAiProvider } from "@/lib/ai/factory";
 import { generateCacheKey, getCachedContent, saveToCache } from "@/lib/ai/cache";
 import { parseAIError } from "@/lib/ai/errors";
 import { withRetry } from "@/lib/ai/retry";
+import { recordAiUsageEvent } from "@/lib/ai/usage";
 
 export async function POST(
   request: Request,
@@ -50,17 +51,27 @@ export async function POST(
     placement: placementObj.position || "Front",
   };
 
+  let usageContext: { provider: string; model: string } | null = null;
+
   try {
     const { generator, config } = await getAiProvider(session.tenantId);
-
+    usageContext = { provider: config.provider, model: config.model };
     // Check cache
-    const cacheKey = generateCacheKey(input, config.provider, config.model, config.promptVersion);
+    const cacheKey = generateCacheKey(input, config.provider, config.model, config.systemPrompt);
     const cached = await getCachedContent(cacheKey);
 
     if (cached) {
       await prisma.wizardDraft.update({
         where: { id: draftId },
         data: { aiContent: cached as any },
+      });
+      await recordAiUsageEvent({
+        tenantId: session.tenantId,
+        provider: config.provider,
+        model: config.model,
+        draftId,
+        status: "success",
+        cacheHit: true,
       });
       return NextResponse.json({ content: cached, cached: true });
     }
@@ -89,6 +100,16 @@ export async function POST(
       where: { id: draftId },
       data: { aiContent },
     });
+    await recordAiUsageEvent({
+      tenantId: session.tenantId,
+      provider: config.provider,
+      model: config.model,
+      draftId,
+      status: "success",
+      cacheHit: false,
+      tokensIn: result.tokensIn,
+      tokensOut: result.tokensOut,
+    });
 
     return NextResponse.json({ content: result, cached: false });
   } catch (error) {
@@ -96,6 +117,16 @@ export async function POST(
 
     // Parse into user-friendly error — NEVER expose raw error.message or JSON
     const parsed = parseAIError(error);
+    if (usageContext) {
+      await recordAiUsageEvent({
+        tenantId: session.tenantId,
+        provider: usageContext.provider,
+        model: usageContext.model,
+        draftId,
+        status: "failed",
+        errorCode: parsed.code,
+      });
+    }
     return NextResponse.json(
       {
         error: parsed.code,
@@ -107,5 +138,4 @@ export async function POST(
     );
   }
 }
-
 

@@ -63,11 +63,20 @@ describe("buildChecklist", () => {
   it("counts included mockup images per selected color", async () => {
     const checklist = await buildChecklist(
       draftWithMockups([
-        { colorName: "Royal Blue", included: true },
-        { colorName: "Gold", included: true },
+        {
+          colorName: "Royal Blue",
+          included: true,
+          compositeUrl: "https://images-api.printify.com/mockup/blue.png",
+          sourceUrl: "https://images-api.printify.com/mockup/blue.png",
+        },
+        {
+          colorName: "Gold",
+          included: true,
+          compositeUrl: "https://images-api.printify.com/mockup/gold.png",
+          sourceUrl: "https://images-api.printify.com/mockup/gold.png",
+        },
         { colorName: "Gold", included: false },
       ]),
-      { getFeatureFlag: async () => ({ enabled: false }) },
     );
 
     assert.equal(checklist.mockupsMatchColors, true);
@@ -77,10 +86,14 @@ describe("buildChecklist", () => {
   it("fails when any selected color has no included mockup image", async () => {
     const checklist = await buildChecklist(
       draftWithMockups([
-        { colorName: "Royal Blue", included: true },
+        {
+          colorName: "Royal Blue",
+          included: true,
+          compositeUrl: "https://images-api.printify.com/mockup/blue.png",
+          sourceUrl: "https://images-api.printify.com/mockup/blue.png",
+        },
         { colorName: "Gold", included: false },
       ]),
-      { getFeatureFlag: async () => ({ enabled: false }) },
     );
 
     assert.equal(checklist.mockupsMatchColors, false);
@@ -103,14 +116,31 @@ describe("buildChecklist", () => {
           sourceUrl: "https://images-api.printify.com/mockup/gold.png",
         },
       ]),
-      {
-        getFeatureFlag: async (key) => ({
-          enabled: key === "printify_real_mockups",
-        }),
-      },
     );
 
     assert.equal(checklist.mockupsMatchColors, false);
     assert.equal(checklist.readyToPublish, false);
+  });
+
+  it("accepts local cached media when the original source is a real Printify URL", async () => {
+    const checklist = await buildChecklist(
+      draftWithMockups([
+        {
+          colorName: "Royal Blue",
+          included: true,
+          compositeUrl: "mockups/printify-blue.png",
+          sourceUrl: "https://images-api.printify.com/mockup/blue.png",
+        },
+        {
+          colorName: "Gold",
+          included: true,
+          compositeUrl: "mockups/printify-gold.png",
+          sourceUrl: "https://images-api.printify.com/mockup/gold.png",
+        },
+      ]),
+    );
+
+    assert.equal(checklist.mockupsMatchColors, true);
+    assert.equal(checklist.readyToPublish, true);
   });
 });

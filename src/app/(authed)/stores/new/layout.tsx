@@ -1,4 +1,5 @@
 import { validateSession } from "@/lib/auth/session";
+import { hasFeature } from "@/lib/auth/roles";
 import { redirect } from "next/navigation";
 
 export default async function NewStoreLayout({
@@ -8,9 +9,13 @@ export default async function NewStoreLayout({
 }) {
   const session = await validateSession();
 
-  if (!session || session.role !== "ADMIN") {
-    // Redirect non-admins out of the store creation area
-    redirect("/dashboard");
+  if (!session) {
+    redirect("/login");
+  }
+
+  const ok = await hasFeature(session.tenantId, session.role, "stores");
+  if (!ok) {
+    redirect("/stores");
   }
 
   return <>{children}</>;

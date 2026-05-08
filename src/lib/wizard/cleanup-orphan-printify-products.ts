@@ -1,5 +1,4 @@
 import { prisma } from "@/lib/db";
-import { isEnabled } from "@/lib/feature-flags";
 import { getClientForStore } from "@/lib/printify/account";
 import { DUMMY_PRODUCT_TITLE_PREFIX } from "@/lib/printify/variant-catalog";
 
@@ -28,10 +27,6 @@ export function shouldCleanupPrintifyDraft(
 export async function cleanupOrphanPrintifyProducts(options: {
   retentionDays?: number;
 } = {}): Promise<{ cleanedCount: number; errors: string[] }> {
-  if (!(await isEnabled("printify_orphan_cleanup_enabled"))) {
-    return { cleanedCount: 0, errors: [] };
-  }
-
   const retentionDays = options.retentionDays ?? DEFAULT_RETENTION_DAYS;
   const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
   const errors: string[] = [];

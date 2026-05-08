@@ -4,8 +4,10 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useWizardStore } from "@/lib/wizard/use-wizard-store";
+
 import { pickLatestMockupJobId } from "@/lib/mockup/latest-job";
-import { shouldSyncFinishedMockupJob } from "@/lib/mockup/job-sync";
+import { isTerminalMockupJobStatus, shouldSyncFinishedMockupJob } from "@/lib/mockup/job-sync";
+import { isRealPrintifyMockupMedia } from "@/lib/mockup/real-printify-media";
 import { MockupGallery } from "@/components/mockup/MockupGallery";
 import { MultiViewPlacementEditor } from "@/components/placement/MultiViewPlacementEditor";
 import { LivePreview } from "@/components/mockup/LivePreview";
@@ -30,12 +32,6 @@ import {
   normalizePlacementData,
 } from "@/lib/placement/views";
 
-function isRealPrintifyMockupImage(image: { compositeUrl?: string | null; sourceUrl?: string | null }): boolean {
-  const url = image.compositeUrl ?? image.sourceUrl;
-  if (!url || !/^https?:\/\//i.test(url)) return false;
-  return !url.includes("via.placeholder.com");
-}
-
 export default function Step3PreviewPage() {
   const { draftId } = useParams<{ draftId: string }>();
   const router = useRouter();
@@ -59,18 +55,39 @@ export default function Step3PreviewPage() {
   const [mockupJobId, setMockupJobId] = useState<string | null>(null);
   const [mockupImages, setMockupImages] = useState<any[]>([]);
   const [jobProgress, setJobProgress] = useState({ completed: 0, total: 0, failed: 0 });
+  const [jobStatus, setJobStatus] = useState<string | null>(null);
 
   // Size selection state
   const [storeSizes, setStoreSizes] = useState<Array<{ size: string; costDeltaCents: number; isAvailable: boolean }>>([]);
   const [selectedSizes, setSelectedSizes] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const [retryNonce, setRetryNonce] = useState(0);
+  const [userRole, setUserRole] = useState<string | null>(null);
   const syncedJobIdsRef = useRef<Set<string>>(new Set());
+  const progressFinished =
+    jobProgress.total > 0 &&
+    jobProgress.completed + jobProgress.failed >= jobProgress.total;
+  const isGenerating =
+    generating ||
+    (jobStatus ? !isTerminalMockupJobStatus(jobStatus) && !progressFinished : false);
+  const generateButtonLabel = isGenerating
+    ? progressFinished
+      ? "Đang đồng bộ kết quả..."
+      : `Đang tạo... (${jobProgress.completed}/${jobProgress.total || "..."})`
+    : "Tạo Mockups";
   const draftEnabledColorKey = (draft?.enabledColorIds ?? []).join("|");
   const draftPlacementOverrideKey = useMemo(
     () => JSON.stringify(draft?.placementOverride ?? null),
     [draft?.placementOverride],
   );
+  const isAdmin = userRole === "ADMIN" || userRole === "SUPER_ADMIN";
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => setUserRole(data?.role ?? null))
+      .catch(() => setUserRole(null));
+  }, []);
 
   useEffect(() => {
     if (!draftId) {
@@ -174,7 +191,29 @@ export default function Step3PreviewPage() {
   // Load existing mockups if available
   useEffect(() => {
     if (draft?.mockupJobs && draft.mockupJobs.length > 0) {
+      if (mockupJobId && !draft.mockupJobs.some((job) => job.id === mockupJobId)) {
+        return;
+      }
       const latestJobId = pickLatestMockupJobId(draft.mockupJobs, mockupJobId);
+      const latestJob = [...draft.mockupJobs].sort(
+        (a: any, b: any) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime(),
+      )[0] as any;
+      if (latestJob?.images?.length) {
+        setMockupImages(latestJob.images);
+        setJobStatus(latestJob.status);
+        setJobProgress({
+          completed: latestJob.completedImages ?? latestJob.images.filter((img: any) => img.compositeStatus === "completed").length,
+          total: latestJob.totalImages ?? latestJob.images.length,
+          failed: latestJob.failedImages ?? latestJob.images.filter((img: any) => img.compositeStatus === "failed").length,
+        });
+        const latestJobFinished =
+          (latestJob.totalImages ?? latestJob.images.length) > 0 &&
+          (latestJob.completedImages ?? 0) + (latestJob.failedImages ?? 0) >=
+            (latestJob.totalImages ?? latestJob.images.length);
+        if (isTerminalMockupJobStatus(latestJob.status) || latestJobFinished) {
+          setGenerating(false);
+        }
+      }
       if (latestJobId) setMockupJobId(latestJobId);
     }
   }, [draft?.mockupJobs, mockupJobId]);
@@ -202,7 +241,11 @@ export default function Step3PreviewPage() {
         const res = await fetch(`/api/mockup-jobs/${mockupJobId}`);
         if (!res.ok) throw new Error("Failed to fetch job");
         const job = await res.json();
+        const finishedByProgress =
+          job.totalImages > 0 &&
+          job.completedImages + job.failedImages >= job.totalImages;
 
+        setJobStatus(job.status);
         setJobProgress({
           completed: job.completedImages,
           total: job.totalImages,
@@ -211,7 +254,7 @@ export default function Step3PreviewPage() {
 
         setMockupImages(job.images || []);
 
-        if (job.status === "running" || job.status === "pending") {
+        if ((job.status === "running" || job.status === "pending") && !finishedByProgress) {
           setGenerating(true);
           timeoutId = setTimeout(pollJob, 2000);
         } else {
@@ -287,6 +330,9 @@ export default function Step3PreviewPage() {
     }
 
     setGenerating(true);
+    setJobStatus("pending");
+    setJobProgress({ completed: 0, total: 0, failed: 0 });
+    setMockupImages([]);
     setError("");
 
     // 1. Save state to draft
@@ -314,6 +360,7 @@ export default function Step3PreviewPage() {
         setGenerating(false);
       } else {
         setMockupJobId(data.jobId);
+        setJobStatus(data.status ?? "pending");
       }
     } catch (e) {
       setError("Lỗi kết nối");
@@ -388,13 +435,19 @@ export default function Step3PreviewPage() {
             <p style={{ margin: 0, fontWeight: 500 }}>⚠️ Preset chưa hoàn thiện</p>
             <p style={{ margin: 0, fontSize: "0.85rem", opacity: 0.6 }}>Store của bạn còn thiếu: {presetStatus.missing.join(", ")}.</p>
           </div>
-          <button
-            className="btn btn-secondary"
-            style={{ fontSize: "0.8rem", padding: "6px 12px" }}
-            onClick={() => router.push(`/stores/${draft?.storeId}/config`)}
-          >
-            Đi tới Store Settings →
-          </button>
+          {isAdmin ? (
+            <button
+              className="btn btn-secondary"
+              style={{ fontSize: "0.8rem", padding: "6px 12px" }}
+              onClick={() => router.push(`/stores/${draft?.storeId}/config`)}
+            >
+              Đi tới Store Settings →
+            </button>
+          ) : (
+            <span style={{ fontSize: "0.78rem", fontWeight: 700, opacity: 0.65 }}>
+              Store chưa sẵn sàng. Liên hệ Admin để hoàn thiện preset.
+            </span>
+          )}
         </div>
       )}
 
@@ -579,20 +632,38 @@ export default function Step3PreviewPage() {
                 <SlidersHorizontal size={14} /> Điều chỉnh vị trí
               </button>
 
-              <button
-                className="btn btn-secondary"
-                onClick={() => router.push(`/stores/${draft?.storeId}/config?step=placement`)}
-                style={{
-                  width: "100%",
-                  fontSize: "0.78rem",
-                  padding: "7px 10px",
-                  minHeight: 44,
-                  whiteSpace: "normal",
-                  lineHeight: 1.2,
-                }}
-              >
-                Mở preset store
-              </button>
+              {isAdmin ? (
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => router.push(`/stores/${draft?.storeId}/config?step=placement`)}
+                  style={{
+                    width: "100%",
+                    fontSize: "0.78rem",
+                    padding: "7px 10px",
+                    minHeight: 44,
+                    whiteSpace: "normal",
+                    lineHeight: 1.2,
+                  }}
+                >
+                  Mở preset store
+                </button>
+              ) : (
+                <div
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    backgroundColor: "var(--bg-tertiary)",
+                    border: "1px solid var(--border-default)",
+                    fontSize: "0.75rem",
+                    lineHeight: 1.35,
+                  }}
+                >
+                  <p style={{ margin: 0, fontWeight: 800 }}>Preset store do Admin quản lý</p>
+                  <p style={{ margin: "3px 0 0", opacity: 0.6 }}>
+                    Nếu preset sai, liên hệ Admin để cập nhật.
+                  </p>
+                </div>
+              )}
 
               {placementOverride && (
                 <button
@@ -702,20 +773,18 @@ export default function Step3PreviewPage() {
             <div className="flex justify-between items-center" style={{ marginBottom: 16 }}>
               <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>Mockup chính thức</h3>
               <button
-                className={`btn flex items-center gap-2 px-4 py-2 rounded font-medium ${draft?.designId && !generating && presetStatus?.ready ? 'btn-primary' : ''}`}
+                className={`btn flex items-center gap-2 px-4 py-2 rounded font-medium ${draft?.designId && !isGenerating && presetStatus?.ready ? 'btn-primary' : ''}`}
                 onClick={handleGenerate}
-                disabled={generating || !draft?.designId || selectedColorIds.size === 0 || !presetStatus?.ready}
-                style={(!draft?.designId || generating || selectedColorIds.size === 0 || !presetStatus?.ready) ? { backgroundColor: "var(--bg-tertiary)", color: "var(--color-text)", opacity: 0.5, cursor: "not-allowed" } : {}}
+                disabled={isGenerating || !draft?.designId || selectedColorIds.size === 0 || !presetStatus?.ready}
+                style={(!draft?.designId || isGenerating || selectedColorIds.size === 0 || !presetStatus?.ready) ? { backgroundColor: "var(--bg-tertiary)", color: "var(--color-text)", opacity: 0.5, cursor: "not-allowed" } : {}}
               >
-                {generating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-                {generating
-                  ? `Đang tạo... (${jobProgress.completed}/${jobProgress.total || "..."})`
-                  : "Tạo Mockups"}
+                {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                {generateButtonLabel}
               </button>
             </div>
 
             {/* Outdated mockup banner */}
-            {draft?.mockupsStale && mockupImages.length > 0 && !generating && (
+            {draft?.mockupsStale && mockupImages.length > 0 && !isGenerating && (
               <div
                 className="alert"
                 style={{
@@ -735,14 +804,14 @@ export default function Step3PreviewPage() {
                   className="btn btn-secondary"
                   style={{ fontSize: "0.75rem", padding: "4px 10px", flexShrink: 0 }}
                   onClick={handleGenerate}
-                  disabled={generating}
+                  disabled={isGenerating}
                 >
                   Tạo lại mockup →
                 </button>
               </div>
             )}
 
-            {!mockupJobId && !generating ? (
+            {!mockupJobId && !isGenerating ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", opacity: 0.5, padding: 24 }}>
                 <ImageIcon size={32} style={{ marginBottom: 8 }} />
                 <p style={{ fontSize: "0.85rem", margin: 0, textAlign: "center" }}>
@@ -754,13 +823,13 @@ export default function Step3PreviewPage() {
                 draftId={draftId as string}
                 images={mockupImages.filter((img) => {
                   const normalizedColorName = img.colorName.trim().toLowerCase();
-                  return isRealPrintifyMockupImage(img) && storeColors.some(
+                  return isRealPrintifyMockupMedia(img) && storeColors.some(
                     (c) =>
                       selectedColorIds.has(c.id) &&
                       c.name.trim().toLowerCase() === normalizedColorName
                   );
                 })}
-                isPolling={generating}
+                isPolling={isGenerating}
                 progress={jobProgress}
                 onSelectionChange={async () => {
                   // Refetch mockup images so parent state stays in sync
@@ -769,6 +838,12 @@ export default function Step3PreviewPage() {
                     const res = await fetch(`/api/mockup-jobs/${mockupJobId}`);
                     if (res.ok) {
                       const job = await res.json();
+                      setJobStatus(job.status);
+                      setJobProgress({
+                        completed: job.completedImages,
+                        total: job.totalImages,
+                        failed: job.failedImages,
+                      });
                       setMockupImages(job.images || []);
                     }
                   } catch { /* gallery already shows optimistic state */ }

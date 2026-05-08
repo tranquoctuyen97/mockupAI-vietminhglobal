@@ -5,6 +5,7 @@
 
 import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
+import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { PlacementDataSchema } from "@/lib/placement/schema";
 import { Prisma } from "@prisma/client";
@@ -21,7 +22,6 @@ const TemplatePatchSchema = z.object({
   enabledVariantIds: z.array(z.number().int().positive()).optional(),
   enabledSizes: z.array(z.string()).optional(),
   defaultPlacement: PlacementDataSchema.optional(),
-  defaultPromptVersion: z.string().optional(),
   defaultAspectRatio: z.string().optional(),
   storePresetSnapshot: z.any().optional(),
 });
@@ -56,10 +56,8 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const session = await validateSession();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, response } = await requireFeature("stores");
+  if (response) return response;
 
   const { id: storeId } = await params;
 
@@ -109,7 +107,6 @@ export async function PATCH(
         defaultPlacement: data.defaultPlacement
           ? (data.defaultPlacement as Prisma.InputJsonValue)
           : undefined,
-        defaultPromptVersion: data.defaultPromptVersion ?? "v1",
         defaultAspectRatio: data.defaultAspectRatio ?? "1:1",
         storePresetSnapshot: data.storePresetSnapshot ?? undefined,
         isDefault: true,
@@ -132,7 +129,6 @@ export async function PATCH(
   if (data.enabledVariantIds !== undefined) updateData.enabledVariantIds = data.enabledVariantIds;
   if (data.enabledSizes !== undefined) updateData.enabledSizes = data.enabledSizes;
   if (data.defaultPlacement !== undefined) updateData.defaultPlacement = data.defaultPlacement as Prisma.InputJsonValue;
-  if (data.defaultPromptVersion !== undefined) updateData.defaultPromptVersion = data.defaultPromptVersion;
   if (data.defaultAspectRatio !== undefined) updateData.defaultAspectRatio = data.defaultAspectRatio;
   if (data.storePresetSnapshot !== undefined) updateData.storePresetSnapshot = data.storePresetSnapshot;
 

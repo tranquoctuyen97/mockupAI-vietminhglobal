@@ -1,30 +1,28 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ContentGenerator, ContentInput, ContentOutput } from "../types";
 import { SYSTEM_PROMPT_POD_LISTING } from "../prompts/pod-listing";
+import { buildListingUserPrompt, parseListingContentJson } from "./shared";
 
 export class GeminiProvider implements ContentGenerator {
   private ai: GoogleGenAI;
   private modelName: string;
 
-  constructor(apiKey: string, modelName: string = "gemini-2.5-flash") {
+  constructor(
+    apiKey: string,
+    modelName: string = "gemini-2.5-flash",
+    private systemPrompt: string = SYSTEM_PROMPT_POD_LISTING,
+  ) {
     this.ai = new GoogleGenAI({ apiKey });
     this.modelName = modelName;
   }
 
   async generate(input: ContentInput): Promise<ContentOutput> {
-    const prompt = `Please generate content for the following product:
-Design Name: ${input.designName}
-Product Type: ${input.productType}
-Placement: ${input.placement}
-Colors: ${input.colors.join(", ")}
-`;
-
     // Note: Gemini SDK structured output
     const response = await this.ai.models.generateContent({
       model: this.modelName,
-      contents: prompt,
+      contents: buildListingUserPrompt(input),
       config: {
-        systemInstruction: SYSTEM_PROMPT_POD_LISTING,
+        systemInstruction: this.systemPrompt,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -61,19 +59,7 @@ Colors: ${input.colors.join(", ")}
     }
 
     try {
-      const parsed = JSON.parse(resultText);
-      // Defense-in-depth: server-side truncate to MAX 15 (Shopify allowed)
-      const tags: string[] = Array.isArray(parsed.tags)
-        ? parsed.tags.slice(0, 15)
-        : [];
-      return {
-        title: parsed.title,
-        description: parsed.description,
-        tags,
-        altText: parsed.altText,
-        tokensIn,
-        tokensOut,
-      };
+      return parseListingContentJson(resultText, { tokensIn, tokensOut });
     } catch (error) {
       console.error("Failed to parse Gemini output:", resultText);
       throw new Error("AI returned malformed JSON");

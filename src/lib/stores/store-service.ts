@@ -209,7 +209,6 @@ export async function upsertStoreTemplate(
     position?: "FRONT" | "BACK" | "SLEEVE";
     enabledVariantIds?: number[];
     defaultPlacement?: Prisma.JsonValue;
-    defaultPromptVersion?: string;
     defaultAspectRatio?: string;
     storePresetSnapshot?: Prisma.InputJsonValue;
   },
@@ -228,7 +227,6 @@ export async function upsertStoreTemplate(
       isDefault: true,
       enabledVariantIds: data.enabledVariantIds ?? [],
       defaultPlacement: data.defaultPlacement ?? undefined,
-      defaultPromptVersion: data.defaultPromptVersion ?? "v1",
       defaultAspectRatio: data.defaultAspectRatio ?? "1:1",
       storePresetSnapshot: data.storePresetSnapshot ?? undefined,
     },
@@ -242,7 +240,6 @@ export async function upsertStoreTemplate(
       position: data.position ?? "FRONT",
       ...(data.enabledVariantIds !== undefined && { enabledVariantIds: data.enabledVariantIds }),
       defaultPlacement: data.defaultPlacement ?? undefined,
-      ...(data.defaultPromptVersion !== undefined && { defaultPromptVersion: data.defaultPromptVersion }),
       ...(data.defaultAspectRatio !== undefined && { defaultAspectRatio: data.defaultAspectRatio }),
       ...(data.storePresetSnapshot !== undefined && { storePresetSnapshot: data.storePresetSnapshot }),
     },

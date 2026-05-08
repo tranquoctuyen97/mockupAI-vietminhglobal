@@ -16,8 +16,8 @@ test("calls login once and caches token", async () => {
     callCount++;
     return { ok: true, json: async () => ({ token: makeJwt(futureExp), organizations: [{ id: 1 }] }) } as Response;
   };
-  await getToken();
-  await getToken();
+  await getToken("test-tenant");
+  await getToken("test-tenant");
   assert.equal(callCount, 1);
 });
 
@@ -28,7 +28,7 @@ test("returns correct orgId from organizations[0].id", async () => {
     ok: true,
     json: async () => ({ token: makeJwt(futureExp), organizations: [{ id: 42 }] }),
   } as Response);
-  const { orgId } = await getToken();
+  const { orgId } = await getToken("test-tenant");
   assert.equal(orgId, "42");
 });
 
@@ -40,14 +40,14 @@ test("refreshes after _resetForTest simulates expiry", async () => {
     callCount++;
     return { ok: true, json: async () => ({ token: makeJwt(futureExp), organizations: [{ id: 1 }] }) } as Response;
   };
-  await getToken();
+  await getToken("test-tenant");
   _resetForTest();
-  await getToken();
+  await getToken("test-tenant");
   assert.equal(callCount, 2);
 });
 
 test("throws when login returns non-ok status", async () => {
   _resetForTest();
   globalThis.fetch = async () => ({ ok: false, status: 401 } as Response);
-  await assert.rejects(() => getToken(), /Inkhub login failed: 401/);
+  await assert.rejects(() => getToken("test-tenant"), /Inkhub login failed: 401/);
 });

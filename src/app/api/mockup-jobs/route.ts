@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { validateSession } from "@/lib/auth/session";
+import { isMockupFallbackForcedForDev } from "@/lib/config/runtime-controls";
 import { prisma } from "@/lib/db";
-import { isEnabled } from "@/lib/feature-flags";
 import { resolveEffectivePlacementData } from "@/lib/mockup/plan";
 import { buildVariantColorLookup } from "@/lib/mockup/printify-poll-worker";
 import { printifyMockupQueue } from "@/lib/mockup/queue";
@@ -72,25 +72,11 @@ export async function POST(request: Request) {
   const effectivePlacementData = placementData ?? DEFAULT_PLACEMENT_DATA;
   const placementSnapshot = JSON.parse(JSON.stringify(effectivePlacementData)) as Prisma.InputJsonValue;
 
-  const realMockupsEnabled = await isEnabled("printify_real_mockups");
-  const forcedSynthetic = await isEnabled("mockup_fallback_force");
-
-  if (!realMockupsEnabled) {
+  if (isMockupFallbackForcedForDev()) {
     return NextResponse.json(
       {
         error:
-          "Printify real mockups chưa được bật. Mockup chính thức yêu cầu ảnh thật từ Printify.",
-        code: "PRINTIFY_REAL_MOCKUPS_DISABLED",
-      },
-      { status: 409 },
-    );
-  }
-
-  if (forcedSynthetic) {
-    return NextResponse.json(
-      {
-        error:
-          "mockup_fallback_force đang bật. Tắt flag này để tạo Mockup chính thức bằng ảnh thật Printify.",
+          "MOCKUP_FALLBACK_FORCE đang bật trong môi trường dev. Tắt env này để tạo Mockup chính thức bằng ảnh thật Printify.",
         code: "MOCKUP_FALLBACK_FORCE_ENABLED",
       },
       { status: 409 },

@@ -3,15 +3,13 @@
  */
 
 import { NextResponse } from "next/server";
-import { validateSession } from "@/lib/auth/session";
+import { requireFeature } from "@/lib/auth/guards";
 import { getAvailableShops } from "@/lib/printify/account";
 import { prisma } from "@/lib/db";
 
 export async function GET(request: Request) {
-  const session = await validateSession();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, response } = await requireFeature("integrations");
+  if (response) return response;
 
   const { searchParams } = new URL(request.url);
   const includeLinked = searchParams.get("includeLinked") === "true";

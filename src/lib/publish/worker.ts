@@ -7,6 +7,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { isPublishDryRun, PRODUCT_DEFAULTS } from "@/lib/config/runtime-controls";
 import { prisma } from "@/lib/db";
 import { decrypt } from "@/lib/crypto/envelope";
 import { ShopifyClient } from "@/lib/shopify/client";
@@ -16,8 +17,12 @@ import { ensureVariantCostCache, buildVariantPayload } from "@/lib/printify/vari
 import { getClientForStore } from "@/lib/printify/account";
 import { sseChannels } from "@/lib/sse/channel";
 import { getStorage } from "@/lib/storage/local-disk";
-import { isEnabled } from "@/lib/feature-flags";
 import { resolveEffectivePlacementData } from "@/lib/mockup/plan";
+import {
+  isAllowedRemoteMockupUrl,
+  isRemoteUrl,
+  isSyntheticMockupSource,
+} from "@/lib/mockup/real-printify-media";
 import { DEFAULT_PLACEMENT, type PlacementData } from "@/lib/placement/types";
 import {
   createOrUpdatePrintifyProduct,
@@ -117,9 +122,8 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
         compositeUrl: { not: null }
       }
     });
-    // Check dry-run feature flag
-    const isDryRun = await isEnabled("publish_dry_run");
-    const requireRealPrintifyMockups = await isEnabled("printify_real_mockups");
+    const isDryRun = isPublishDryRun();
+    const requireRealPrintifyMockups = PRODUCT_DEFAULTS.mockup.requireRealPrintifyMockups;
     const { mockupImages, mockupPaths, missingColorNames } = resolveShopifyMockupMedia({
       images: includedImages,
       storage,
@@ -602,7 +606,7 @@ export function resolveShopifyMockupMedia(input: {
     if (!source) continue;
 
     if (isRemoteUrl(source)) {
-      if (isDisallowedRemoteMockupUrl(source)) continue;
+      if (!isAllowedRemoteMockupUrl(source)) continue;
       mockupImages.push({
         kind: "remote",
         url: source,
@@ -612,8 +616,9 @@ export function resolveShopifyMockupMedia(input: {
       continue;
     }
 
-    if (input.requireRealPrintifyMockups) continue;
     if (isSyntheticMockupSource(source)) continue;
+    const hasRealPrintifySource = isAllowedRemoteMockupUrl(image.sourceUrl);
+    if (input.requireRealPrintifyMockups && !hasRealPrintifySource) continue;
 
     const path = input.storage.resolvePath(source);
     mockupImages.push({
@@ -633,23 +638,6 @@ export function resolveShopifyMockupMedia(input: {
       .filter((color) => !coveredColorKeys.has(color.key))
       .map((color) => color.name),
   };
-}
-
-export function isRemoteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
-}
-
-function isSyntheticMockupSource(value: string): boolean {
-  return value.startsWith("mockup://");
-}
-
-function isDisallowedRemoteMockupUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.hostname === "via.placeholder.com";
-  } catch {
-    return true;
-  }
 }
 
 function normalizeColorName(value: string): string {

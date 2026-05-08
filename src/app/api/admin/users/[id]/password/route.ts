@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { validateSession } from "@/lib/auth/session";
+import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { hashPassword } from "@/lib/auth/password";
 import { logAudit, getRequestInfo } from "@/lib/audit";
@@ -13,10 +13,8 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const currentUser = await validateSession();
-  if (!currentUser || currentUser.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-  }
+  const { session: currentUser, response } = await requireFeature("users");
+  if (response) return response;
 
   try {
     const { id } = await params;

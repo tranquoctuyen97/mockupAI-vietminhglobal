@@ -85,6 +85,31 @@ describe("resolveShopifyMockupMedia", () => {
     assert.deepEqual(result.missingColorNames, ["Royal Blue", "Gold"]);
   });
 
+  it("uses local cached media when it came from a real Printify source", () => {
+    const result = resolveShopifyMockupMedia({
+      images: [
+        {
+          colorName: "Royal Blue",
+          compositeUrl: "mockups/printify_front.png",
+          sourceUrl: "https://images-api.printify.com/mockup/front.png",
+        },
+      ],
+      storage,
+      colorNames: ["Royal Blue"],
+      requireRealPrintifyMockups: true,
+    });
+
+    assert.deepEqual(result.mockupImages, [
+      {
+        kind: "local",
+        path: "/uploads/mockups/printify_front.png",
+        colorName: "Royal Blue",
+      },
+    ]);
+    assert.deepEqual(result.mockupPaths, ["/uploads/mockups/printify_front.png"]);
+    assert.deepEqual(result.missingColorNames, []);
+  });
+
   it("keeps local storage media for non-strict development fallback", () => {
     const result = resolveShopifyMockupMedia({
       images: [
