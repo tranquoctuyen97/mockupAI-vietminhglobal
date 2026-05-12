@@ -1,5 +1,5 @@
 import { getToken } from "@/lib/inkhub/token";
-import { injectTokenScript, isTextContent, rewriteAbsolutePaths, rewriteApiUrls, rewriteRootAssets } from "@/lib/inkhub/proxy-utils";
+import { getPublicOrigin, injectTokenScript, isTextContent, rewriteAbsolutePaths, rewriteApiUrls, rewriteRootAssets } from "@/lib/inkhub/proxy-utils";
 import { validateSession } from "@/lib/auth/session";
 import type { NextRequest } from "next/server";
 
@@ -45,7 +45,7 @@ async function handler(
     return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
   }
 
-  const host = request.nextUrl.origin;
+  const host = getPublicOrigin(request.nextUrl.origin);
   const { token, orgId } = await getToken(session.tenantId);
   let body = await upstream.text();
 

@@ -1,3 +1,8 @@
+export function getPublicOrigin(requestOrigin: string): string {
+  const url = process.env.NEXT_PUBLIC_APP_URL;
+  return (url || requestOrigin).replace(/\/$/, "");
+}
+
 export function isTextContent(contentType: string): boolean {
   return (
     contentType.includes("text/html") ||
