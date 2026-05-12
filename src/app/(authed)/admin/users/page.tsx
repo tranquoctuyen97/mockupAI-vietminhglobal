@@ -16,7 +16,7 @@ import {
 interface User {
   id: string;
   email: string;
-  role: "ADMIN" | "OPERATOR";
+  role: "SUPER_ADMIN" | "ADMIN" | "OPERATOR";
   status: "ACTIVE" | "DISABLED";
   mustChangePassword: boolean;
   createdAt: string;
@@ -27,6 +27,8 @@ export default function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState<User | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string>("");
+  const [roleChanging, setRoleChanging] = useState<string | null>(null);
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -42,7 +44,33 @@ export default function AdminUsersPage() {
 
   useEffect(() => {
     fetchUsers();
+    fetch("/api/auth/me").then((r) => r.json()).then((d) => {
+      if (d.id) setCurrentUserId(d.id);
+    }).catch(() => {});
   }, [fetchUsers]);
+
+  async function changeRole(user: User, newRole: "ADMIN" | "OPERATOR") {
+    if (newRole === user.role) return;
+    setRoleChanging(user.id);
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}/role`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: newRole }),
+      });
+      if (res.ok) {
+        toast.success(`${user.email}: role → ${newRole}`);
+        fetchUsers();
+      } else {
+        const data = await res.json();
+        toast.error(data.error || "Có lỗi xảy ra");
+      }
+    } catch {
+      toast.error("Không thể thay đổi role");
+    } finally {
+      setRoleChanging(null);
+    }
+  }
 
   async function toggleStatus(user: User) {
     const newStatus = user.status === "ACTIVE" ? "DISABLED" : "ACTIVE";
@@ -106,8 +134,8 @@ export default function AdminUsersPage() {
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center text-small"
                         style={{
-                          backgroundColor: user.role === "ADMIN" ? "rgba(159,232,112,0.15)" : "rgba(134,134,133,0.15)",
-                          color: user.role === "ADMIN" ? "var(--color-wise-green)" : "var(--text-muted)",
+                          backgroundColor: user.role === "SUPER_ADMIN" ? "rgba(159,232,112,0.25)" : user.role === "ADMIN" ? "rgba(159,232,112,0.15)" : "rgba(134,134,133,0.15)",
+                          color: user.role === "SUPER_ADMIN" ? "var(--color-wise-green)" : user.role === "ADMIN" ? "var(--color-wise-green)" : "var(--text-muted)",
                           fontWeight: 700,
                         }}>
                         {user.email[0].toUpperCase()}
@@ -123,9 +151,27 @@ export default function AdminUsersPage() {
                     </div>
                   </td>
                   <td>
-                    <span className={`badge ${user.role === "ADMIN" ? "badge-success" : "badge-info"}`}>
-                      {user.role}
-                    </span>
+                    {user.role === "SUPER_ADMIN" || user.id === currentUserId ? (
+                      <span className={`badge ${user.role === "SUPER_ADMIN" ? "badge-success" : user.role === "ADMIN" ? "badge-success" : "badge-info"}`}>
+                        {user.role}
+                      </span>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        {roleChanging === user.id && (
+                          <Loader2 size={12} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+                        )}
+                        <select
+                          className="input"
+                          style={{ padding: "0.2rem 0.5rem", fontSize: "0.8125rem", height: "auto", width: "auto" }}
+                          value={user.role}
+                          disabled={roleChanging === user.id}
+                          onChange={(e) => changeRole(user, e.target.value as "ADMIN" | "OPERATOR")}
+                        >
+                          <option value="ADMIN">ADMIN</option>
+                          <option value="OPERATOR">OPERATOR</option>
+                        </select>
+                      </div>
+                    )}
                   </td>
                   <td>
                     <span className={`badge ${user.status === "ACTIVE" ? "badge-success" : "badge-danger"}`}>
