@@ -11,9 +11,10 @@ datasource db {
 // ============================================================
 
 model Tenant {
-  id        String   @id @default(cuid())
-  name      String
-  createdAt DateTime @default(now()) @map("created_at")
+  id         String   @id @default(cuid())
+  name       String
+  createdAt  DateTime @default(now()) @map("created_at")
+  twTimezone String   @default("America/Los_Angeles") @map("tw_timezone")
 
   users             User[]
   auditEvents       AuditEvent[]
@@ -211,6 +212,8 @@ model Store {
   template     StoreMockupTemplate?  // 1:1 — @@unique([storeId])
   wizardDrafts WizardDraft[]
   listings     Listing[]
+  twCredential TripleWhaleCredential?
+  twDailyStats TripleWhaleDailyStat[]
 
   @@unique([tenantId, shopifyDomain])
   @@index([tenantId, status])
@@ -713,4 +716,43 @@ model PrintifyVariantCache {
   @@id([blueprintId, printProviderId, variantId])
   @@index([blueprintId, printProviderId])
   @@map("printify_variant_cache")
+}
+
+model TripleWhaleCredential {
+  storeId         String    @id @map("store_id")
+  apiKeyEncrypted Bytes     @map("api_key_encrypted")
+  encryptionKeyId String    @map("encryption_key_id")
+  customName      String    @map("custom_name")
+  lastSyncedAt    DateTime? @map("last_synced_at")
+  syncError       String?   @map("sync_error")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  store      Store                  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  dailyStats TripleWhaleDailyStat[]
+
+  @@map("triple_whale_credentials")
+}
+
+model TripleWhaleDailyStat {
+  id              String   @id @default(cuid())
+  storeId         String   @map("store_id")
+  date            DateTime @db.Date
+  orderRevenue    Decimal  @db.Decimal(12, 2) @map("order_revenue")
+  netProfit       Decimal  @db.Decimal(12, 2) @map("net_profit")
+  netMargin       Decimal  @db.Decimal(8, 4) @map("net_margin")
+  orders          Int
+  paymentGateways Decimal  @db.Decimal(12, 2) @map("payment_gateways")
+  shipping        Decimal  @db.Decimal(12, 2)
+  blendedAdSpend  Decimal  @db.Decimal(12, 2) @map("blended_ad_spend")
+  cogs            Decimal  @db.Decimal(12, 2)
+  totalCost       Decimal  @db.Decimal(12, 2) @map("total_cost")
+  syncedAt        DateTime @default(now()) @map("synced_at")
+
+  store      Store                 @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  credential TripleWhaleCredential @relation(fields: [storeId], references: [storeId], onDelete: Cascade, map: "triple_whale_daily_stats_credential_store_id_fkey")
+
+  @@unique([storeId, date])
+  @@index([storeId, date])
+  @@map("triple_whale_daily_stats")
 }
