@@ -7,7 +7,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "git fetch origin main:refs/remotes/origin/main --depth=1 && git diff --name-only origin/main...HEAD -- 'src/**' 'start-worker.ts' 'biome.json' | xargs biome check",
+    "lint": "git fetch origin main:refs/remotes/origin/main --depth=1 && git diff --name-only origin/main HEAD -- 'src/**' 'start-worker.ts' 'biome.json' | xargs -r biome check",
     "format": "biome format --write",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
