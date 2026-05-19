@@ -6,7 +6,7 @@
  * load time when Redis is temporarily down. Queues are created on first use.
  */
 
-import { Queue, type ConnectionOptions } from "bullmq";
+import { type ConnectionOptions, Queue } from "bullmq";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
@@ -32,6 +32,7 @@ export const redisConnection = parseRedisUrl(REDIS_URL);
 
 let _healthCheckQueue: Queue | null = null;
 let _mockupQueue: Queue | null = null;
+let _tripleWhaleSyncQueue: Queue | null = null;
 
 const DEFAULT_JOB_OPTIONS = {
   removeOnComplete: 100,
@@ -78,6 +79,26 @@ export function getMockupQueue(): Queue {
     });
   }
   return _mockupQueue;
+}
+
+export const TW_SYNC_QUEUE_NAME = "triple-whale-sync";
+
+export function getTripleWhaleSyncQueue(): Queue {
+  if (!_tripleWhaleSyncQueue) {
+    _tripleWhaleSyncQueue = new Queue(TW_SYNC_QUEUE_NAME, {
+      connection: redisConnection,
+      defaultJobOptions: {
+        removeOnComplete: 50,
+        removeOnFail: 20,
+        attempts: 5,
+        backoff: { type: "exponential" as const, delay: 10_000 },
+      },
+    });
+    _tripleWhaleSyncQueue.on("error", (err) => {
+      console.error("[Queue/triple-whale-sync] Redis error:", err.message);
+    });
+  }
+  return _tripleWhaleSyncQueue;
 }
 
 // Keep backward compat — healthCheckQueue exported directly (used by health-check-worker)
