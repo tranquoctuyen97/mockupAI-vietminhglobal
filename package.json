@@ -7,7 +7,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "biome check --changed --since=origin/main",
+    "lint": "git fetch origin main:refs/remotes/origin/main --depth=1 && biome check --changed --since=origin/main",
     "format": "biome format --write",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
