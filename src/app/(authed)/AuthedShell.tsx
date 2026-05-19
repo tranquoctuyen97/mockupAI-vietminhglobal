@@ -1,30 +1,30 @@
 "use client";
 
+import {
+  ArrowLeft,
+  Bot,
+  ChevronRight,
+  DollarSign,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Palette,
+  Puzzle,
+  Settings,
+  Shield,
+  ShoppingBag,
+  Sparkles,
+  Store,
+  Truck,
+  Users,
+  Wand2,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import TokenExpiredBanner from "@/components/TokenExpiredBanner";
-import {
-  LayoutDashboard,
-  Store,
-  Palette,
-  Wand2,
-  ShoppingBag,
-  Truck,
-  Users,
-  DollarSign,
-  Bot,
-  LogOut,
-  Sparkles,
-  Menu,
-  X,
-  ChevronRight,
-  Puzzle,
-  ArrowLeft,
-  Shield,
-  Settings,
-} from "lucide-react";
 
 interface NavItemConfig {
   label: string;
@@ -42,21 +42,95 @@ const NAV_ITEMS: NavItemConfig[] = [
   { label: "Designs", href: "/designs", icon: <Palette size={18} />, feature: "designs" },
   { label: "Wizard", href: "/wizard", icon: <Wand2 size={18} />, feature: "wizard" },
   { label: "Listings", href: "/listings", icon: <ShoppingBag size={18} />, feature: "listings" },
-  { label: "Auto Fulfill", href: "/auto-fulfill", icon: <Truck size={18} />, feature: "auto_fulfill" },
+  {
+    label: "Auto Fulfill",
+    href: "/auto-fulfill",
+    icon: <Truck size={18} />,
+    feature: "auto_fulfill",
+  },
 ];
 
 const ADMIN_ITEMS: NavItemConfig[] = [
-  { label: "Users", href: "/admin/users", icon: <Users size={18} />, adminOnly: true, feature: "users" },
-  { label: "Pricing", href: "/admin/pricing", icon: <DollarSign size={18} />, adminOnly: true, feature: "pricing" },
-  { label: "AI Settings", href: "/admin/ai-settings", icon: <Bot size={18} />, adminOnly: true, feature: "ai_settings" },
+  {
+    label: "Users",
+    href: "/admin/users",
+    icon: <Users size={18} />,
+    adminOnly: true,
+    feature: "users",
+  },
+  {
+    label: "Pricing",
+    href: "/admin/pricing",
+    icon: <DollarSign size={18} />,
+    adminOnly: true,
+    feature: "pricing",
+  },
+  {
+    label: "AI Settings",
+    href: "/admin/ai-settings",
+    icon: <Bot size={18} />,
+    adminOnly: true,
+    feature: "ai_settings",
+  },
   { label: "Permissions", href: "/admin/acl", icon: <Shield size={18} />, superAdminOnly: true },
 ];
 
 const INTEGRATION_ITEMS: NavItemConfig[] = [
-  { label: "Printify", href: "/integrations/printify", icon: <Puzzle size={18} />, adminOnly: true, feature: "integrations" },
-  { label: "Triple Whale", href: "/integrations/triple-whale", icon: <span style={{ fontSize: 18 }}>🐋</span>, adminOnly: true, feature: "integrations" },
-  { label: "InkHub Config", href: "/admin/inkhub", icon: <Settings size={18} />, adminOnly: true, feature: "inkhub_config" },
+  {
+    label: "Printify",
+    href: "/integrations/printify",
+    icon: <Puzzle size={18} />,
+    adminOnly: true,
+    feature: "integrations",
+  },
+  {
+    label: "Triple Whale",
+    href: "/integrations/triple-whale",
+    icon: <span style={{ fontSize: 18 }}>🐋</span>,
+    adminOnly: true,
+    feature: "integrations",
+  },
+  {
+    label: "InkHub Config",
+    href: "/admin/inkhub",
+    icon: <Settings size={18} />,
+    adminOnly: true,
+    feature: "inkhub_config",
+  },
 ];
+
+function NavItem({
+  item,
+  pathname,
+  onNavigate,
+}: {
+  item: NavItemConfig;
+  pathname: string;
+  onNavigate: () => void;
+}) {
+  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+  return (
+    <Link href={item.href} className={`nav-item ${isActive ? "active" : ""}`} onClick={onNavigate}>
+      {item.icon}
+      <span className="flex-1">{item.label}</span>
+      {item.badge && (
+        <span
+          style={{
+            fontSize: "0.625rem",
+            padding: "1px 6px",
+            borderRadius: "var(--radius-pill)",
+            backgroundColor: isActive ? "rgba(22,51,0,0.15)" : "rgba(255,255,255,0.12)",
+            fontWeight: 600,
+            lineHeight: 1.6,
+          }}
+        >
+          {item.badge}
+        </span>
+      )}
+      {isActive && <ChevronRight size={14} style={{ opacity: 0.5 }} />}
+    </Link>
+  );
+}
 
 export default function AuthedShell({
   children,
@@ -96,39 +170,18 @@ export default function AuthedShell({
     }
   }
 
-  function NavItem({ item }: { item: NavItemConfig }) {
-    const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
-    return (
-      <Link
-        href={item.href}
-        className={`nav-item ${isActive ? "active" : ""}`}
-        onClick={() => setSidebarOpen(false)}
-      >
-        {item.icon}
-        <span className="flex-1">{item.label}</span>
-        {item.badge && (
-          <span style={{
-            fontSize: "0.625rem",
-            padding: "1px 6px",
-            borderRadius: "var(--radius-pill)",
-            backgroundColor: isActive ? "rgba(22,51,0,0.15)" : "rgba(255,255,255,0.12)",
-            fontWeight: 600,
-            lineHeight: 1.6,
-          }}>
-            {item.badge}
-          </span>
-        )}
-        {isActive && <ChevronRight size={14} style={{ opacity: 0.5 }} />}
-      </Link>
-    );
-  }
-
   if (pathname.startsWith("/auto-fulfill")) {
     return (
-      <div className="flex h-screen overflow-hidden" style={{ backgroundColor: "var(--bg-primary)" }}>
+      <div
+        className="flex h-screen overflow-hidden"
+        style={{ backgroundColor: "var(--bg-primary)" }}
+      >
         <aside
           className="w-14 flex-shrink-0 flex flex-col items-center pt-4 pb-4 gap-3"
-          style={{ backgroundColor: "var(--bg-sidebar)", borderRight: "1px solid var(--border-default)" }}
+          style={{
+            backgroundColor: "var(--bg-sidebar)",
+            borderRight: "1px solid var(--border-default)",
+          }}
         >
           <div
             className="w-9 h-9 rounded-full flex items-center justify-center"
@@ -145,9 +198,7 @@ export default function AuthedShell({
             <ArrowLeft size={16} style={{ color: "var(--color-wise-dark-green)" }} />
           </Link>
         </aside>
-        <main className="flex-1 min-w-0 h-full">
-          {children}
-        </main>
+        <main className="flex-1 min-w-0 h-full">{children}</main>
       </div>
     );
   }
@@ -156,14 +207,12 @@ export default function AuthedShell({
     <div className="flex min-h-screen" style={{ backgroundColor: "var(--bg-primary)" }}>
       {/* Mobile overlay */}
       {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-40 lg:hidden"
-          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
-          onClick={() => setSidebarOpen(false)}
-          onKeyDown={(e) => e.key === "Escape" && setSidebarOpen(false)}
-          role="button"
-          tabIndex={0}
+        <button
           aria-label="Close sidebar"
+          className="fixed inset-0 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+          style={{ backgroundColor: "rgba(0,0,0,0.5)", border: 0, padding: 0 }}
+          type="button"
         />
       )}
 
@@ -186,9 +235,10 @@ export default function AuthedShell({
           </span>
           {/* Mobile close */}
           <button
+            aria-label="Close sidebar"
             className="lg:hidden ml-auto p-1"
             onClick={() => setSidebarOpen(false)}
-            aria-label="Close sidebar"
+            type="button"
           >
             <X size={18} />
           </button>
@@ -197,24 +247,50 @@ export default function AuthedShell({
         {/* Main nav */}
         <nav className="flex-1 space-y-0.5">
           <div className="px-5 mb-2">
-            <span className="text-small" style={{ color: "rgba(255,255,255,0.4)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            <span
+              className="text-small"
+              style={{
+                color: "rgba(255,255,255,0.4)",
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+              }}
+            >
               Workspace
             </span>
           </div>
           {NAV_ITEMS.filter(canSee).map((item) => (
-            <NavItem key={item.href} item={item} />
+            <NavItem
+              key={item.href}
+              item={item}
+              onNavigate={() => setSidebarOpen(false)}
+              pathname={pathname}
+            />
           ))}
 
           {/* Integrations section */}
           {isAdminOrAbove && INTEGRATION_ITEMS.some(canSee) && (
             <>
               <div className="px-5 mt-6 mb-2">
-                <span className="text-small" style={{ color: "rgba(255,255,255,0.4)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                <span
+                  className="text-small"
+                  style={{
+                    color: "rgba(255,255,255,0.4)",
+                    fontWeight: 600,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                  }}
+                >
                   Integrations
                 </span>
               </div>
               {INTEGRATION_ITEMS.filter(canSee).map((item) => (
-                <NavItem key={item.href} item={item} />
+                <NavItem
+                  key={item.href}
+                  item={item}
+                  onNavigate={() => setSidebarOpen(false)}
+                  pathname={pathname}
+                />
               ))}
             </>
           )}
@@ -223,12 +299,25 @@ export default function AuthedShell({
           {isAdminOrAbove && ADMIN_ITEMS.some(canSee) && (
             <>
               <div className="px-5 mt-6 mb-2">
-                <span className="text-small" style={{ color: "rgba(255,255,255,0.4)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                <span
+                  className="text-small"
+                  style={{
+                    color: "rgba(255,255,255,0.4)",
+                    fontWeight: 600,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                  }}
+                >
                   Admin
                 </span>
               </div>
               {ADMIN_ITEMS.filter(canSee).map((item) => (
-                <NavItem key={item.href} item={item} />
+                <NavItem
+                  key={item.href}
+                  item={item}
+                  onNavigate={() => setSidebarOpen(false)}
+                  pathname={pathname}
+                />
               ))}
             </>
           )}
@@ -237,10 +326,11 @@ export default function AuthedShell({
         {/* Logout */}
         <div className="mt-auto px-3 pb-2">
           <button
-            onClick={handleLogout}
-            disabled={loggingOut}
             className="nav-item w-full"
+            disabled={loggingOut}
+            onClick={handleLogout}
             style={{ color: "rgba(255,255,255,0.5)" }}
+            type="button"
           >
             <LogOut size={18} />
             <span>{loggingOut ? "Đang xuất..." : "Đăng xuất"}</span>
@@ -259,13 +349,14 @@ export default function AuthedShell({
           }}
         >
           <button
-            onClick={() => setSidebarOpen(true)}
+            aria-label="Open sidebar"
             className="p-1.5"
+            onClick={() => setSidebarOpen(true)}
             style={{
               borderRadius: "var(--radius-sm)",
               border: "1px solid var(--border-default)",
             }}
-            aria-label="Open sidebar"
+            type="button"
           >
             <Menu size={18} />
           </button>
