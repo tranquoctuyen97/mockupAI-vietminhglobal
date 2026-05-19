@@ -54,6 +54,7 @@ const ADMIN_ITEMS: NavItemConfig[] = [
 
 const INTEGRATION_ITEMS: NavItemConfig[] = [
   { label: "Printify", href: "/integrations/printify", icon: <Puzzle size={18} />, adminOnly: true, feature: "integrations" },
+  { label: "Triple Whale", href: "/integrations/triple-whale", icon: <span style={{ fontSize: 18 }}>🐋</span>, adminOnly: true, feature: "integrations" },
   { label: "InkHub Config", href: "/admin/inkhub", icon: <Settings size={18} />, adminOnly: true, feature: "inkhub_config" },
 ];
 
