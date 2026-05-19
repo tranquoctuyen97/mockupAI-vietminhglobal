@@ -100,6 +100,3 @@ export function getTripleWhaleSyncQueue(): Queue {
   }
   return _tripleWhaleSyncQueue;
 }
-
-// Keep backward compat — healthCheckQueue exported directly (used by health-check-worker)
-export const healthCheckQueue = getHealthCheckQueue();

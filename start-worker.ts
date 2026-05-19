@@ -1,7 +1,10 @@
-import { tripleWhaleSyncWorker } from "./src/lib/jobs/workers/triple-whale-sync-worker";
-import { mockupWorker } from "./src/lib/mockup/worker";
+import { startTripleWhaleSyncWorker } from "./src/lib/jobs/workers/triple-whale-sync-worker";
+import { startMockupCompositeWorker } from "./src/lib/mockup/worker";
 
 console.log("Starting BullMQ workers...");
+
+const mockupWorker = startMockupCompositeWorker();
+const tripleWhaleSyncWorker = startTripleWhaleSyncWorker();
 
 mockupWorker.on("ready", () => {
   console.log("Mockup Worker is ready and listening to queue!");

@@ -1,16 +1,13 @@
-import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
+import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { isMockupFallbackForcedForDev } from "@/lib/config/runtime-controls";
 import { prisma } from "@/lib/db";
 import { resolveEffectivePlacementData } from "@/lib/mockup/plan";
 import { buildVariantColorLookup } from "@/lib/mockup/printify-poll-worker";
-import { printifyMockupQueue } from "@/lib/mockup/queue";
+import { getPrintifyMockupQueue } from "@/lib/mockup/queue";
 import { DEFAULT_PLACEMENT } from "@/lib/placement/types";
-import {
-  createOrUpdatePrintifyProduct,
-  ensurePrintifyImage,
-} from "@/lib/printify/product";
+import { createOrUpdatePrintifyProduct, ensurePrintifyImage } from "@/lib/printify/product";
 
 const DEFAULT_PLACEMENT_DATA = {
   version: "2.1",
@@ -40,9 +37,13 @@ export async function POST(request: Request) {
   });
 
   if (!draft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
-  if (!draft.design) return NextResponse.json({ error: "No design attached to draft" }, { status: 400 });
+  if (!draft.design)
+    return NextResponse.json({ error: "No design attached to draft" }, { status: 400 });
   if (!draft.store?.template) {
-    return NextResponse.json({ error: "Store chưa có Blueprint. Vào Store Settings để cấu hình." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Store chưa có Blueprint. Vào Store Settings để cấu hình." },
+      { status: 400 },
+    );
   }
 
   const templateVariantIds = draft.store.template.enabledVariantIds ?? [];
@@ -52,17 +53,11 @@ export async function POST(request: Request) {
       : templateVariantIds;
 
   if (enabledVariantIds.length === 0) {
-    return NextResponse.json(
-      { error: "No enabled variants" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "No enabled variants" }, { status: 400 });
   }
 
   if (!draft.enabledColorIds || draft.enabledColorIds.length === 0) {
-    return NextResponse.json(
-      { error: "No colors selected" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "No colors selected" }, { status: 400 });
   }
 
   const placementData = resolveEffectivePlacementData(
@@ -70,7 +65,9 @@ export async function POST(request: Request) {
     draft.store.template.defaultPlacement,
   );
   const effectivePlacementData = placementData ?? DEFAULT_PLACEMENT_DATA;
-  const placementSnapshot = JSON.parse(JSON.stringify(effectivePlacementData)) as Prisma.InputJsonValue;
+  const placementSnapshot = JSON.parse(
+    JSON.stringify(effectivePlacementData),
+  ) as Prisma.InputJsonValue;
 
   if (isMockupFallbackForcedForDev()) {
     return NextResponse.json(
@@ -150,7 +147,7 @@ export async function POST(request: Request) {
       },
     });
 
-    await printifyMockupQueue.add("poll-printify-mockups", {
+    await getPrintifyMockupQueue().add("poll-printify-mockups", {
       mockupJobId: mockupJob.id,
       draftId,
       storeId: draft.storeId!,
