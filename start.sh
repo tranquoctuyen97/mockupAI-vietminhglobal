@@ -2,4 +2,4 @@
 set -a
 source .env
 set +a
-exec node_modules/.bin/next start -p 3000
+exec node_modules/.bin/next start -p "${PORT:-3000}"
