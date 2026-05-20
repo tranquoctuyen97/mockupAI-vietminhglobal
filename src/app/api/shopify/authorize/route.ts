@@ -6,7 +6,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { buildAuthorizationUrl, generateOAuthState } from "@/lib/shopify/oauth";
-import { validateSession } from "@/lib/auth/session";
+import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { decrypt } from "@/lib/crypto/envelope";
 
@@ -20,14 +20,8 @@ function getOrigin(request: Request): string {
 }
 
 export async function GET(request: Request) {
-  const session = await validateSession();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  if (session.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden - Admins only" }, { status: 403 });
-  }
+  const { session, response } = await requireFeature("stores");
+  if (response) return response;
 
   const url = new URL(request.url);
   const storeId = url.searchParams.get("storeId");

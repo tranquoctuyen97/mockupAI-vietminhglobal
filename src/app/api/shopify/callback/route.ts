@@ -12,7 +12,7 @@ import {
   parseOAuthState,
 } from "@/lib/shopify/oauth";
 import { ShopifyClient } from "@/lib/shopify/client";
-import { validateSession } from "@/lib/auth/session";
+import { requireFeature } from "@/lib/auth/guards";
 import { logAudit, getRequestInfo } from "@/lib/audit";
 import { prisma } from "@/lib/db";
 import { decrypt, encrypt } from "@/lib/crypto/envelope";
@@ -37,11 +37,8 @@ export async function GET(request: Request) {
     return NextResponse.redirect(new URL("/stores/new?error=missing_params", baseUrl));
   }
 
-  const session = await validateSession();
-  if (!session || session.role !== "ADMIN") {
-    // If somehow a non-admin gets the callback, reject
-    return NextResponse.json({ error: "Forbidden - Admins only" }, { status: 403 });
-  }
+  const { session, response } = await requireFeature("stores");
+  if (response) return response;
 
   // Verify state (CSRF protection)
   const cookieStore = await cookies();
@@ -112,7 +109,6 @@ export async function GET(request: Request) {
     });
 
     // Audit log
-    const session = await validateSession();
     if (session) {
       const reqInfo = getRequestInfo(request);
       await logAudit({
