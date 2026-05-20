@@ -18,15 +18,36 @@ export async function POST(
 
   const { id: storeId } = await params;
 
-  const store = await prisma.store.findFirst({
-    where: { id: storeId, tenantId: session.tenantId },
-    include: { template: true },
-  });
-  if (!store?.template) {
-    return NextResponse.json(
-      { error: "Store template not found" },
-      { status: 404 },
-    );
+  const url = new URL(request.url);
+  const templateId = url.searchParams.get("templateId");
+  const queryBlueprintId = url.searchParams.get("blueprintId");
+  const queryPrintProviderId = url.searchParams.get("printProviderId");
+
+  let blueprintId: number;
+  let printProviderId: number;
+
+  if (queryBlueprintId && queryPrintProviderId) {
+    blueprintId = parseInt(queryBlueprintId, 10);
+    printProviderId = parseInt(queryPrintProviderId, 10);
+  } else {
+    const store = await prisma.store.findFirst({
+      where: { id: storeId, tenantId: session.tenantId },
+      include: {
+        templates: {
+          where: templateId ? { id: templateId } : { isDefault: true },
+        },
+      },
+    });
+
+    const template = store?.templates[0] ?? null;
+    if (!template) {
+      return NextResponse.json(
+        { error: "Store template not found" },
+        { status: 404 },
+      );
+    }
+    blueprintId = template.printifyBlueprintId;
+    printProviderId = template.printifyPrintProviderId;
   }
 
   try {
@@ -35,8 +56,8 @@ export async function POST(
     const variants = await ensureVariantCostCache({
       client,
       shopId: externalShopId,
-      blueprintId: store.template.printifyBlueprintId,
-      printProviderId: store.template.printifyPrintProviderId,
+      blueprintId,
+      printProviderId,
       forceRefresh: true,
     });
 

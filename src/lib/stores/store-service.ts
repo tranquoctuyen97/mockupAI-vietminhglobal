@@ -137,7 +137,15 @@ export async function listStores(tenantId: string) {
     where: { tenantId },
     include: {
       colors: { orderBy: { sortOrder: "asc" } },
-      template: true, // singular — 1:1 via @@unique([storeId])
+      templates: {
+        orderBy: { sortOrder: "asc" },
+        include: {
+          colors: {
+            orderBy: { sortOrder: "asc" },
+            include: { color: true },
+          },
+        },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -195,9 +203,9 @@ export async function upsertStoreColors(
 }
 
 /**
- * Upsert mockup template for a store (1:1 — one store = one template)
+ * Create a new template for a store
  */
-export async function upsertStoreTemplate(
+export async function createTemplate(
   storeId: string,
   data: {
     name: string;
@@ -208,53 +216,246 @@ export async function upsertStoreTemplate(
     previewUrl?: string;
     position?: "FRONT" | "BACK" | "SLEEVE";
     enabledVariantIds?: number[];
-    defaultPlacement?: Prisma.JsonValue;
+    enabledSizes?: string[];
+    defaultPlacement?: Prisma.InputJsonValue;
     defaultAspectRatio?: string;
     storePresetSnapshot?: Prisma.InputJsonValue;
+    printAreasByView?: Prisma.InputJsonValue;
+    blueprintImageUrl?: string;
+    blueprintBrand?: string;
+    colorIds?: string[];
   },
 ) {
-  return prisma.storeMockupTemplate.upsert({
-    where: { storeId },
-    create: {
-      storeId,
-      name: data.name,
-      printifyBlueprintId: data.printifyBlueprintId,
-      printifyPrintProviderId: data.printifyPrintProviderId,
-      blueprintTitle: data.blueprintTitle ?? "",
-      printProviderTitle: data.printProviderTitle ?? "",
-      previewUrl: data.previewUrl ?? null,
-      position: data.position ?? "FRONT",
-      isDefault: true,
-      enabledVariantIds: data.enabledVariantIds ?? [],
-      defaultPlacement: data.defaultPlacement ?? undefined,
-      defaultAspectRatio: data.defaultAspectRatio ?? "1:1",
-      storePresetSnapshot: data.storePresetSnapshot ?? undefined,
-    },
-    update: {
-      name: data.name,
-      printifyBlueprintId: data.printifyBlueprintId,
-      printifyPrintProviderId: data.printifyPrintProviderId,
-      blueprintTitle: data.blueprintTitle ?? undefined,
-      printProviderTitle: data.printProviderTitle ?? undefined,
-      previewUrl: data.previewUrl ?? null,
-      position: data.position ?? "FRONT",
-      ...(data.enabledVariantIds !== undefined && { enabledVariantIds: data.enabledVariantIds }),
-      defaultPlacement: data.defaultPlacement ?? undefined,
-      ...(data.defaultAspectRatio !== undefined && { defaultAspectRatio: data.defaultAspectRatio }),
-      ...(data.storePresetSnapshot !== undefined && { storePresetSnapshot: data.storePresetSnapshot }),
-    },
+  const existingCount = await prisma.storeMockupTemplate.count({ where: { storeId } });
+  const isDefault = existingCount === 0;
+
+  return prisma.$transaction(async (tx) => {
+    const template = await tx.storeMockupTemplate.create({
+      data: {
+        storeId,
+        name: data.name,
+        printifyBlueprintId: data.printifyBlueprintId,
+        printifyPrintProviderId: data.printifyPrintProviderId,
+        blueprintTitle: data.blueprintTitle ?? "",
+        printProviderTitle: data.printProviderTitle ?? "",
+        previewUrl: data.previewUrl ?? null,
+        position: data.position ?? "FRONT",
+        isDefault,
+        enabledVariantIds: data.enabledVariantIds ?? [],
+        enabledSizes: data.enabledSizes ?? [],
+        defaultPlacement: data.defaultPlacement ?? undefined,
+        defaultAspectRatio: data.defaultAspectRatio ?? "1:1",
+        storePresetSnapshot: data.storePresetSnapshot ?? undefined,
+        printAreasByView: data.printAreasByView ?? undefined,
+        blueprintImageUrl: data.blueprintImageUrl ?? null,
+        blueprintBrand: data.blueprintBrand ?? null,
+        sortOrder: existingCount,
+      },
+    });
+
+    if (data.colorIds && data.colorIds.length > 0) {
+      await tx.templateColor.createMany({
+        data: data.colorIds.map((colorId, i) => ({
+          templateId: template.id,
+          colorId,
+          sortOrder: i,
+        })),
+      });
+    }
+
+    return template;
   });
 }
 
 /**
- * Update just the placement preset for a store's template
+ * Update an existing template by ID
+ */
+export async function updateTemplate(
+  templateId: string,
+  data: {
+    name?: string;
+    printifyBlueprintId?: number;
+    printifyPrintProviderId?: number;
+    blueprintTitle?: string;
+    printProviderTitle?: string;
+    previewUrl?: string;
+    position?: "FRONT" | "BACK" | "SLEEVE";
+    enabledVariantIds?: number[];
+    enabledSizes?: string[];
+    defaultPlacement?: Prisma.InputJsonValue;
+    defaultAspectRatio?: string;
+    storePresetSnapshot?: Prisma.InputJsonValue;
+    printAreasByView?: Prisma.InputJsonValue;
+    blueprintImageUrl?: string;
+    blueprintBrand?: string;
+    colorIds?: string[];
+  },
+) {
+  return prisma.$transaction(async (tx) => {
+    const template = await tx.storeMockupTemplate.update({
+      where: { id: templateId },
+      data: {
+        name: data.name,
+        printifyBlueprintId: data.printifyBlueprintId,
+        printifyPrintProviderId: data.printifyPrintProviderId,
+        blueprintTitle: data.blueprintTitle,
+        printProviderTitle: data.printProviderTitle,
+        previewUrl: data.previewUrl !== undefined ? data.previewUrl : undefined,
+        position: data.position,
+        enabledVariantIds: data.enabledVariantIds,
+        enabledSizes: data.enabledSizes,
+        defaultPlacement: data.defaultPlacement ?? undefined,
+        defaultAspectRatio: data.defaultAspectRatio,
+        storePresetSnapshot: data.storePresetSnapshot ?? undefined,
+        printAreasByView: data.printAreasByView ?? undefined,
+        blueprintImageUrl: data.blueprintImageUrl,
+        blueprintBrand: data.blueprintBrand,
+      },
+    });
+
+    if (data.colorIds !== undefined) {
+      await tx.templateColor.deleteMany({ where: { templateId } });
+      if (data.colorIds.length > 0) {
+        await tx.templateColor.createMany({
+          data: data.colorIds.map((colorId, i) => ({
+            templateId,
+            colorId,
+            sortOrder: i,
+          })),
+        });
+      }
+    }
+
+    return template;
+  });
+}
+
+/**
+ * Delete a template by ID
+ */
+export async function deleteTemplate(templateId: string) {
+  return prisma.$transaction(async (tx) => {
+    const template = await tx.storeMockupTemplate.findUnique({
+      where: { id: templateId },
+      select: { storeId: true, isDefault: true },
+    });
+
+    if (!template) {
+      throw new Error(`Template ${templateId} not found`);
+    }
+
+    await tx.storeMockupTemplate.delete({ where: { id: templateId } });
+
+    if (template.isDefault) {
+      const nextTemplate = await tx.storeMockupTemplate.findFirst({
+        where: { storeId: template.storeId },
+        orderBy: { sortOrder: "asc" },
+      });
+      if (nextTemplate) {
+        await tx.storeMockupTemplate.update({
+          where: { id: nextTemplate.id },
+          data: { isDefault: true },
+        });
+      }
+    }
+  });
+}
+
+/**
+ * Set a template as default for a store
+ */
+export async function setDefaultTemplate(storeId: string, templateId: string) {
+  return prisma.$transaction([
+    prisma.storeMockupTemplate.updateMany({
+      where: { storeId, isDefault: true },
+      data: { isDefault: false },
+    }),
+    prisma.storeMockupTemplate.update({
+      where: { id: templateId },
+      data: { isDefault: true },
+    }),
+  ]);
+}
+
+/**
+ * Duplicate an existing template
+ */
+export async function duplicateTemplate(templateId: string) {
+  const original = await prisma.storeMockupTemplate.findUnique({
+    where: { id: templateId },
+    include: { colors: true },
+  });
+
+  if (!original) {
+    throw new Error(`Template ${templateId} not found`);
+  }
+
+  const existingCount = await prisma.storeMockupTemplate.count({
+    where: { storeId: original.storeId },
+  });
+
+  return prisma.$transaction(async (tx) => {
+    const copy = await tx.storeMockupTemplate.create({
+      data: {
+        storeId: original.storeId,
+        name: `${original.name} (Copy)`,
+        printifyBlueprintId: original.printifyBlueprintId,
+        printifyPrintProviderId: original.printifyPrintProviderId,
+        blueprintTitle: original.blueprintTitle,
+        printProviderTitle: original.printProviderTitle,
+        previewUrl: original.previewUrl,
+        position: original.position,
+        isDefault: false,
+        enabledVariantIds: original.enabledVariantIds,
+        enabledSizes: original.enabledSizes,
+        defaultPlacement: original.defaultPlacement ?? undefined,
+        defaultAspectRatio: original.defaultAspectRatio,
+        storePresetSnapshot: original.storePresetSnapshot ?? undefined,
+        printAreasByView: original.printAreasByView ?? undefined,
+        blueprintImageUrl: original.blueprintImageUrl,
+        blueprintBrand: original.blueprintBrand,
+        sortOrder: existingCount,
+      },
+    });
+
+    if (original.colors.length > 0) {
+      await tx.templateColor.createMany({
+        data: original.colors.map((c) => ({
+          templateId: copy.id,
+          colorId: c.colorId,
+          sortOrder: c.sortOrder,
+        })),
+      });
+    }
+
+    return copy;
+  });
+}
+
+/**
+ * Update just the placement preset for a specific template
  */
 export async function updateTemplatePlacement(
-  storeId: string,
+  templateId: string,
   defaultPlacement: Prisma.InputJsonValue,
 ) {
   return prisma.storeMockupTemplate.update({
-    where: { storeId },
+    where: { id: templateId },
     data: { defaultPlacement },
+  });
+}
+
+/**
+ * Get default template for a store
+ */
+export async function getDefaultTemplate(storeId: string) {
+  return prisma.storeMockupTemplate.findFirst({
+    where: { storeId, isDefault: true },
+    include: {
+      colors: {
+        orderBy: { sortOrder: "asc" },
+        include: { color: true },
+      },
+    },
   });
 }

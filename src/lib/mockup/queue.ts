@@ -18,43 +18,49 @@ export interface PrintifyMockupPollPayload {
 
 // Singleton queue instances
 const globalForQueue = global as unknown as {
-  mockupQueue: Queue;
-  printifyMockupQueue: Queue<PrintifyMockupPollPayload>;
+  mockupQueue?: Queue;
+  printifyMockupQueue?: Queue<PrintifyMockupPollPayload>;
 };
 
-export const mockupQueue =
-  globalForQueue.mockupQueue ||
-  new Queue(MOCKUP_QUEUE_NAME, {
-    connection,
-    defaultJobOptions: {
-      attempts: 3,
-      backoff: {
-        type: "exponential",
-        delay: 1000,
+export function getMockupCompositeQueue(): Queue {
+  if (!globalForQueue.mockupQueue) {
+    globalForQueue.mockupQueue = new Queue(MOCKUP_QUEUE_NAME, {
+      connection,
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: {
+          type: "exponential",
+          delay: 1000,
+        },
+        removeOnComplete: true,
+        removeOnFail: false,
       },
-      removeOnComplete: true,
-      removeOnFail: false,
-    },
-  });
+    });
+  }
 
-export const printifyMockupQueue =
-  globalForQueue.printifyMockupQueue ||
-  new Queue<PrintifyMockupPollPayload>(PRINTIFY_MOCKUP_QUEUE_NAME, {
-    connection,
-    defaultJobOptions: {
-      attempts: 3,
-      backoff: {
-        type: "exponential",
-        delay: 3000,
+  return globalForQueue.mockupQueue;
+}
+
+export function getPrintifyMockupQueue(): Queue<PrintifyMockupPollPayload> {
+  if (!globalForQueue.printifyMockupQueue) {
+    globalForQueue.printifyMockupQueue = new Queue<PrintifyMockupPollPayload>(
+      PRINTIFY_MOCKUP_QUEUE_NAME,
+      {
+        connection,
+        defaultJobOptions: {
+          attempts: 3,
+          backoff: {
+            type: "exponential",
+            delay: 3000,
+          },
+          removeOnComplete: true,
+          removeOnFail: false,
+        },
       },
-      removeOnComplete: true,
-      removeOnFail: false,
-    },
-  });
+    );
+  }
 
-if (process.env.NODE_ENV !== "production") {
-  globalForQueue.mockupQueue = mockupQueue;
-  globalForQueue.printifyMockupQueue = printifyMockupQueue;
+  return globalForQueue.printifyMockupQueue;
 }
 
 export interface MockupJobPayload {

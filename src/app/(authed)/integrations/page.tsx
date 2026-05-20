@@ -1,16 +1,25 @@
 "use client";
 
+import { ArrowRight, Puzzle, Store } from "lucide-react";
 import Link from "next/link";
-import { Store, ArrowRight, Puzzle } from "lucide-react";
 
 const INTEGRATIONS = [
   {
     id: "printify",
     name: "Printify",
-    description: "Print-on-demand fulfillment. Kết nối API key để tạo sản phẩm và xử lý đơn hàng tự động.",
+    description:
+      "Print-on-demand fulfillment. Kết nối API key để tạo sản phẩm và xử lý đơn hàng tự động.",
     href: "/integrations/printify",
     icon: <Store size={24} />,
     color: "#4caf50",
+  },
+  {
+    id: "triple-whale",
+    name: "Triple Whale",
+    description: "Sync analytics — revenue, profit, ads theo ngày cho từng Shopify store.",
+    href: "/integrations/triple-whale",
+    icon: <span style={{ fontSize: 20 }}>🐋</span>,
+    color: "#6b5cff",
   },
 ];
 
@@ -22,10 +31,18 @@ export default function IntegrationsPage() {
           <Puzzle size={24} style={{ color: "var(--color-wise-green)" }} />
           <h1 style={{ fontSize: "1.5rem", fontWeight: 800, margin: 0 }}>Integrations</h1>
         </div>
-        <p style={{ opacity: 0.6, margin: 0 }}>Quản lý các kết nối API bên ngoài (Printify, Gelato, ...)</p>
+        <p style={{ opacity: 0.6, margin: 0 }}>
+          Quản lý các kết nối API bên ngoài (Printify, Gelato, ...)
+        </p>
       </div>
 
-      <div style={{ display: "grid", gap: 20, gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}>
+      <div
+        style={{
+          display: "grid",
+          gap: 20,
+          gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+        }}
+      >
         {INTEGRATIONS.map((item) => (
           <Link
             key={item.id}

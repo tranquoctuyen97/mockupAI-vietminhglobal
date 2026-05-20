@@ -9,6 +9,7 @@ import { deleteDraftWithPrintifyCleanup } from "./cleanup";
 export interface DraftPatch {
   designId?: string | null;
   storeId?: string | null;
+  templateId?: string | null;
   enabledColorIds?: string[];
   enabledSizes?: string[];
   enabledVariantIdsOverride?: number[];
@@ -21,6 +22,7 @@ export interface DraftPatch {
 const draftPatchKeys = [
   "designId",
   "storeId",
+  "templateId",
   "enabledColorIds",
   "enabledSizes",
   "enabledVariantIdsOverride",
@@ -59,9 +61,12 @@ export async function getDraft(id: string, tenantId: string) {
           colors: {
             orderBy: { sortOrder: "asc" },
           },
-          template: true,
+          templates: {
+            orderBy: { sortOrder: "asc" },
+          },
         },
       },
+      template: true,
       mockupJobs: {
         orderBy: { createdAt: "asc" },
         include: {

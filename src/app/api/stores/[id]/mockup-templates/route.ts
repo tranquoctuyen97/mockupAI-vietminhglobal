@@ -1,11 +1,11 @@
 /**
- * POST /api/stores/:id/mockup-templates — Upsert template (1:1)
- * PATCH /api/stores/:id/mockup-templates — Update placement only
+ * POST /api/stores/:id/mockup-templates — Create template (1:N)
+ * PATCH /api/stores/:id/mockup-templates — Update default template placement
  */
 
 import { NextResponse } from "next/server";
 import { requireFeature } from "@/lib/auth/guards";
-import { upsertStoreTemplate, updateTemplatePlacement } from "@/lib/stores/store-service";
+import { createTemplate, updateTemplatePlacement } from "@/lib/stores/store-service";
 import { prisma } from "@/lib/db";
 import type { Prisma } from "@prisma/client";
 
@@ -28,7 +28,6 @@ export async function POST(
 
   const body = await request.json();
 
-  // Phase 6.10: Accept single template object (1:1 relation)
   const data = body as {
     name: string;
     printifyBlueprintId: number;
@@ -36,6 +35,7 @@ export async function POST(
     previewUrl?: string;
     position?: "FRONT" | "BACK" | "SLEEVE";
     defaultPlacement?: Record<string, unknown>;
+    colorIds?: string[];
   };
 
   if (!data.name || !data.printifyBlueprintId || !data.printifyPrintProviderId) {
@@ -45,9 +45,9 @@ export async function POST(
     );
   }
 
-  const result = await upsertStoreTemplate(id, {
+  const result = await createTemplate(id, {
     ...data,
-    defaultPlacement: data.defaultPlacement as Prisma.JsonValue,
+    defaultPlacement: data.defaultPlacement as Prisma.InputJsonValue,
   });
   return NextResponse.json(result);
 }
@@ -64,13 +64,17 @@ export async function PATCH(
   // Verify store belongs to tenant
   const store = await prisma.store.findFirst({
     where: { id, tenantId: session.tenantId },
-    include: { template: true },
   });
   if (!store) {
     return NextResponse.json({ error: "Store not found" }, { status: 404 });
   }
 
-  if (!store.template) {
+  // Find default template
+  const defaultTemplate = await prisma.storeMockupTemplate.findFirst({
+    where: { storeId: id, isDefault: true },
+  });
+
+  if (!defaultTemplate) {
     return NextResponse.json(
       { error: "Template not configured. Set up Blueprint & Provider first." },
       { status: 400 },
@@ -89,6 +93,6 @@ export async function PATCH(
     );
   }
 
-  const result = await updateTemplatePlacement(id, defaultPlacement as Prisma.InputJsonValue);
+  const result = await updateTemplatePlacement(defaultTemplate.id, defaultPlacement as Prisma.InputJsonValue);
   return NextResponse.json(result);
 }

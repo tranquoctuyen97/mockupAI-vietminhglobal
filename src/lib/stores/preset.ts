@@ -26,7 +26,7 @@ const TOTAL_PRESET_ITEMS = 5;
  */
 export async function computePresetStatus(storeId: string): Promise<PresetStatus> {
   const [template, colorCount] = await Promise.all([
-    prisma.storeMockupTemplate.findUnique({ where: { storeId } }),
+    prisma.storeMockupTemplate.findFirst({ where: { storeId, isDefault: true } }),
     prisma.storeColor.count({ where: { storeId, enabled: true } }),
   ]);
 
@@ -63,18 +63,19 @@ export const MISSING_TO_TAB: Record<PresetMissing, string> = {
 };
 
 /**
- * Sync version for use in listStores (when template is already loaded via include)
+ * Sync version for use in listStores (when templates are already loaded via include)
  */
 export function getPresetStatusSync(store: {
-  template?: {
+  templates?: Array<{
     printifyBlueprintId?: number | null;
     printifyPrintProviderId?: number | null;
     enabledVariantIds?: number[];
     defaultPlacement?: unknown;
-  } | null;
+    isDefault?: boolean;
+  }> | null;
   colors?: { enabled?: boolean }[];
 }): PresetStatus {
-  const template = store.template;
+  const template = store.templates?.find(t => t.isDefault) ?? store.templates?.[0] ?? null;
   const enabledColors = store.colors?.filter(c => c.enabled !== false) ?? [];
   const missing: PresetMissing[] = [];
 
