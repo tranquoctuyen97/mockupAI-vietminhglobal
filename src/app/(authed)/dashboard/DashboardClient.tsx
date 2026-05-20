@@ -14,9 +14,10 @@ interface Summary {
 
 interface Props {
   summary: Summary;
+  twTimezone: string;
 }
 
-export default function DashboardClient({ summary }: Props) {
+export default function DashboardClient({ summary, twTimezone }: Props) {
   const [tab, setTab] = useState<"overview" | "triple-whale">("overview");
 
   const stats = [
@@ -200,7 +201,7 @@ export default function DashboardClient({ summary }: Props) {
         </>
       )}
 
-      {tab === "triple-whale" && <TripleWhaleDashboard />}
+      {tab === "triple-whale" && <TripleWhaleDashboard timezone={twTimezone} />}
     </div>
   );
 }

@@ -238,28 +238,36 @@ export async function buildVariantColorLookup(input: {
   const draft = await prisma.wizardDraft.findUnique({
     where: { id: input.draftId },
     include: {
+      template: true,
       store: {
         include: {
           colors: true,
-          template: true,
         },
       },
     },
   });
 
   const lookup = new Map<number, { colorName: string }>();
-  if (!draft?.store?.template) return lookup;
+  if (!draft) return lookup;
+
+  let template = draft.template;
+  if (!template && draft.storeId) {
+    template = await prisma.storeMockupTemplate.findFirst({
+      where: { storeId: draft.storeId, isDefault: true },
+    });
+  }
+  if (!template) return lookup;
 
   const enabledVariantIds = draft.enabledVariantIdsOverride.length > 0
     ? draft.enabledVariantIdsOverride
-    : draft.store.template.enabledVariantIds;
+    : template.enabledVariantIds;
   const enabledVariantSet = new Set(enabledVariantIds);
   const selectedColorSet = new Set(draft.enabledColorIds);
-  const selectedColors = draft.store.colors.filter((color) => selectedColorSet.has(color.id));
+  const selectedColors = draft.store?.colors.filter((color) => selectedColorSet.has(color.id)) ?? [];
 
   const variantResponse = await input.client.getBlueprintVariants(
-    draft.store.template.printifyBlueprintId,
-    draft.store.template.printifyPrintProviderId,
+    template.printifyBlueprintId,
+    template.printifyPrintProviderId,
   );
 
   for (const variant of variantResponse.variants) {

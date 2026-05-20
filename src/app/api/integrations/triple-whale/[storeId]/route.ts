@@ -13,11 +13,11 @@ export async function PUT(req: Request, { params }: { params: Promise<{ storeId:
   const { session, response } = await requireFeature("stores");
   if (response) return response;
 
-  const { storeId } = await params;
-  const store = await prisma.store.findFirst({
-    where: { id: storeId, tenantId: session.tenantId, deletedAt: null },
+  const { storeId: credentialId } = await params;
+  const credential = await prisma.tripleWhaleCredential.findFirst({
+    where: { id: credentialId, tenantId: session.tenantId },
   });
-  if (!store) return NextResponse.json({ error: "Store not found" }, { status: 404 });
+  if (!credential) return NextResponse.json({ error: "Credential not found" }, { status: 404 });
 
   const parsed = upsertSchema.safeParse(await req.json());
   if (!parsed.success) {
@@ -27,29 +27,16 @@ export async function PUT(req: Request, { params }: { params: Promise<{ storeId:
     );
   }
 
-  const existing = await prisma.tripleWhaleCredential.findUnique({ where: { storeId } });
   let encryptedData: { apiKeyEncrypted: Uint8Array<ArrayBuffer>; encryptionKeyId: string } | null =
     null;
   if (parsed.data.apiKey) {
     const { encrypted, keyId } = encrypt(parsed.data.apiKey);
     encryptedData = { apiKeyEncrypted: encrypted, encryptionKeyId: keyId };
-  } else if (!existing) {
-    return NextResponse.json({ error: "API key required for new credential" }, { status: 400 });
-  }
-  const createData = encryptedData ?? existing;
-  if (!createData) {
-    return NextResponse.json({ error: "API key required for new credential" }, { status: 400 });
   }
 
-  await prisma.tripleWhaleCredential.upsert({
-    where: { storeId },
-    create: {
-      storeId,
-      apiKeyEncrypted: createData.apiKeyEncrypted,
-      encryptionKeyId: createData.encryptionKeyId,
-      customName: parsed.data.customName,
-    },
-    update: {
+  await prisma.tripleWhaleCredential.update({
+    where: { id: credentialId },
+    data: {
       ...(encryptedData
         ? {
             apiKeyEncrypted: encryptedData.apiKeyEncrypted,
@@ -68,14 +55,14 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ stor
   const { session, response } = await requireFeature("stores");
   if (response) return response;
 
-  const { storeId } = await params;
-  const store = await prisma.store.findFirst({
-    where: { id: storeId, tenantId: session.tenantId, deletedAt: null },
+  const { storeId: credentialId } = await params;
+  const credential = await prisma.tripleWhaleCredential.findFirst({
+    where: { id: credentialId, tenantId: session.tenantId },
   });
-  if (!store) return NextResponse.json({ error: "Store not found" }, { status: 404 });
+  if (!credential) return NextResponse.json({ error: "Credential not found" }, { status: 404 });
 
-  await prisma.tripleWhaleDailyStat.deleteMany({ where: { storeId } });
-  await prisma.tripleWhaleCredential.deleteMany({ where: { storeId } });
+  await prisma.tripleWhaleDailyStat.deleteMany({ where: { credentialId } });
+  await prisma.tripleWhaleCredential.delete({ where: { id: credentialId } });
 
   return NextResponse.json({ success: true });
 }

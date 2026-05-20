@@ -26,7 +26,8 @@ export async function POST(
     },
     include: {
       design: true,
-      store: { include: { colors: true, template: true } },
+      store: { include: { colors: true } },
+      template: true,
     },
   });
 
@@ -42,7 +43,7 @@ export async function POST(
   // Cast JsonValue to structured fallback
   const colors = draft.store?.colors?.filter((c: any) => draft.enabledColorIds.includes(c.id)).map((c: any) => c.name) || [];
   const placementObj = (draft.placementOverride as { position?: string }) || {};
-  const productType = draft.store?.template?.blueprintTitle || draft.store?.name || "T-Shirt";
+  const productType = draft.template?.blueprintTitle || draft.store?.name || "T-Shirt";
 
   const input = {
     designName: draft.design.name,

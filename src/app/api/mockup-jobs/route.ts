@@ -27,9 +27,9 @@ export async function POST(request: Request) {
     where: { id: draftId },
     include: {
       design: true,
+      template: true,
       store: {
         include: {
-          template: true,
           colors: true,
         },
       },
@@ -39,14 +39,22 @@ export async function POST(request: Request) {
   if (!draft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
   if (!draft.design)
     return NextResponse.json({ error: "No design attached to draft" }, { status: 400 });
-  if (!draft.store?.template) {
+
+  let template = draft.template;
+  if (!template && draft.storeId) {
+    template = await prisma.storeMockupTemplate.findFirst({
+      where: { storeId: draft.storeId, isDefault: true },
+    });
+  }
+
+  if (!template) {
     return NextResponse.json(
       { error: "Store chưa có Blueprint. Vào Store Settings để cấu hình." },
       { status: 400 },
     );
   }
 
-  const templateVariantIds = draft.store.template.enabledVariantIds ?? [];
+  const templateVariantIds = template.enabledVariantIds ?? [];
   const enabledVariantIds: number[] =
     draft.enabledVariantIdsOverride && draft.enabledVariantIdsOverride.length > 0
       ? draft.enabledVariantIdsOverride
@@ -62,7 +70,7 @@ export async function POST(request: Request) {
 
   const placementData = resolveEffectivePlacementData(
     draft.placementOverride,
-    draft.store.template.defaultPlacement,
+    template.defaultPlacement,
   );
   const effectivePlacementData = placementData ?? DEFAULT_PLACEMENT_DATA;
   const placementSnapshot = JSON.parse(
@@ -93,9 +101,9 @@ export async function POST(request: Request) {
     const availableColorNames = new Set(
       Array.from(variantColorLookup.values()).map((value) => value.colorName.trim().toLowerCase()),
     );
-    const selectedColorNames = draft.store.colors
+    const selectedColorNames = draft.store?.colors
       .filter((color) => draft.enabledColorIds.includes(color.id))
-      .map((color) => color.name);
+      .map((color) => color.name) ?? [];
     const missingColorNames = selectedColorNames.filter(
       (colorName) => !availableColorNames.has(colorName.trim().toLowerCase()),
     );
@@ -120,8 +128,8 @@ export async function POST(request: Request) {
       client,
       shopId: externalShopId,
       productId: draft.printifyDraftProductId,
-      blueprintId: draft.store.template.printifyBlueprintId,
-      printProviderId: draft.store.template.printifyPrintProviderId,
+      blueprintId: template.printifyBlueprintId,
+      printProviderId: template.printifyPrintProviderId,
       variantIds: enabledVariantIds,
       imageId,
       placementData: effectivePlacementData,

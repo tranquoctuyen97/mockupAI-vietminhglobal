@@ -1,11 +1,12 @@
 "use client";
 
+import { formatInTimeZone } from "date-fns-tz";
 import { ChevronDown, ChevronUp, Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 interface StoreStats {
-  storeId: string;
+  credentialId: string;
   shopifyDomain: string;
   customName: string;
   orderRevenue: number;
@@ -55,23 +56,24 @@ function fmtPct(value: number) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function getDateRange(preset: string): { from: string; to: string } {
+function getDateRange(preset: string, tz: string): { from: string; to: string } {
   const now = new Date();
-  const formatDate = (date: Date) => date.toISOString().slice(0, 10);
-  const today = formatDate(now);
+  const today = formatInTimeZone(now, tz, "yyyy-MM-dd");
   if (preset === "Today") return { from: today, to: today };
+  
+  const [year, month, day] = today.split("-").map(Number);
+  
   if (preset === "7D") {
-    const date = new Date(now);
-    date.setDate(date.getDate() - 6);
-    return { from: formatDate(date), to: today };
+    const date = new Date(year, month - 1, day - 6);
+    return { from: formatInTimeZone(date, tz, "yyyy-MM-dd"), to: today };
   }
   if (preset === "30D") {
-    const date = new Date(now);
-    date.setDate(date.getDate() - 29);
-    return { from: formatDate(date), to: today };
+    const date = new Date(year, month - 1, day - 29);
+    return { from: formatInTimeZone(date, tz, "yyyy-MM-dd"), to: today };
   }
   if (preset === "This Month") {
-    return { from: formatDate(new Date(now.getFullYear(), now.getMonth(), 1)), to: today };
+    const firstDay = `${year}-${String(month).padStart(2, "0")}-01`;
+    return { from: firstDay, to: today };
   }
   return { from: today, to: today };
 }
@@ -215,7 +217,7 @@ function StatCard({
   );
 }
 
-export default function TripleWhaleDashboard() {
+export default function TripleWhaleDashboard({ timezone }: { timezone: string }) {
   const [preset, setPreset] = useState("7D");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
@@ -228,7 +230,7 @@ export default function TripleWhaleDashboard() {
   const [syncing, setSyncing] = useState(false);
 
   const { from, to } =
-    preset === "Custom" ? { from: customFrom, to: customTo } : getDateRange(preset);
+    preset === "Custom" ? { from: customFrom, to: customTo } : getDateRange(preset, timezone);
 
   const load = useCallback(async () => {
     if (!from || !to) return;
@@ -267,7 +269,7 @@ export default function TripleWhaleDashboard() {
   }
 
   const storeColors = Object.fromEntries(
-    perStore.map((store, index) => [store.storeId, STORE_COLORS[index % STORE_COLORS.length]]),
+    perStore.map((store, index) => [store.credentialId, STORE_COLORS[index % STORE_COLORS.length]]),
   );
   const pieMetrics = totals
     ? [
@@ -474,7 +476,7 @@ export default function TripleWhaleDashboard() {
               >
                 <DonutChart
                   data={perStore.map((store) => ({
-                    color: storeColors[store.storeId],
+                    color: storeColors[store.credentialId],
                     label: store.customName,
                     value: store[metric.key] as number,
                   }))}
@@ -498,12 +500,12 @@ export default function TripleWhaleDashboard() {
                       metric.total > 0 ? ((value / metric.total) * 100).toFixed(1) : "0.0";
                     return (
                       <div
-                        key={store.storeId}
+                        key={store.credentialId}
                         style={{ alignItems: "center", display: "flex", gap: 6 }}
                       >
                         <span
                           style={{
-                            background: storeColors[store.storeId],
+                            background: storeColors[store.credentialId],
                             borderRadius: 2,
                             flexShrink: 0,
                             height: 7,
@@ -566,7 +568,7 @@ export default function TripleWhaleDashboard() {
             <tbody>
               {perStore.map((store, index) => (
                 <tr
-                  key={store.storeId}
+                  key={store.credentialId}
                   style={{
                     borderBottom:
                       index < perStore.length - 1 ? "1px solid var(--border-default)" : "none",
@@ -576,7 +578,7 @@ export default function TripleWhaleDashboard() {
                     <div style={{ alignItems: "center", display: "flex", gap: 8 }}>
                       <span
                         style={{
-                          background: storeColors[store.storeId],
+                          background: storeColors[store.credentialId],
                           borderRadius: 2,
                           height: 8,
                           width: 8,

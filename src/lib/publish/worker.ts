@@ -109,7 +109,12 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
     // Load draft for mockup paths
     const draft = await prisma.wizardDraft.findUnique({
       where: { id: draftId },
-      include: { mockupJobs: true, design: true, store: { include: { template: true, colors: true } } },
+      include: {
+        mockupJobs: true,
+        design: true,
+        template: true,
+        store: { include: { colors: true } },
+      },
     });
     if (!draft) throw new Error("Draft not found");
 
@@ -169,7 +174,7 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
             descriptionHtml: listing.descriptionHtml,
             tags: listing.tags,
             priceUsd: listing.priceUsd,
-            productType: draft.store?.template?.blueprintTitle || draft.store?.name || "Apparel",
+            productType: draft.template?.blueprintTitle || draft.store?.name || "Apparel",
             colors: listing.variants.map((v) => ({ name: v.colorName, hex: v.colorHex })),
             mockupPaths,
             mockupImages,
@@ -317,8 +322,14 @@ export async function runPrintifyStage(
       }
     });
     const selectedMockupIds = includedImages.map((img: any) => img.printifyMockupId);
-    const variantIds = resolvePublishVariantIds(listing, draft);
-    const template = draft.store?.template;
+    let template = draft.template;
+    if (!template && draft.storeId) {
+      template = await prisma.storeMockupTemplate.findFirst({
+        where: { storeId: draft.storeId, isDefault: true },
+      });
+    }
+
+    const variantIds = resolvePublishVariantIds(listing, draft, template);
     const placementData = resolveEffectivePlacementData(
       draft.placementOverride,
       template?.defaultPlacement,
@@ -495,7 +506,8 @@ function sleep(ms: number): Promise<void> {
 
 export function resolvePublishVariantIds(
   listing: { variants?: Array<{ printifyVariantId?: string | null }> },
-  draft: { store?: { template?: { enabledVariantIds?: number[] | null } | null } | null },
+  draft: any,
+  template?: any,
 ): number[] {
   const listingVariantIds = (listing.variants ?? [])
     .map((variant) => Number(variant.printifyVariantId))
@@ -503,7 +515,7 @@ export function resolvePublishVariantIds(
 
   if (listingVariantIds.length > 0) return Array.from(new Set(listingVariantIds));
 
-  const templateVariantIds = draft.store?.template?.enabledVariantIds ?? [];
+  const templateVariantIds = template?.enabledVariantIds ?? draft.template?.enabledVariantIds ?? [];
   return templateVariantIds.length > 0 ? templateVariantIds : [1];
 }
 

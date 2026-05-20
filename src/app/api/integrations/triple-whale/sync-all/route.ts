@@ -8,8 +8,8 @@ export async function POST() {
   if (response) return response;
 
   const credentials = await prisma.tripleWhaleCredential.findMany({
-    where: { store: { tenantId: session.tenantId, deletedAt: null } },
-    select: { storeId: true },
+    where: { tenantId: session.tenantId },
+    select: { id: true },
   });
   const queue = getTripleWhaleSyncQueue();
 
@@ -17,8 +17,8 @@ export async function POST() {
     credentials.map((credential) =>
       queue.add(
         "sync-store",
-        { storeId: credential.storeId, tenantId: session.tenantId },
-        { jobId: `tw-sync-${credential.storeId}-${Date.now()}` },
+        { credentialId: credential.id, tenantId: session.tenantId },
+        { jobId: `tw-sync-${credential.id}-${Date.now()}` },
       ),
     ),
   );

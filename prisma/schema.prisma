@@ -22,6 +22,7 @@ model Tenant {
   wizardDrafts      WizardDraft[]
   rolePermissions   TenantRolePermission[]
   inkhubCredential  InkhubCredential?
+  twCredentials     TripleWhaleCredential[]
 
   @@map("tenants")
 }
@@ -209,11 +210,9 @@ model Store {
   printifyShop PrintifyShop?         @relation(fields: [printifyShopId], references: [id], onDelete: SetNull)
   credentials  StoreCredentials?
   colors       StoreColor[]
-  template     StoreMockupTemplate?  // 1:1 — @@unique([storeId])
+  templates    StoreMockupTemplate[]
   wizardDrafts WizardDraft[]
   listings     Listing[]
-  twCredential TripleWhaleCredential?
-  twDailyStats TripleWhaleDailyStat[]
 
   @@unique([tenantId, shopifyDomain])
   @@index([tenantId, status])
@@ -248,7 +247,8 @@ model StoreColor {
   enabled         Boolean  @default(true)
   sortOrder       Int      @default(0) @map("sort_order")
 
-  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store          Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  templateColors TemplateColor[]
 
   @@unique([storeId, name])
   @@index([storeId])
@@ -266,6 +266,7 @@ model StoreMockupTemplate {
   previewUrl              String?          @map("preview_url")
   position                TemplatePosition @default(FRONT)
   isDefault               Boolean          @default(false) @map("is_default")
+  sortOrder               Int              @default(0) @map("sort_order")
   // Phase 6.10 — Template-level preset fields
   enabledVariantIds       Int[]            @default([]) @map("enabled_variant_ids")
   enabledSizes            String[]         @default([]) @map("enabled_sizes")
@@ -279,10 +280,27 @@ model StoreMockupTemplate {
   blueprintImageUrl       String?          @map("blueprint_image_url")
   blueprintBrand          String?          @map("blueprint_brand")
 
-  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store        Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  colors       TemplateColor[]
+  listings     Listing[]
+  wizardDrafts WizardDraft[]
 
-  @@unique([storeId]) // 1 store = 1 template config
+  @@index([storeId])
   @@map("store_mockup_templates")
+}
+
+model TemplateColor {
+  id         String @id @default(cuid())
+  templateId String @map("template_id")
+  colorId    String @map("color_id")
+  sortOrder  Int    @default(0) @map("sort_order")
+
+  template StoreMockupTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  color    StoreColor          @relation(fields: [colorId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, colorId])
+  @@index([templateId])
+  @@map("template_colors")
 }
 
 enum TemplatePosition {
@@ -366,6 +384,8 @@ model WizardDraft {
   design     Design?     @relation(fields: [designId], references: [id])
   tenant     Tenant      @relation(fields: [tenantId], references: [id])
   store      Store?      @relation(fields: [storeId], references: [id])
+  templateId String?     @map("template_id")
+  template   StoreMockupTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
   @@index([tenantId, updatedAt])
   @@map("wizard_drafts")
@@ -535,6 +555,7 @@ model Listing {
   tenantId          String        @map("tenant_id")
   storeId           String?       @map("store_id")
   designId          String?       @map("design_id")
+  templateId        String?       @map("template_id")
   wizardDraftId     String?       @unique @map("wizard_draft_id")
   shopifyProductId  String?       @map("shopify_product_id")
   printifyProductId String?       @map("printify_product_id")
@@ -548,7 +569,8 @@ model Listing {
   createdBy         String        @map("created_by")
   createdAt         DateTime      @default(now()) @map("created_at")
 
-  store       Store?         @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  store       Store?               @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  template    StoreMockupTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   variants    ListingVariant[]
   publishJobs PublishJob[]
 
@@ -719,24 +741,28 @@ model PrintifyVariantCache {
 }
 
 model TripleWhaleCredential {
-  storeId         String    @id @map("store_id")
-  apiKeyEncrypted Bytes     @map("api_key_encrypted")
-  encryptionKeyId String    @map("encryption_key_id")
-  customName      String    @map("custom_name")
-  lastSyncedAt    DateTime? @map("last_synced_at")
-  syncError       String?   @map("sync_error")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  id              String                 @id @default(cuid())
+  tenantId        String                 @map("tenant_id")
+  shopDomain      String                 @map("shop_domain")
+  customName      String                 @map("custom_name")
+  apiKeyEncrypted Bytes                  @map("api_key_encrypted")
+  encryptionKeyId String                 @map("encryption_key_id")
+  lastSyncedAt    DateTime?              @map("last_synced_at")
+  syncError       String?                @map("sync_error")
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
 
-  store      Store                  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  tenant     Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   dailyStats TripleWhaleDailyStat[]
 
+  @@unique([tenantId, shopDomain])
+  @@index([tenantId])
   @@map("triple_whale_credentials")
 }
 
 model TripleWhaleDailyStat {
   id              String   @id @default(cuid())
-  storeId         String   @map("store_id")
+  credentialId    String   @map("credential_id")
   date            DateTime @db.Date
   orderRevenue    Decimal  @db.Decimal(12, 2) @map("order_revenue")
   netProfit       Decimal  @db.Decimal(12, 2) @map("net_profit")
@@ -749,10 +775,9 @@ model TripleWhaleDailyStat {
   totalCost       Decimal  @db.Decimal(12, 2) @map("total_cost")
   syncedAt        DateTime @default(now()) @map("synced_at")
 
-  store      Store                 @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  credential TripleWhaleCredential @relation(fields: [storeId], references: [storeId], onDelete: Cascade, map: "triple_whale_daily_stats_credential_store_id_fkey")
+  credential TripleWhaleCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
 
-  @@unique([storeId, date])
-  @@index([storeId, date])
+  @@unique([credentialId, date])
+  @@index([credentialId, date])
   @@map("triple_whale_daily_stats")
 }

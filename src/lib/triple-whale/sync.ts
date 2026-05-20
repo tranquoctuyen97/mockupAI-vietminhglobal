@@ -5,14 +5,14 @@ import { fetchSummaryData } from "./client";
 
 const BACKFILL_DAYS = 90;
 
-export async function syncStore(storeId: string): Promise<void> {
+export async function syncStore(credentialId: string): Promise<void> {
   const credential = await prisma.tripleWhaleCredential.findUnique({
-    where: { storeId },
-    include: { store: { include: { tenant: true } } },
+    where: { id: credentialId },
+    include: { tenant: true },
   });
-  if (!credential) throw new Error(`No Triple Whale credential for store ${storeId}`);
+  if (!credential) throw new Error(`No Triple Whale credential for ID ${credentialId}`);
 
-  const timezone = credential.store.tenant.twTimezone;
+  const timezone = credential.tenant.twTimezone ?? "America/Los_Angeles";
   const now = new Date();
   const today = formatInTimeZone(now, timezone, "yyyy-MM-dd");
   const startDate = credential.lastSyncedAt
@@ -25,11 +25,14 @@ export async function syncStore(storeId: string): Promise<void> {
 
   if (startDate > today) return;
 
+  const todayHour = Number(formatInTimeZone(now, timezone, "H"));
+
   const records = await fetchSummaryData({
     apiKey: decrypt(credential.apiKeyEncrypted),
-    shopDomain: credential.store.shopifyDomain,
+    shopDomain: credential.shopDomain,
     startDate,
     endDate: today,
+    todayHour,
   });
 
   for (const record of records) {
@@ -37,9 +40,9 @@ export async function syncStore(storeId: string): Promise<void> {
     const date = fromZonedTime(`${record.date}T00:00:00`, timezone);
 
     await prisma.tripleWhaleDailyStat.upsert({
-      where: { storeId_date: { storeId, date } },
+      where: { credentialId_date: { credentialId, date } },
       create: {
-        storeId,
+        credentialId,
         date,
         orderRevenue: record.orderRevenue,
         netProfit: record.netProfit,
@@ -67,22 +70,22 @@ export async function syncStore(storeId: string): Promise<void> {
   }
 
   await prisma.tripleWhaleCredential.update({
-    where: { storeId },
+    where: { id: credentialId },
     data: { lastSyncedAt: new Date(), syncError: null },
   });
 }
 
 export async function syncAllStoresForTenant(tenantId: string): Promise<void> {
   const credentials = await prisma.tripleWhaleCredential.findMany({
-    where: { store: { tenantId, deletedAt: null } },
-    select: { storeId: true },
+    where: { tenantId },
+    select: { id: true },
   });
-  await Promise.allSettled(credentials.map((credential) => syncStore(credential.storeId)));
+  await Promise.allSettled(credentials.map((credential) => syncStore(credential.id)));
 }
 
-export async function handleSyncError(storeId: string, error: unknown): Promise<void> {
+export async function handleSyncError(credentialId: string, error: unknown): Promise<void> {
   await prisma.tripleWhaleCredential.update({
-    where: { storeId },
+    where: { id: credentialId },
     data: { syncError: error instanceof Error ? error.message : String(error) },
   });
 }

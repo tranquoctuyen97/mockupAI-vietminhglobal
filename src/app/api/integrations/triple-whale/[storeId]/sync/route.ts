@@ -7,20 +7,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ storeI
   const { session, response } = await requireFeature("stores");
   if (response) return response;
 
-  const { storeId } = await params;
-  const store = await prisma.store.findFirst({
-    where: { id: storeId, tenantId: session.tenantId, deletedAt: null },
-    include: { twCredential: true },
+  const { storeId: credentialId } = await params;
+  const credential = await prisma.tripleWhaleCredential.findFirst({
+    where: { id: credentialId, tenantId: session.tenantId },
   });
-  if (!store) return NextResponse.json({ error: "Store not found" }, { status: 404 });
-  if (!store.twCredential) {
-    return NextResponse.json({ error: "No Triple Whale credential" }, { status: 400 });
-  }
+  if (!credential) return NextResponse.json({ error: "Credential not found" }, { status: 404 });
 
   await getTripleWhaleSyncQueue().add(
     "sync-store",
-    { storeId, tenantId: session.tenantId },
-    { jobId: `tw-sync-${storeId}-${Date.now()}` },
+    { credentialId, tenantId: session.tenantId },
+    { jobId: `tw-sync-${credentialId}-${Date.now()}` },
   );
 
   return NextResponse.json({ success: true, queued: true });

@@ -25,17 +25,17 @@ export async function GET(req: Request) {
   const rows = await prisma.tripleWhaleDailyStat.findMany({
     where: {
       date: { gte: fromUtc, lte: toUtc },
-      store: { tenantId: session.tenantId, deletedAt: null },
+      credential: { tenantId: session.tenantId },
     },
     include: {
-      store: {
+      credential: {
         select: {
-          shopifyDomain: true,
-          twCredential: { select: { customName: true } },
+          shopDomain: true,
+          customName: true,
         },
       },
     },
-    orderBy: [{ date: "desc" }, { storeId: "asc" }],
+    orderBy: [{ date: "desc" }, { credentialId: "asc" }],
     take: 500,
   });
 
@@ -43,8 +43,8 @@ export async function GET(req: Request) {
     rows: rows.map((row) => ({
       id: row.id,
       date: formatInTimeZone(row.date, timezone, "yyyy-MM-dd"),
-      shopDomain: row.store.shopifyDomain,
-      customName: row.store.twCredential?.customName ?? row.store.shopifyDomain,
+      shopDomain: row.credential.shopDomain,
+      customName: row.credential.customName,
       orderRevenue: Number(row.orderRevenue),
       netProfit: Number(row.netProfit),
       netMargin: Number(row.netMargin),

@@ -22,13 +22,13 @@ export async function GET(req: Request) {
   const fromUtc = fromZonedTime(`${from}T00:00:00`, timezone);
   const toUtc = fromZonedTime(`${to}T23:59:59`, timezone);
 
-  const stores = await prisma.store.findMany({
-    where: { tenantId: session.tenantId, deletedAt: null },
+  const credentials = await prisma.tripleWhaleCredential.findMany({
+    where: { tenantId: session.tenantId },
     select: {
       id: true,
-      shopifyDomain: true,
-      twCredential: { select: { customName: true } },
-      twDailyStats: {
+      shopDomain: true,
+      customName: true,
+      dailyStats: {
         where: { date: { gte: fromUtc, lte: toUtc } },
         select: {
           orderRevenue: true,
@@ -44,10 +44,10 @@ export async function GET(req: Request) {
     },
   });
 
-  const perStore = stores
-    .filter((store) => store.twCredential && store.twDailyStats.length > 0)
-    .map((store) => {
-      const agg = store.twDailyStats.reduce(
+  const perStore = credentials
+    .filter((c) => c.dailyStats.length > 0)
+    .map((c) => {
+      const agg = c.dailyStats.reduce(
         (acc, dailyStat) => ({
           orderRevenue: acc.orderRevenue + Number(dailyStat.orderRevenue),
           netProfit: acc.netProfit + Number(dailyStat.netProfit),
@@ -71,9 +71,9 @@ export async function GET(req: Request) {
       );
 
       return {
-        storeId: store.id,
-        shopifyDomain: store.shopifyDomain,
-        customName: store.twCredential?.customName ?? store.shopifyDomain,
+        credentialId: c.id,
+        shopDomain: c.shopDomain,
+        customName: c.customName,
         ...agg,
         netMargin: agg.orderRevenue > 0 ? agg.netProfit / agg.orderRevenue : 0,
       };

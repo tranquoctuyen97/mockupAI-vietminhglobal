@@ -46,7 +46,11 @@ export async function PATCH(
 
     const draft = await db.wizardDraft.findUnique({
       where: { id: draftId },
-      include: { design: true, store: { include: { template: true } } },
+      include: {
+        design: true,
+        template: true,
+        store: true,
+      },
     });
 
     if (!draft) {
@@ -57,12 +61,20 @@ export async function PATCH(
       return NextResponse.json({ error: "Draft has no design" }, { status: 400 });
     }
 
+    // Get active template
+    let template = draft.template;
+    if (!template && draft.storeId) {
+      template = await db.storeMockupTemplate.findFirst({
+        where: { storeId: draft.storeId, isDefault: true },
+      });
+    }
+
     // 1. Get print area (fallback if not synced)
     let printArea = DEFAULT_PRINT_AREA;
-    if (draft.store?.template?.printifyBlueprintId) {
+    if (template?.printifyBlueprintId) {
       const dbArea = await db.blueprintPrintArea.findFirst({
         where: {
-          printifyBlueprintId: draft.store.template.printifyBlueprintId,
+          printifyBlueprintId: template.printifyBlueprintId,
           position: view.toUpperCase() as any, // Simple mapping for now
         },
       });
@@ -102,7 +114,7 @@ export async function PATCH(
     }
 
     // 4. Transform and save placement data
-    const basePlacementData = draft.placementOverride ?? draft.store?.template?.defaultPlacement;
+    const basePlacementData = draft.placementOverride ?? template?.defaultPlacement;
     const placementData = setPlacementForView(
       normalizePlacementData(basePlacementData, true),
       view,

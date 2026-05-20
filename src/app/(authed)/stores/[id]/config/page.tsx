@@ -15,6 +15,12 @@ import {
   Move,
   Link2,
   Ruler,
+  Trash2,
+  Copy,
+  Star,
+  Plus,
+  Search,
+  Edit,
 } from "lucide-react";
 import Link from "next/link";
 import { MultiViewPlacementEditor } from "@/components/placement/MultiViewPlacementEditor";
@@ -23,7 +29,39 @@ import {
   formatPlacementViewCount,
   formatPlacementViewDetails,
   normalizePlacementData,
+  getEnabledViews,
+  createPlacementDataWithFront,
+  VIEW_LABELS,
 } from "@/lib/placement/views";
+
+interface TemplateDetail {
+  id: string;
+  name: string;
+  printifyBlueprintId: number;
+  printifyPrintProviderId: number;
+  blueprintTitle: string;
+  printProviderTitle: string;
+  enabledVariantIds: number[];
+  enabledSizes: string[];
+  position: "FRONT" | "BACK" | "SLEEVE";
+  defaultPlacement: unknown;
+  defaultAspectRatio: string;
+  storePresetSnapshot: unknown;
+  isDefault: boolean;
+  sortOrder: number;
+  blueprintImageUrl?: string | null;
+  blueprintBrand?: string | null;
+  colors: Array<{
+    id: string;
+    templateId: string;
+    colorId: string;
+    color: {
+      id: string;
+      name: string;
+      hex: string;
+    };
+  }>;
+}
 
 interface StoreDetail {
   id: string;
@@ -35,19 +73,7 @@ interface StoreDetail {
   defaultPriceUsd: number | string;
   publishMode: string;
   colors: Array<{ id: string; name: string; hex: string; printifyColorId: string | null; enabled: boolean; sortOrder: number }>;
-  template: {
-    id: string;
-    name: string;
-    printifyBlueprintId: number;
-    printifyPrintProviderId: number;
-    blueprintTitle: string;
-    printProviderTitle: string;
-    enabledVariantIds: number[];
-    position: string;
-    defaultPlacement: unknown;
-    defaultAspectRatio: string;
-    storePresetSnapshot: unknown;
-  } | null;
+  templates: TemplateDetail[];
   presetStatus: {
     ready: boolean;
     missing: string[];
@@ -71,32 +97,26 @@ interface SizeOption {
   costDeltaCents: number;
 }
 
-type Tab = "printify" | "blueprint" | "colors" | "placement" | "overview";
+type Tab = "printify" | "templates" | "overview";
 
 /* ========== Tab status helpers ========== */
 function getTabStatus(store: StoreDetail, tab: Tab): "done" | "warn" | "none" {
   switch (tab) {
     case "printify": return store.printifyShopId ? "done" : "warn";
-    case "blueprint": return (store.template?.printifyBlueprintId && store.template?.printifyPrintProviderId) ? "done" : "warn";
-    case "colors": return store.colors.filter(c => c.enabled !== false).length > 0 ? "done" : "warn";
-    case "placement": return store.template?.defaultPlacement ? "done" : "warn";
+    case "templates": return (store.templates.length > 0 && store.presetStatus.ready) ? "done" : "warn";
     case "overview": return "none";
   }
 }
 
 function getFirstIncompleteTab(store: StoreDetail): Tab {
   if (!store.printifyShopId) return "printify";
-  if (!store.template?.printifyBlueprintId) return "blueprint";
-  if (!store.colors.length) return "colors";
-  if (!store.template?.defaultPlacement) return "placement";
+  if (store.templates.length === 0 || !store.presetStatus.ready) return "templates";
   return "overview";
 }
 
 const TABS: { key: Tab; label: string; icon: typeof Link2 }[] = [
   { key: "printify", label: "Printify", icon: Link2 },
-  { key: "blueprint", label: "Blueprint", icon: Package },
-  { key: "colors", label: "Variants", icon: Palette },
-  { key: "placement", label: "Placement", icon: Move },
+  { key: "templates", label: "Templates", icon: Package },
   { key: "overview", label: "Tổng quan", icon: RefreshCw },
 ];
 
@@ -224,16 +244,9 @@ function StoreConfigContent() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "printify" && <PrintifySection store={store} onSave={() => refreshAndGoTo("blueprint")} />}
-      {activeTab === "blueprint" && <BlueprintSection store={store} onSave={() => refreshAndGoTo("colors")} />}
-      {activeTab === "colors" && (
-        <>
-          <ColorsSection store={store} onSave={() => refreshAndGoTo("placement")} />
-          <SizesSubSection store={store} onRefreshStore={fetchStore} />
-        </>
-      )}
-      {activeTab === "placement" && <PlacementSection store={store} onSave={() => refreshAndGoTo("overview")} />}
-      {activeTab === "overview" && <OverviewTab store={store} onRefresh={fetchStore} />}
+      {activeTab === "printify" && <PrintifySection store={store} onSave={() => refreshAndGoTo("templates")} />}
+      {activeTab === "templates" && <TemplatesSection store={store} onRefreshStore={fetchStore} />}
+      {activeTab === "overview" && <OverviewTab store={store} onRefresh={fetchStore} onGoToTab={setActiveTab} />}
     </div>
   );
 }
@@ -247,7 +260,15 @@ export default function StoreConfigPage() {
 }
 
 /* ========== Tổng quan Tab — connection info + inline test (Fix F2/F6/F8) ========== */
-function OverviewTab({ store, onRefresh }: { store: StoreDetail; onRefresh: () => void }) {
+function OverviewTab({
+  store,
+  onRefresh,
+  onGoToTab,
+}: {
+  store: StoreDetail;
+  onRefresh: () => void;
+  onGoToTab: (tab: Tab) => void;
+}) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ shopify?: { ok: boolean; error?: string }; printify?: { ok: boolean; error?: string } } | null>(null);
 
@@ -306,9 +327,66 @@ function OverviewTab({ store, onRefresh }: { store: StoreDetail; onRefresh: () =
         )}
       </div>
 
-      <button onClick={handleTest} disabled={testing} className="btn btn-secondary">
+      <button onClick={handleTest} disabled={testing} className="btn btn-secondary" style={{ marginBottom: 24 }}>
         {testing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Kiểm tra kết nối
       </button>
+
+      {/* Templates Section in Overview Tab */}
+      <div style={{ marginTop: 24 }}>
+        <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
+          <div className="flex items-center gap-2">
+            <h3 style={{ fontWeight: 700, margin: 0 }}>Templates</h3>
+            <span className="badge badge-success" style={{ fontSize: "0.72rem" }}>{store.templates.length}</span>
+          </div>
+          <button onClick={() => onGoToTab("templates")} className="btn btn-secondary" style={{ fontSize: "0.8rem" }}>
+            Quản lý templates
+          </button>
+        </div>
+        
+        {store.templates.length === 0 ? (
+          <div className="card" style={{ padding: 24, textAlign: "center", opacity: 0.6 }}>
+            Chưa có template nào được cấu hình.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
+            {store.templates.map((t) => {
+              const colorsCount = t.colors?.length ?? 0;
+              const sizesCount = t.enabledSizes?.length ?? 0;
+              const placementCount = getEnabledViews(normalizePlacementData(t.defaultPlacement, false)).length;
+              
+              return (
+                <div key={t.id} className="card" style={{ padding: 16, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                  <div>
+                    <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+                      <div className="flex items-center gap-2">
+                        <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--bg-inset)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.85rem", textTransform: "uppercase" }}>
+                          {t.name[0] || "T"}
+                        </div>
+                        <div>
+                          <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>{t.name}</span>
+                          {t.isDefault && <span className="badge badge-success" style={{ fontSize: "0.6rem", marginLeft: 6 }}>DEFAULT</span>}
+                        </div>
+                      </div>
+                      {/* Decorative toggle */}
+                      <div style={{ display: "flex", alignItems: "center" }}>
+                        <div style={{ width: 32, height: 18, borderRadius: 9, background: t.isDefault ? "var(--color-wise-green)" : "#cbd5e1", padding: 2, display: "flex", justifyContent: t.isDefault ? "flex-end" : "flex-start", cursor: "not-allowed" }}>
+                          <div style={{ width: 14, height: 14, borderRadius: "50%", background: "#fff" }} />
+                        </div>
+                      </div>
+                    </div>
+                    <p style={{ fontSize: "0.8rem", opacity: 0.6, margin: 0 }}>
+                      {t.blueprintTitle || "Chưa cấu hình blueprint"}
+                    </p>
+                    <p style={{ fontSize: "0.75rem", opacity: 0.4, margin: "4px 0 0 0" }}>
+                      {colorsCount} màu · {sizesCount} sizes · {placementCount} placements
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -454,436 +532,748 @@ function PrintifySection({ store, onSave }: { store: StoreDetail; onSave: () => 
   );
 }
 
-/* ========== Colors Tab — Printify-driven checkbox grid ========== */
-function ColorsSection({ store, onSave }: { store: StoreDetail; onSave: () => void }) {
-  const [variantGroups, setVariantGroups] = useState<VariantGroup[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const initialSelected = useMemo(
-    () => new Set(store.colors.filter(c => c.enabled !== false).map(c => c.name)),
-    [store.colors],
-  );
-  const [selected, setSelected] = useState<Set<string>>(new Set(initialSelected));
-  const [colorSearch, setColorSearch] = useState("");
-  const hasTemplate = !!store.template;
+/* ========== Templates Tab — Multi-template list & editor ========== */
+function TemplatesSection({
+  store,
+  onRefreshStore,
+}: {
+  store: StoreDetail;
+  onRefreshStore: () => Promise<any>;
+}) {
+  const [editingTemplate, setEditingTemplate] = useState<TemplateDetail | null>(null);
+  const [originalTemplate, setOriginalTemplate] = useState<TemplateDetail | null>(null);
+  const [tempTemplateData, setTempTemplateData] = useState<TemplateDetail | null>(null);
+  const [editorStep, setEditorStep] = useState<"blueprint" | "variants" | "placement">("blueprint");
+  
+  const [searchQuery, setSearchQuery] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
 
-  useEffect(() => {
-    if (!hasTemplate || !store.template?.printifyBlueprintId || !store.template?.printifyPrintProviderId) return;
-    setLoading(true);
-    const t = store.template;
-    fetch(`/api/stores/${store.id}/catalog?action=variants&blueprintId=${t.printifyBlueprintId}&printProviderId=${t.printifyPrintProviderId}`)
-      .then(async r => {
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error || "Lỗi tải variants");
-        setVariantGroups(d.variantGroups || []);
-      })
-      .catch(e => toast.error(e.message)).finally(() => setLoading(false));
-  }, [store.id, hasTemplate]);
+  const updateTempData = useCallback((newData: Partial<TemplateDetail>) => {
+    setTempTemplateData((prev) => (prev ? { ...prev, ...newData } : null));
+  }, []);
 
-  function toggle(color: string) {
-    setSelected(prev => { const n = new Set(prev); n.has(color) ? n.delete(color) : n.add(color); return n; });
-  }
+  const isDirty = useMemo(() => {
+    if (!tempTemplateData || !originalTemplate) return false;
 
-  async function handleSave() {
-    setSaving(true);
-    try {
-      const sel = variantGroups.filter(g => selected.has(g.color));
-      await fetch(`/api/stores/${store.id}/colors`, { method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ colors: sel.map((g, i) => ({ name: g.color, hex: g.colorHex, printifyColorId: g.printifyColorId, sortOrder: i })) }) });
-      const allIds = sel.flatMap(g => g.variants.map(v => v.id));
-      await fetch(`/api/stores/${store.id}/template`, { method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabledVariantIds: allIds }) });
-      toast.success("Đã lưu màu sắc!"); onSave();
-    } catch { toast.error("Lỗi lưu"); } finally { setSaving(false); }
-  }
+    const keysToCompare: (keyof TemplateDetail)[] = [
+      "name",
+      "printifyBlueprintId",
+      "printifyPrintProviderId",
+      "blueprintTitle",
+      "printProviderTitle",
+      "position",
+      "defaultAspectRatio",
+      "blueprintImageUrl",
+      "blueprintBrand",
+    ];
 
-  if (!hasTemplate || !store.template?.printifyBlueprintId || !store.template?.printifyPrintProviderId) return (
-    <div className="card" style={{ padding: 40, textAlign: "center" }}>
-      <AlertTriangle size={24} style={{ color: "#f59e0b", margin: "0 auto 12px" }} />
-      <p style={{ fontWeight: 600 }}>Chưa có Blueprint</p>
-      <p style={{ opacity: 0.6, fontSize: "0.85rem" }}>Bạn cần chọn Blueprint & Print Provider trước.</p>
-    </div>
-  );
-
-  return (
-    <div>
-      <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
-        <Palette size={18} style={{ opacity: 0.5 }} />
-        <h3 style={{ fontWeight: 700, margin: 0 }}>Màu sắc từ Printify</h3>
-        {selected.size > 0 && <span style={{ fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: 99, background: "rgba(159,232,112,0.15)", color: "var(--color-wise-green)" }}>{selected.size} đã chọn</span>}
-      </div>
-      <p style={{ opacity: 0.5, fontSize: "0.85rem", marginBottom: 16 }}>Chọn màu bạn muốn bán. Dữ liệu từ Printify.</p>
-      {loading ? (
-        <div className="flex items-center gap-2" style={{ padding: 20, opacity: 0.5 }}><Loader2 size={14} className="animate-spin" /> Đang tải variants...</div>
-      ) : variantGroups.length === 0 ? (
-        <div style={{ padding: 16, opacity: 0.4, fontSize: "0.85rem", textAlign: "center" }}>Không có variants</div>
-      ) : (
-        <>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <input
-              className="input"
-              value={colorSearch}
-              onChange={e => setColorSearch(e.target.value)}
-              placeholder="Tìm màu..."
-              style={{ maxWidth: 240, fontSize: "0.82rem" }}
-            />
-            <button type="button" onClick={() => setSelected(new Set(variantGroups.map(g => g.color)))} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "var(--color-wise-green)", fontWeight: 500 }}>Chọn tất cả</button>
-            {selected.size > 0 && <><span style={{ opacity: 0.2 }}>·</span><button type="button" onClick={() => setSelected(new Set())} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "#94a3b8", fontWeight: 500 }}>Bỏ chọn</button></>}
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {variantGroups
-              .filter(g => !colorSearch.trim() || g.color.toLowerCase().includes(colorSearch.toLowerCase()))
-              .map(g => { const on = selected.has(g.color); return (
-              <button key={g.color} type="button" onClick={() => toggle(g.color)} className="flex items-center gap-2" title={`Kích thước: ${g.sizes.join(", ")}`} style={{ padding: "8px 14px", borderRadius: 10, border: on ? "2px solid var(--color-wise-green)" : "1px solid var(--border-default)", backgroundColor: on ? "rgba(159,232,112,0.08)" : "transparent", cursor: "pointer", fontSize: "0.82rem", fontWeight: on ? 600 : 400, transition: "all 0.12s" }}>
-                <div style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: g.colorHex, border: "1px solid rgba(0,0,0,0.1)", flexShrink: 0 }} />
-                <span>{g.color}</span>
-                <span style={{ opacity: 0.4, fontSize: "0.7rem" }}>({g.sizes.length} sizes)</span>
-                {on && <CheckCircle2 size={13} style={{ color: "var(--color-wise-green)" }} />}
-              </button>
-            ); })}
-          </div>
-          <button onClick={handleSave} disabled={saving || selected.size === 0} className="btn btn-primary" style={{ marginTop: 20 }}>
-            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Lưu màu sắc ({selected.size})
-          </button>
-        </>
-      )}
-    </div>
-  );
-}
-
-/* ========== Sizes Sub-Section (inside Variants tab) ========== */
-function SizesSubSection({ store, onRefreshStore }: { store: StoreDetail; onRefreshStore: () => void }) {
-  const [sizes, setSizes] = useState<SizeOption[]>([]);
-  const [enabledSizes, setEnabledSizes] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [warning, setWarning] = useState<string | null>(null);
-
-  const fetchSizes = useCallback(async () => {
-    if (!store.template?.printifyBlueprintId) return;
-    setLoading(true);
-    setWarning(null);
-    try {
-      const res = await fetch(`/api/stores/${store.id}/sizes`);
-      const data = await res.json();
-      setSizes(data.sizes ?? []);
-      setEnabledSizes(new Set(data.enabledSizes?.length > 0 ? data.enabledSizes : data.sizes?.map((s: SizeOption) => s.size) ?? []));
-      if (data.warning) setWarning(data.warning);
-    } catch {
-      toast.error("Lỗi tải danh sách sizes");
-    } finally {
-      setLoading(false);
+    for (const k of keysToCompare) {
+      if (tempTemplateData[k] !== originalTemplate[k]) return true;
     }
-  }, [store.id, store.template?.printifyBlueprintId]);
 
-  useEffect(() => { fetchSizes(); }, [fetchSizes]);
+    if (JSON.stringify(tempTemplateData.enabledVariantIds) !== JSON.stringify(originalTemplate.enabledVariantIds)) return true;
+    if (JSON.stringify(tempTemplateData.enabledSizes) !== JSON.stringify(originalTemplate.enabledSizes)) return true;
+    if (JSON.stringify(tempTemplateData.defaultPlacement) !== JSON.stringify(originalTemplate.defaultPlacement)) return true;
 
-  function toggleSize(size: string) {
-    setEnabledSizes(prev => {
-      const next = new Set(prev);
-      if (next.has(size)) next.delete(size);
-      else next.add(size);
-      return next;
-    });
+    const tempColors = tempTemplateData.colors?.map((tc) => tc.color.name).sort().join(",") ?? "";
+    const origColors = originalTemplate.colors?.map((tc) => tc.color.name).sort().join(",") ?? "";
+    if (tempColors !== origColors) return true;
+
+    return false;
+  }, [tempTemplateData, originalTemplate]);
+
+  async function handleDuplicate(templateId: string) {
+    try {
+      const res = await fetch(`/api/stores/${store.id}/mockup-templates/${templateId}/duplicate`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        toast.success("Đã nhân bản template thành công!");
+        await onRefreshStore();
+      } else {
+        const err = await res.json();
+        toast.error(err.error || "Lỗi nhân bản template");
+      }
+    } catch {
+      toast.error("Lỗi nhân bản template");
+    }
   }
 
-  async function handleSave() {
-    if (enabledSizes.size === 0) {
-      toast.error("Chọn ít nhất 1 size");
+  async function handleSetDefault(templateId: string) {
+    try {
+      const res = await fetch(`/api/stores/${store.id}/mockup-templates/${templateId}/default`, {
+        method: "PUT",
+      });
+      if (res.ok) {
+        toast.success("Đã đặt làm template mặc định!");
+        await onRefreshStore();
+      } else {
+        const err = await res.json();
+        toast.error(err.error || "Lỗi thiết lập mặc định");
+      }
+    } catch {
+      toast.error("Lỗi thiết lập mặc định");
+    }
+  }
+
+  async function handleDelete(templateId: string) {
+    if (!confirm("Bạn có chắc chắn muốn xoá template này? Thao tác này không thể hoàn tác.")) return;
+    try {
+      const res = await fetch(`/api/stores/${store.id}/mockup-templates/${templateId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        toast.success("Đã xoá template thành công!");
+        await onRefreshStore();
+      } else {
+        const err = await res.json();
+        toast.error(err.error || "Lỗi xoá template");
+      }
+    } catch {
+      toast.error("Lỗi xoá template");
+    }
+  }
+
+  async function handleSaveTemplate() {
+    if (!tempTemplateData) return;
+    if (!tempTemplateData.name.trim()) {
+      toast.error("Vui lòng nhập tên template");
       return;
     }
-    setSaving(true);
+    if (!tempTemplateData.printifyBlueprintId || !tempTemplateData.printifyPrintProviderId) {
+      toast.error("Vui lòng chọn Blueprint và Provider");
+      return;
+    }
+
+    setSavingTemplate(true);
     try {
-      const res = await fetch(`/api/stores/${store.id}/template`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabledSizes: Array.from(enabledSizes) }),
-      });
-      if (res.ok) {
-        toast.success("Đã lưu sizes!");
-        onRefreshStore();
-      } else {
-        const e = await res.json();
-        toast.error(e.error || "Lỗi lưu");
+      // 1. Register selected colors in the store color master list
+      const templateColors = tempTemplateData.colors.map((tc) => tc.color);
+      const existingNames = new Set(store.colors.map((c) => c.name));
+      const newColorsToRegister = templateColors.filter((tc) => !existingNames.has(tc.name));
+      
+      let allStoreColors = [...store.colors];
+
+      if (newColorsToRegister.length > 0) {
+        const colorsRes = await fetch(`/api/stores/${store.id}/colors`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            colors: [
+              ...store.colors.map((c) => ({
+                name: c.name,
+                hex: c.hex,
+                printifyColorId: c.printifyColorId,
+                enabled: c.enabled,
+                sortOrder: c.sortOrder,
+              })),
+              ...newColorsToRegister.map((c, i) => ({
+                name: c.name,
+                hex: c.hex,
+                printifyColorId: null,
+                enabled: true,
+                sortOrder: store.colors.length + i,
+              })),
+            ],
+          }),
+        });
+
+        if (colorsRes.ok) {
+          const data = await colorsRes.json();
+          allStoreColors = data.colors;
+        }
       }
+
+      // Map color names to store color IDs
+      const colorIds = tempTemplateData.colors
+        .map((tc) => allStoreColors.find((c) => c.name === tc.color.name)?.id)
+        .filter((id): id is string => !!id);
+
+      // 2. Save template details
+      const isNew = tempTemplateData.id === "new";
+      const url = isNew
+        ? `/api/stores/${store.id}/mockup-templates`
+        : `/api/stores/${store.id}/mockup-templates/${tempTemplateData.id}`;
+      const method = isNew ? "POST" : "PATCH";
+
+      const payload = {
+        name: tempTemplateData.name,
+        printifyBlueprintId: tempTemplateData.printifyBlueprintId,
+        printifyPrintProviderId: tempTemplateData.printifyPrintProviderId,
+        blueprintTitle: tempTemplateData.blueprintTitle,
+        printProviderTitle: tempTemplateData.printProviderTitle,
+        enabledVariantIds: tempTemplateData.enabledVariantIds,
+        enabledSizes: tempTemplateData.enabledSizes,
+        defaultPlacement: tempTemplateData.defaultPlacement,
+        colorIds,
+        blueprintImageUrl: tempTemplateData.blueprintImageUrl,
+        blueprintBrand: tempTemplateData.blueprintBrand,
+        position: tempTemplateData.position,
+        defaultAspectRatio: tempTemplateData.defaultAspectRatio,
+        storePresetSnapshot: tempTemplateData.storePresetSnapshot,
+      };
+
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        toast.success(isNew ? "Đã tạo template thành công!" : "Đã cập nhật template thành công!");
+        setEditingTemplate(null);
+        setTempTemplateData(null);
+        setOriginalTemplate(null);
+        await onRefreshStore();
+      } else {
+        const err = await res.json();
+        toast.error(err.error || "Lỗi lưu template");
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("Có lỗi xảy ra");
     } finally {
-      setSaving(false);
+      setSavingTemplate(false);
     }
   }
 
-  async function handleRefreshPrices() {
-    setRefreshing(true);
-    try {
-      const res = await fetch(`/api/stores/${store.id}/variant-cache/refresh`, { method: "POST" });
-      if (res.ok) {
-        toast.success("Đã cập nhật giá từ Printify!");
-        await fetchSizes();
-      } else {
-        const e = await res.json();
-        toast.error(e.error || "Lỗi refresh");
-      }
-    } finally {
-      setRefreshing(false);
-    }
-  }
+  // Set local state when editing template starts
+  const startEditing = useCallback((template: TemplateDetail) => {
+    setEditingTemplate(template);
+    setOriginalTemplate(template);
+    setTempTemplateData(JSON.parse(JSON.stringify(template)));
+    setEditorStep("blueprint");
+  }, []);
 
-  if (!store.template?.printifyBlueprintId) return null;
-
-  return (
-    <div style={{ marginTop: 28 }}>
-      <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
-        <Ruler size={18} style={{ opacity: 0.5 }} />
-        <h3 style={{ fontWeight: 700, margin: 0 }}>Kích thước</h3>
-        {enabledSizes.size > 0 && (
-          <span style={{ fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: 99, background: "rgba(159,232,112,0.15)", color: "var(--color-wise-green)" }}>
-            {enabledSizes.size} đã chọn
-          </span>
-        )}
-        <div style={{ marginLeft: "auto" }}>
-          <button
-            onClick={handleRefreshPrices}
-            disabled={refreshing}
-            className="flex items-center gap-1"
-            style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "var(--color-wise-green)", fontWeight: 500 }}
-          >
-            <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
-            Refresh giá
-          </button>
-        </div>
-      </div>
-      <p style={{ opacity: 0.5, fontSize: "0.85rem", marginBottom: 12 }}>
-        Tick các size store này bán. Seller có thể bỏ tick thêm khi tạo listing.
-      </p>
-
-      {warning && (
-        <div className="flex items-center gap-2" style={{ padding: "8px 14px", marginBottom: 12, borderRadius: 8, background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)", fontSize: "0.82rem" }}>
-          <AlertTriangle size={14} style={{ color: "#f59e0b", flexShrink: 0 }} />
-          <span>{warning}</span>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="flex items-center gap-2" style={{ padding: 20, opacity: 0.5 }}>
-          <Loader2 size={14} className="animate-spin" /> Đang tải sizes...
-        </div>
-      ) : sizes.length === 0 ? (
-        <div style={{ padding: 16, opacity: 0.4, fontSize: "0.85rem", textAlign: "center" }}>Không có sizes</div>
-      ) : (
-        <>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <button type="button" onClick={() => setEnabledSizes(new Set(sizes.filter(s => s.isAvailable).map(s => s.size)))} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "var(--color-wise-green)", fontWeight: 500 }}>
-              Chọn tất cả
-            </button>
-            {enabledSizes.size > 0 && (
-              <>
-                <span style={{ opacity: 0.2 }}>·</span>
-                <button type="button" onClick={() => setEnabledSizes(new Set())} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "#94a3b8", fontWeight: 500 }}>
-                  Bỏ chọn
-                </button>
-              </>
-            )}
-          </div>
-
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {sizes.map(s => {
-              const on = enabledSizes.has(s.size);
-              const disabled = !s.isAvailable;
-              return (
-                <button
-                  key={s.size}
-                  type="button"
-                  onClick={() => !disabled && toggleSize(s.size)}
-                  className="flex items-center gap-2"
-                  title={disabled ? "Hết hàng tại provider này" : `${s.availableColors} màu available`}
-                  style={{
-                    padding: "8px 16px",
-                    borderRadius: 10,
-                    border: on ? "2px solid var(--color-wise-green)" : "1px solid var(--border-default)",
-                    backgroundColor: disabled ? "rgba(148,163,184,0.08)" : on ? "rgba(159,232,112,0.08)" : "transparent",
-                    cursor: disabled ? "not-allowed" : "pointer",
-                    opacity: disabled ? 0.4 : 1,
-                    fontSize: "0.82rem",
-                    fontWeight: on ? 600 : 400,
-                    transition: "all 0.12s",
-                    textDecoration: disabled ? "line-through" : "none",
-                  }}
-                >
-                  <span>{s.size}</span>
-                  {s.costDeltaCents > 0 && (
-                    <span style={{ fontSize: "0.7rem", color: "#f59e0b", fontWeight: 600 }}>
-                      +${(s.costDeltaCents / 100).toFixed(2)}
-                    </span>
-                  )}
-                  {on && !disabled && <CheckCircle2 size={13} style={{ color: "var(--color-wise-green)" }} />}
-                  {disabled && (
-                    <span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: 600 }}>Hết hàng</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          <button
-            onClick={handleSave}
-            disabled={saving || enabledSizes.size === 0}
-            className="btn btn-primary"
-            style={{ marginTop: 16 }}
-          >
-            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-            {" "}Lưu sizes ({enabledSizes.size})
-          </button>
-        </>
-      )}
-    </div>
-  );
-}
-
-/* ========== Blueprint Tab (Phase 6.10: select blueprint + provider) ========== */
-function BlueprintSection({ store, onSave }: { store: StoreDetail; onSave: () => void }) {
-  const savedBpId = store.template?.printifyBlueprintId ?? null;
-  const savedPpId = store.template?.printifyPrintProviderId ?? null;
-  const savedBpTitle = store.template?.blueprintTitle || "";
-  const savedPpTitle = store.template?.printProviderTitle || "";
-
-  const [blueprints, setBlueprints] = useState<Array<{ id: number; title: string; brand: string; images: string[] }>>([]);
-  const [providers, setProviders] = useState<Array<{ id: number; title: string }>>([]);
-  const [selectedBp, setSelectedBp] = useState<number | null>(savedBpId);
-  const [selectedPp, setSelectedPp] = useState<number | null>(savedPpId);
-  const [loadingBp, setLoadingBp] = useState(false);
-  const [loadingPp, setLoadingPp] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [searchBp, setSearchBp] = useState("");
-  const [searchPp, setSearchPp] = useState("");
-
-  // Collapse pickers khi đã có giá trị saved. Click "Đổi" để mở lại.
-  const [editingBp, setEditingBp] = useState(!savedBpId);
-  const [editingPp, setEditingPp] = useState(!savedPpId);
-
-  // Sync lại khi store refetch
-  useEffect(() => {
-    setSelectedBp(savedBpId);
-    setSelectedPp(savedPpId);
-    setEditingBp(!savedBpId);
-    setEditingPp(!savedPpId);
-  }, [savedBpId, savedPpId]);
-
-  useEffect(() => {
-    if (!store.printifyShopId) return;
-    // Chỉ fetch blueprints khi đang edit (hoặc chưa có saved)
-    if (!editingBp) return;
-    setLoadingBp(true);
-    fetch(`/api/stores/${store.id}/catalog?action=blueprints`)
-      .then(r => r.json())
-      .then(d => setBlueprints(d.blueprints || []))
-      .finally(() => setLoadingBp(false));
-  }, [store.id, store.printifyShopId, editingBp]);
-
-  useEffect(() => {
-    if (!selectedBp || !store.printifyShopId) { setProviders([]); return; }
-    if (!editingPp) return;
-    setLoadingPp(true);
-    fetch(`/api/stores/${store.id}/catalog?action=providers&blueprintId=${selectedBp}`)
-      .then(r => r.json())
-      .then(d => setProviders(d.providers || []))
-      .finally(() => setLoadingPp(false));
-  }, [store.id, selectedBp, store.printifyShopId, editingPp]);
-
-  async function handleSave() {
-    if (!selectedBp || !selectedPp) return;
-    setSaving(true);
-
-    // Find the selected blueprint and provider to get their titles
-    const bpTitle = blueprints.find(b => b.id === selectedBp)?.title || savedBpTitle;
-    const ppTitle = providers.find(p => p.id === selectedPp)?.title || savedPpTitle;
-    const name = bpTitle || "Default Blueprint";
-
-    try {
-      const res = await fetch(`/api/stores/${store.id}/mockup-templates`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name,
-          printifyBlueprintId: selectedBp,
-          printifyPrintProviderId: selectedPp,
-          blueprintTitle: bpTitle,
-          printProviderTitle: ppTitle,
-        }),
-      });
-      if (res.ok) {
-        toast.success("Đã lưu Blueprint!");
-        setEditingBp(false);
-        setEditingPp(false);
-        onSave();
-      } else { const e = await res.json(); toast.error(e.error || "Lỗi"); }
-    } finally { setSaving(false); }
-  }
+  // Filter templates list
+  const filteredTemplates = useMemo(() => {
+    return store.templates.filter(
+      (t) =>
+        t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.blueprintTitle.toLowerCase().includes(searchQuery.toLowerCase()),
+    );
+  }, [store.templates, searchQuery]);
 
   if (!store.printifyShopId) {
     return (
       <div className="card" style={{ padding: 40, textAlign: "center" }}>
         <AlertTriangle size={24} style={{ color: "#f59e0b", margin: "0 auto 12px" }} />
         <p style={{ fontWeight: 600 }}>Chưa kết nối Printify</p>
-        <p style={{ opacity: 0.6, fontSize: "0.85rem" }}>Vào tab Printify để gắn shop trước.</p>
+        <p style={{ opacity: 0.6, fontSize: "0.85rem" }}>Vào tab Printify để kết nối shop trước.</p>
       </div>
     );
   }
 
-  const filteredBp = blueprints.filter(b =>
-    !searchBp.trim() || b.title.toLowerCase().includes(searchBp.toLowerCase())
-  );
-  const selectedBpMeta = blueprints.find(b => b.id === selectedBp);
-  const selectedPpMeta = providers.find(p => p.id === selectedPp);
+  // 1. List / Table view
+  if (!editingTemplate || !tempTemplateData) {
+    return (
+      <div>
+        <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
+          <div>
+            <h3 style={{ fontWeight: 700, margin: 0 }}>Templates</h3>
+            <p style={{ opacity: 0.5, fontSize: "0.85rem", marginTop: 4 }}>
+              Quản lý các cấu hình mockup templates cho store này.
+            </p>
+          </div>
+          {store.templates.length > 0 && (
+            <button
+              onClick={() => {
+                const newTpl: TemplateDetail = {
+                  id: "new",
+                  name: "",
+                  printifyBlueprintId: 0,
+                  printifyPrintProviderId: 0,
+                  blueprintTitle: "",
+                  printProviderTitle: "",
+                  enabledVariantIds: [],
+                  enabledSizes: [],
+                  position: "FRONT",
+                  defaultPlacement: null,
+                  defaultAspectRatio: "1:1",
+                  storePresetSnapshot: null,
+                  isDefault: false,
+                  sortOrder: store.templates.length,
+                  colors: [],
+                };
+                startEditing(newTpl);
+              }}
+              className="btn btn-primary flex items-center gap-1"
+            >
+              <Plus size={14} /> New template
+            </button>
+          )}
+        </div>
 
-  // Hiển thị title/brand từ DB khi chưa fetch list
-  const displayBpTitle = selectedBpMeta?.title || savedBpTitle || (selectedBp ? `#${selectedBp}` : "");
-  const displayBpBrand = selectedBpMeta?.brand || "";
-  const displayBpImage = selectedBpMeta?.images?.[0];
-  const displayPpTitle = selectedPpMeta?.title || savedPpTitle || (selectedPp ? `#${selectedPp}` : "");
+        {store.templates.length === 0 ? (
+          <div>
+            <div
+              className="card"
+              style={{
+                padding: "48px 32px",
+                textAlign: "center",
+                border: "2px dashed var(--border-default)",
+                background: "transparent",
+                borderRadius: 12,
+                marginBottom: 24,
+              }}
+            >
+              <Package size={48} style={{ color: "var(--color-wise-green)", opacity: 0.8, margin: "0 auto 16px" }} />
+              <h4 style={{ fontWeight: 700, fontSize: "1.1rem", marginBottom: 8 }}>Chưa có template nào</h4>
+              <p style={{ opacity: 0.6, fontSize: "0.88rem", maxWidth: 500, margin: "0 auto 24px", lineHeight: 1.5 }}>
+                Mỗi template gồm Blueprint + Variants + Placement. Bạn có thể tạo nhiều templates (ví dụ: Tee, Hoodie, Tank) để Wizard dùng lại nhanh.
+              </p>
+              <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+                <button
+                  onClick={() => {
+                    const newTpl: TemplateDetail = {
+                      id: "new",
+                      name: "Default Template",
+                      printifyBlueprintId: 0,
+                      printifyPrintProviderId: 0,
+                      blueprintTitle: "",
+                      printProviderTitle: "",
+                      enabledVariantIds: [],
+                      enabledSizes: [],
+                      position: "FRONT",
+                      defaultPlacement: null,
+                      defaultAspectRatio: "1:1",
+                      storePresetSnapshot: null,
+                      isDefault: true,
+                      sortOrder: 0,
+                      colors: [],
+                    };
+                    startEditing(newTpl);
+                  }}
+                  className="btn btn-primary"
+                >
+                  + Tạo template đầu tiên
+                </button>
+              </div>
+            </div>
 
-  const hasChanges = selectedBp !== savedBpId || selectedPp !== savedPpId;
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginTop: 24 }}>
+              <div className="card" style={{ padding: 16, textAlign: "left" }}>
+                <div style={{ fontWeight: 700, color: "var(--color-wise-green)", fontSize: "1.1rem", marginBottom: 8 }}>1</div>
+                <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 4 }}>Pick blueprint</div>
+                <div style={{ opacity: 0.5, fontSize: "0.75rem" }}>Chọn sản phẩm + provider từ Printify</div>
+              </div>
+              <div className="card" style={{ padding: 16, textAlign: "left" }}>
+                <div style={{ fontWeight: 700, color: "var(--color-wise-green)", fontSize: "1.1rem", marginBottom: 8 }}>2</div>
+                <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 4 }}>Pick variants</div>
+                <div style={{ opacity: 0.5, fontSize: "0.75rem" }}>Chọn màu sắc & kích thước để bán</div>
+              </div>
+              <div className="card" style={{ padding: 16, textAlign: "left" }}>
+                <div style={{ fontWeight: 700, color: "var(--color-wise-green)", fontSize: "1.1rem", marginBottom: 8 }}>3</div>
+                <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 4 }}>Set placement</div>
+                <div style={{ opacity: 0.5, fontSize: "0.75rem" }}>Căn chỉnh vị trí in ấn mặc định</div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <div style={{ position: "relative", flex: 1, maxWidth: 320 }}>
+                <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.4 }} />
+                <input
+                  className="input"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Tìm template..."
+                  style={{ paddingLeft: 30, fontSize: "0.82rem" }}
+                />
+              </div>
+            </div>
+
+            <div className="card" style={{ padding: 0, overflow: "hidden", borderRadius: 12 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+                <thead>
+                  <tr style={{ background: "var(--bg-inset)", borderBottom: "1px solid var(--border-default)" }}>
+                    <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 600 }}>TEMPLATE</th>
+                    <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 600 }}>BLUEPRINT</th>
+                    <th style={{ padding: "12px 16px", textAlign: "center", fontWeight: 600 }}>COLORS</th>
+                    <th style={{ padding: "12px 16px", textAlign: "center", fontWeight: 600 }}>SIZES</th>
+                    <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 600 }}>PLACEMENTS</th>
+                    <th style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600 }}>HÀNH ĐỘNG</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredTemplates.map((t) => {
+                    const enabledViews = getEnabledViews(normalizePlacementData(t.defaultPlacement, false));
+                    return (
+                      <tr
+                        key={t.id}
+                        onClick={() => startEditing(t)}
+                        style={{ borderBottom: "1px solid var(--border-default)", cursor: "pointer", transition: "background 0.1s" }}
+                        className="hover-row"
+                      >
+                        <td style={{ padding: "12px 16px", fontWeight: 600 }}>
+                          <div className="flex items-center gap-2">
+                            <span>{t.name}</span>
+                            {t.isDefault && <span className="badge badge-success" style={{ fontSize: "0.62rem" }}>DEFAULT</span>}
+                          </div>
+                        </td>
+                        <td style={{ padding: "12px 16px", opacity: 0.7 }}>
+                          <div>{t.blueprintTitle}</div>
+                          <div style={{ fontSize: "0.72rem", opacity: 0.5 }}>{t.printProviderTitle}</div>
+                        </td>
+                        <td style={{ padding: "12px 16px", textAlign: "center" }}>
+                          <div style={{ display: "flex", gap: 3, justifyContent: "center", flexWrap: "wrap", maxWidth: 120, margin: "0 auto" }}>
+                            {t.colors.slice(0, 4).map((tc) => (
+                              <div
+                                key={tc.id}
+                                style={{
+                                  width: 14,
+                                  height: 14,
+                                  borderRadius: "50%",
+                                  backgroundColor: tc.color.hex,
+                                  border: "1px solid rgba(0,0,0,0.15)",
+                                }}
+                                title={tc.color.name}
+                              />
+                            ))}
+                            {t.colors.length > 4 && (
+                              <span style={{ fontSize: "0.68rem", opacity: 0.5, alignSelf: "center", marginLeft: 2 }}>
+                                +{t.colors.length - 4}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td style={{ padding: "12px 16px", textAlign: "center", opacity: 0.7 }}>
+                          {t.enabledSizes?.length ?? 0}
+                        </td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {enabledViews.map((view) => (
+                              <span
+                                key={view}
+                                className="badge badge-success"
+                                style={{
+                                  fontSize: "0.68rem",
+                                  padding: "2px 6px",
+                                  backgroundColor: "rgba(159,232,112,0.12)",
+                                  color: "var(--color-wise-green)",
+                                }}
+                              >
+                                {VIEW_LABELS[view] || view}
+                              </span>
+                            ))}
+                            {enabledViews.length === 0 && (
+                              <span style={{ opacity: 0.4, fontSize: "0.8rem" }}>Chưa cấu hình</span>
+                            )}
+                          </div>
+                        </td>
+                        <td style={{ padding: "12px 16px", textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => startEditing(t)}
+                              className="btn btn-secondary"
+                              style={{ padding: "4px 8px", fontSize: "0.75rem" }}
+                              title="Chỉnh sửa template"
+                            >
+                              <Edit size={12} />
+                            </button>
+                            <button
+                              onClick={() => handleDuplicate(t.id)}
+                              className="btn btn-secondary"
+                              style={{ padding: "4px 8px", fontSize: "0.75rem" }}
+                              title="Nhân bản template"
+                            >
+                              <Copy size={12} />
+                            </button>
+                            {!t.isDefault && (
+                              <>
+                                <button
+                                  onClick={() => handleSetDefault(t.id)}
+                                  className="btn btn-secondary"
+                                  style={{ padding: "4px 8px", fontSize: "0.75rem" }}
+                                  title="Đặt làm mặc định"
+                                >
+                                  <Star size={12} />
+                                </button>
+                                <button
+                                  onClick={() => handleDelete(t.id)}
+                                  className="btn btn-secondary"
+                                  style={{ padding: "4px 8px", fontSize: "0.75rem", color: "#ef4444" }}
+                                  title="Xoá template"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // 2. Editor View
+  const hasSelectedBlueprint = tempTemplateData.printifyBlueprintId && tempTemplateData.printifyPrintProviderId;
 
   return (
     <div>
-      <h3 style={{ fontWeight: 700, marginBottom: 16 }}><Package size={18} style={{ display: "inline", marginRight: 8 }} />Blueprint & Provider</h3>
+      {/* Editor Header */}
+      <div className="flex items-center justify-between" style={{ marginBottom: 20 }}>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              setEditingTemplate(null);
+              setTempTemplateData(null);
+            }}
+            style={{ background: "none", border: "none", cursor: "pointer", opacity: 0.5, display: "flex", alignItems: "center", padding: 0 }}
+          >
+            <ArrowLeft size={18} />
+          </button>
+          <span style={{ opacity: 0.5, fontSize: "0.85rem", cursor: "pointer" }} onClick={() => setEditingTemplate(null)}>Templates</span>
+          <span style={{ opacity: 0.3 }}>/</span>
+          <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>
+            {tempTemplateData.name || "Template mới"}
+          </span>
+          {isDirty && (
+            <span className="badge badge-warning" style={{ fontSize: "0.7rem", marginLeft: 8 }}>
+              • Unsaved changes
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setEditingTemplate(null);
+              setTempTemplateData(null);
+            }}
+            className="btn btn-secondary"
+            disabled={savingTemplate}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSaveTemplate}
+            disabled={savingTemplate || !isDirty}
+            className="btn btn-primary"
+          >
+            {savingTemplate ? <Loader2 size={14} className="animate-spin" /> : null} Save template
+          </button>
+        </div>
+      </div>
 
-      {/* Blueprint picker — collapse sau khi chọn */}
+      {/* Editor step layout */}
+      <div style={{ display: "flex", gap: 16, borderBottom: "2px solid var(--border-default)", marginBottom: 24 }}>
+        {(["blueprint", "variants", "placement"] as const).map((step) => {
+          const isActive = editorStep === step;
+          const disabled = step !== "blueprint" && !hasSelectedBlueprint;
+          return (
+            <button
+              key={step}
+              onClick={() => !disabled && setEditorStep(step)}
+              disabled={disabled}
+              style={{
+                padding: "10px 16px",
+                fontWeight: isActive ? 700 : 500,
+                fontSize: "0.84rem",
+                borderStyle: "solid",
+                borderWidth: "0 0 2px 0",
+                borderColor: isActive ? "var(--color-wise-green)" : "transparent",
+                marginBottom: -2,
+                backgroundColor: "transparent",
+                cursor: disabled ? "not-allowed" : "pointer",
+                opacity: disabled ? 0.3 : isActive ? 1 : 0.6,
+                transition: "all 0.15s",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {step === "blueprint" && "1. Blueprint & Provider"}
+              {step === "variants" && "2. Màu sắc & Kích thước"}
+              {step === "placement" && "3. Vị trí in ấn"}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Step Contents */}
+      {editorStep === "blueprint" && (
+        <EditorBlueprintStep
+          store={store}
+          value={tempTemplateData}
+          onChange={updateTempData}
+        />
+      )}
+
+      {editorStep === "variants" && (
+        <EditorVariantsStep
+          store={store}
+          value={tempTemplateData}
+          onChange={updateTempData}
+        />
+      )}
+
+      {editorStep === "placement" && (
+        <EditorPlacementStep
+          store={store}
+          value={tempTemplateData}
+          onChange={updateTempData}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ========== Editor Blueprint Step ========== */
+function EditorBlueprintStep({
+  store,
+  value,
+  onChange,
+}: {
+  store: StoreDetail;
+  value: TemplateDetail;
+  onChange: (data: Partial<TemplateDetail>) => void;
+}) {
+  const [blueprints, setBlueprints] = useState<Array<{ id: number; title: string; brand: string; images: string[] }>>([]);
+  const [providers, setProviders] = useState<Array<{ id: number; title: string }>>([]);
+  const [loadingBp, setLoadingBp] = useState(false);
+  const [loadingPp, setLoadingPp] = useState(false);
+  const [searchBp, setSearchBp] = useState("");
+  const [searchPp, setSearchPp] = useState("");
+
+  const [editingBp, setEditingBp] = useState(!value.printifyBlueprintId);
+  const [editingPp, setEditingPp] = useState(!value.printifyPrintProviderId);
+
+  useEffect(() => {
+    if (!editingBp) return;
+    setLoadingBp(true);
+    fetch(`/api/stores/${store.id}/catalog?action=blueprints`)
+      .then((r) => r.json())
+      .then((d) => setBlueprints(d.blueprints || []))
+      .catch(() => {})
+      .finally(() => setLoadingBp(false));
+  }, [store.id, editingBp]);
+
+  useEffect(() => {
+    if (!value.printifyBlueprintId || !editingPp) {
+      setProviders([]);
+      return;
+    }
+    setLoadingPp(true);
+    fetch(`/api/stores/${store.id}/catalog?action=providers&blueprintId=${value.printifyBlueprintId}`)
+      .then((r) => r.json())
+      .then((d) => setProviders(d.providers || []))
+      .catch(() => {})
+      .finally(() => setLoadingPp(false));
+  }, [store.id, value.printifyBlueprintId, editingPp]);
+
+  const filteredBp = blueprints.filter(
+    (b) => !searchBp.trim() || b.title.toLowerCase().includes(searchBp.toLowerCase()),
+  );
+
+  return (
+    <div>
+      {/* Template Name Input */}
+      <div className="card" style={{ padding: 20, marginBottom: 20 }}>
+        <h4 style={{ fontWeight: 700, margin: "0 0 16px 0" }}>Cài đặt chung</h4>
+        <div style={{ maxWidth: 400 }}>
+          <label style={{ display: "block", fontWeight: 600, marginBottom: 6, fontSize: "0.85rem" }}>Tên Template</label>
+          <input
+            className="input"
+            value={value.name}
+            onChange={(e) => onChange({ name: e.target.value })}
+            placeholder="Ví dụ: Unisex Tee, Premium Hoodie..."
+            style={{ width: "100%" }}
+          />
+        </div>
+      </div>
+
+      <h4 style={{ fontWeight: 700, marginBottom: 16 }}>Chọn sản phẩm từ Printify</h4>
+
+      {/* Blueprint picker */}
       <div style={{ marginBottom: 16 }}>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 6, fontSize: "0.85rem" }}>Blueprint</label>
-        {!editingBp && selectedBp ? (
-          // Compact selected view
+        {!editingBp && value.printifyBlueprintId ? (
           <div className="card flex items-center gap-3" style={{ padding: "10px 14px" }}>
-            {displayBpImage && <img src={displayBpImage} alt="" style={{ width: 40, height: 40, borderRadius: 4, objectFit: "cover" }} />}
+            {value.blueprintImageUrl && (
+              <img
+                src={value.blueprintImageUrl}
+                alt=""
+                style={{ width: 40, height: 40, borderRadius: 4, objectFit: "cover" }}
+              />
+            )}
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{displayBpTitle}</div>
-              {displayBpBrand && <div style={{ fontSize: "0.75rem", opacity: 0.5 }}>{displayBpBrand}</div>}
+              <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{value.blueprintTitle}</div>
+              {value.blueprintBrand && <div style={{ fontSize: "0.75rem", opacity: 0.5 }}>{value.blueprintBrand}</div>}
             </div>
             <CheckCircle2 size={16} style={{ color: "var(--color-wise-green)" }} />
-            <button onClick={() => setEditingBp(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-wise-green)", fontWeight: 600, fontSize: "0.8rem" }}>
+            <button
+              onClick={() => setEditingBp(true)}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-wise-green)", fontWeight: 600, fontSize: "0.8rem" }}
+            >
               Đổi
             </button>
           </div>
         ) : (
-          // Full picker
           <>
-            {savedBpId && (
-              <button onClick={() => { setSelectedBp(savedBpId); setEditingBp(false); }} style={{ display: "block", background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "var(--color-wise-green)", fontWeight: 500, marginBottom: 8, padding: 0 }}>
-                ← Huỷ, giữ blueprint cũ
-              </button>
-            )}
-            <input className="input" value={searchBp} onChange={e => setSearchBp(e.target.value)} placeholder="Tìm blueprint..." style={{ display: "block", width: "100%", maxWidth: 400, marginBottom: 8 }} />
+            <input
+              className="input"
+              value={searchBp}
+              onChange={(e) => setSearchBp(e.target.value)}
+              placeholder="Tìm blueprint..."
+              style={{ display: "block", width: "100%", maxWidth: 400, marginBottom: 8 }}
+            />
             {loadingBp ? (
               <div className="flex items-center gap-2" style={{ padding: 12, opacity: 0.5 }}>
                 <Loader2 size={14} className="animate-spin" /> Đang tải blueprints...
               </div>
             ) : (
-              <div style={{ maxHeight: 320, overflow: "auto", border: "1px solid var(--border-default)", borderRadius: 8 }}>
-                {filteredBp.slice(0, 50).map(bp => (
-                  <button key={bp.id} onClick={() => { setSelectedBp(bp.id); setSelectedPp(null); setEditingBp(false); setEditingPp(true); }}
-                    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px", border: "none", borderBottom: "1px solid var(--border-default)", background: selectedBp === bp.id ? "rgba(159,220,68,0.1)" : "transparent", cursor: "pointer", textAlign: "left" }}>
-                    {bp.images?.[0] && <img src={bp.images[0]} alt="" style={{ width: 36, height: 36, borderRadius: 4, objectFit: "cover" }} />}
-                    <div><div style={{ fontWeight: selectedBp === bp.id ? 700 : 500, fontSize: "0.85rem" }}>{bp.title}</div><div style={{ fontSize: "0.75rem", opacity: 0.5 }}>{bp.brand}</div></div>
-                    {selectedBp === bp.id && <CheckCircle2 size={16} style={{ marginLeft: "auto", color: "var(--color-wise-green)" }} />}
+              <div style={{ maxHeight: 300, overflow: "auto", border: "1px solid var(--border-default)", borderRadius: 8 }}>
+                {filteredBp.slice(0, 50).map((bp) => (
+                  <button
+                    key={bp.id}
+                    onClick={() => {
+                      onChange({
+                        printifyBlueprintId: bp.id,
+                        blueprintTitle: bp.title,
+                        blueprintBrand: bp.brand,
+                        blueprintImageUrl: bp.images?.[0] || "",
+                        printifyPrintProviderId: 0,
+                        printProviderTitle: "",
+                        enabledVariantIds: [],
+                        enabledSizes: [],
+                        colors: [],
+                        defaultPlacement: null,
+                      });
+                      setEditingBp(false);
+                      setEditingPp(true);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      width: "100%",
+                      padding: "10px 12px",
+                      borderStyle: "solid",
+                      borderWidth: "0 0 1px 0",
+                      borderColor: "var(--border-default)",
+                      background: value.printifyBlueprintId === bp.id ? "rgba(159,220,68,0.1)" : "transparent",
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    {bp.images?.[0] && (
+                      <img src={bp.images[0]} alt="" style={{ width: 36, height: 36, borderRadius: 4, objectFit: "cover" }} />
+                    )}
+                    <div>
+                      <div style={{ fontWeight: value.printifyBlueprintId === bp.id ? 700 : 500, fontSize: "0.85rem" }}>
+                        {bp.title}
+                      </div>
+                      <div style={{ fontSize: "0.75rem", opacity: 0.5 }}>{bp.brand}</div>
+                    </div>
+                    {value.printifyBlueprintId === bp.id && (
+                      <CheckCircle2 size={16} style={{ marginLeft: "auto", color: "var(--color-wise-green)" }} />
+                    )}
                   </button>
                 ))}
               </div>
@@ -892,41 +1282,75 @@ function BlueprintSection({ store, onSave }: { store: StoreDetail; onSave: () =>
         )}
       </div>
 
-      {/* Provider picker — collapse sau khi chọn */}
-      {selectedBp && (
+      {/* Provider picker */}
+      {value.printifyBlueprintId && (
         <div style={{ marginBottom: 16 }}>
           <label style={{ display: "block", fontWeight: 600, marginBottom: 6, fontSize: "0.85rem" }}>Print Provider</label>
-          {!editingPp && selectedPp ? (
+          {!editingPp && value.printifyPrintProviderId ? (
             <div className="card flex items-center gap-3" style={{ padding: "10px 14px" }}>
-              <div style={{ flex: 1, fontWeight: 700, fontSize: "0.9rem" }}>{displayPpTitle}</div>
+              <div style={{ flex: 1, fontWeight: 700, fontSize: "0.9rem" }}>{value.printProviderTitle}</div>
               <CheckCircle2 size={16} style={{ color: "var(--color-wise-green)" }} />
-              <button onClick={() => setEditingPp(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-wise-green)", fontWeight: 600, fontSize: "0.8rem" }}>
+              <button
+                onClick={() => setEditingPp(true)}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-wise-green)", fontWeight: 600, fontSize: "0.8rem" }}
+              >
                 Đổi
               </button>
             </div>
           ) : (
             <>
-              {savedPpId && (
-                <button onClick={() => { setSelectedPp(savedPpId); setEditingPp(false); }} style={{ display: "block", background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "var(--color-wise-green)", fontWeight: 500, marginBottom: 8, padding: 0 }}>
-                  ← Huỷ, giữ provider cũ
-                </button>
-              )}
               {loadingPp ? (
                 <div className="flex items-center gap-2" style={{ padding: 12, opacity: 0.5 }}>
                   <Loader2 size={14} className="animate-spin" /> Đang tải providers...
                 </div>
               ) : providers.length === 0 ? (
-                <div style={{ padding: 12, opacity: 0.5, fontSize: "0.85rem" }}>Không có provider</div>
+                <div style={{ padding: 12, opacity: 0.5, fontSize: "0.85rem" }}>Không có provider nào</div>
               ) : (
                 <>
-                  <input className="input" value={searchPp} onChange={e => setSearchPp(e.target.value)} placeholder="Tìm provider..." style={{ display: "block", width: "100%", maxWidth: 400, marginBottom: 8 }} />
-                  <div style={{ maxHeight: 240, overflow: "auto", border: "1px solid var(--border-default)", borderRadius: 8, display: "grid", gap: 0 }}>
+                  <input
+                    className="input"
+                    value={searchPp}
+                    onChange={(e) => setSearchPp(e.target.value)}
+                    placeholder="Tìm provider..."
+                    style={{ display: "block", width: "100%", maxWidth: 400, marginBottom: 8 }}
+                  />
+                  <div style={{ maxHeight: 200, overflow: "auto", border: "1px solid var(--border-default)", borderRadius: 8 }}>
                     {providers
-                      .filter(pp => !searchPp.trim() || pp.title.toLowerCase().includes(searchPp.toLowerCase()))
-                      .map(pp => (
-                        <button key={pp.id} onClick={() => { setSelectedPp(pp.id); setEditingPp(false); }} style={{ padding: "10px 14px", cursor: "pointer", border: "none", borderBottom: "1px solid var(--border-default)", background: selectedPp === pp.id ? "rgba(159,220,68,0.1)" : "transparent", textAlign: "left", display: "flex", alignItems: "center", gap: 8 }}>
-                          <div style={{ fontWeight: selectedPp === pp.id ? 700 : 500, fontSize: "0.85rem", flex: 1 }}>{pp.title}</div>
-                          {selectedPp === pp.id && <CheckCircle2 size={14} style={{ color: "var(--color-wise-green)" }} />}
+                      .filter((pp) => !searchPp.trim() || pp.title.toLowerCase().includes(searchPp.toLowerCase()))
+                      .map((pp) => (
+                        <button
+                          key={pp.id}
+                          onClick={() => {
+                            onChange({
+                              printifyPrintProviderId: pp.id,
+                              printProviderTitle: pp.title,
+                            });
+                            setEditingPp(false);
+                            // Auto trigger template name if empty
+                            if (!value.name) {
+                              onChange({ name: `${value.blueprintTitle} - ${pp.title}` });
+                            }
+                          }}
+                          style={{
+                            padding: "10px 14px",
+                            width: "100%",
+                            cursor: "pointer",
+                            borderStyle: "solid",
+                            borderWidth: "0 0 1px 0",
+                            borderColor: "var(--border-default)",
+                            background: value.printifyPrintProviderId === pp.id ? "rgba(159,220,68,0.1)" : "transparent",
+                            textAlign: "left",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                          }}
+                        >
+                          <div style={{ fontWeight: value.printifyPrintProviderId === pp.id ? 700 : 500, fontSize: "0.85rem", flex: 1 }}>
+                            {pp.title}
+                          </div>
+                          {value.printifyPrintProviderId === pp.id && (
+                            <CheckCircle2 size={14} style={{ color: "var(--color-wise-green)" }} />
+                          )}
                         </button>
                       ))}
                   </div>
@@ -936,68 +1360,390 @@ function BlueprintSection({ store, onSave }: { store: StoreDetail; onSave: () =>
           )}
         </div>
       )}
-
-      {/* Save — chỉ hiện khi có thay đổi */}
-      {hasChanges && selectedBp && selectedPp && (
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
-          <button onClick={handleSave} disabled={saving} className="btn btn-primary">
-            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-            Lưu Blueprint
-          </button>
-          <button onClick={() => { setSelectedBp(savedBpId); setSelectedPp(savedPpId); setEditingBp(false); setEditingPp(false); }} disabled={saving} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.8rem", opacity: 0.7 }}>
-            Huỷ thay đổi
-          </button>
-        </div>
-      )}
     </div>
   );
 }
 
-function PlacementSection({ store, onSave }: { store: StoreDetail; onSave: () => void }) {
-  const [saving, setSaving] = useState(false);
-  const [initialPlacement] = useState<PlacementData>(() =>
-    normalizePlacementData(store.template?.defaultPlacement, true),
-  );
-  const [placementData, setPlacementData] = useState<PlacementData>(() =>
-    normalizePlacementData(store.template?.defaultPlacement, true),
-  );
-  const isDirty = JSON.stringify(initialPlacement) !== JSON.stringify(placementData);
+/* ========== Editor Variants Step ========== */
+function EditorVariantsStep({
+  store,
+  value,
+  onChange,
+}: {
+  store: StoreDetail;
+  value: TemplateDetail;
+  onChange: (data: Partial<TemplateDetail>) => void;
+}) {
+  const [variantGroups, setVariantGroups] = useState<VariantGroup[]>([]);
+  const [loadingVariants, setLoadingVariants] = useState(false);
+  const [colorSearch, setColorSearch] = useState("");
+
+  const [sizes, setSizes] = useState<SizeOption[]>([]);
+  const [loadingSizes, setLoadingSizes] = useState(false);
+  const [refreshingPrices, setRefreshingPrices] = useState(false);
+  const [warning, setWarning] = useState<string | null>(null);
+
+  const selectedColors = useMemo(() => {
+    return new Set(value.colors.map((c) => c.color.name));
+  }, [value.colors]);
+
+  const enabledSizes = useMemo(() => {
+    return new Set(value.enabledSizes || []);
+  }, [value.enabledSizes]);
+
+  // 1. Fetch variant groups (colors data)
+  useEffect(() => {
+    setLoadingVariants(true);
+    fetch(`/api/stores/${store.id}/catalog?action=variants&blueprintId=${value.printifyBlueprintId}&printProviderId=${value.printifyPrintProviderId}`)
+      .then((r) => r.json())
+      .then((d) => setVariantGroups(d.variantGroups || []))
+      .catch(() => toast.error("Không tải được biến thể"))
+      .finally(() => setLoadingVariants(false));
+  }, [store.id, value.printifyBlueprintId, value.printifyPrintProviderId]);
+
+  // 2. Fetch sizes (cost cache lazy loaded)
+  const fetchSizes = useCallback(async () => {
+    setLoadingSizes(true);
+    setWarning(null);
+    try {
+      const res = await fetch(`/api/stores/${store.id}/sizes?blueprintId=${value.printifyBlueprintId}&printProviderId=${value.printifyPrintProviderId}`);
+      const data = await res.json();
+      setSizes(data.sizes ?? []);
+      if (data.warning) setWarning(data.warning);
+    } catch {
+      toast.error("Không tải được kích thước");
+    } finally {
+      setLoadingSizes(false);
+    }
+  }, [store.id, value.printifyBlueprintId, value.printifyPrintProviderId]);
 
   useEffect(() => {
-    setPlacementData(normalizePlacementData(store.template?.defaultPlacement, true));
-  }, [store.template?.defaultPlacement]);
+    fetchSizes();
+  }, [fetchSizes]);
 
-  const bgColor = store.colors.find(c => c.enabled)?.hex || "#EEEEEE";
+  // Propagate changes when colors or sizes toggled
+  const propagateChanges = useCallback((nextColorsSet: Set<string>, nextSizesSet: Set<string>) => {
+    // 1. Calculate color records list for state
+    const nextColors = Array.from(nextColorsSet).map((colorName) => {
+      const gp = variantGroups.find((g) => g.color === colorName);
+      return {
+        id: "",
+        templateId: value.id,
+        colorId: "",
+        color: {
+          id: "",
+          name: colorName,
+          hex: gp?.colorHex || "#EEEEEE",
+        },
+      };
+    });
 
-  if (!store.template) return (
-    <div className="card" style={{ padding: 40, textAlign: "center" }}>
-      <AlertTriangle size={24} style={{ color: "#f59e0b", margin: "0 auto 12px" }} />
-      <p style={{ fontWeight: 600 }}>Chưa có Blueprint</p>
-      <p style={{ opacity: 0.6, fontSize: "0.85rem" }}>Cấu hình Blueprint & Provider trước.</p>
-    </div>
-  );
+    // 2. Calculate enabledVariantIds matching selected colors AND sizes
+    const nextVariantIds = variantGroups
+      .filter((g) => nextColorsSet.has(g.color))
+      .flatMap((g) =>
+        g.variants
+          .filter((v) => {
+            const sizeOpt = Object.entries(v.options).find(([k]) => k.toLowerCase() === "size")?.[1] || "ONE_SIZE";
+            return nextSizesSet.has(String(sizeOpt));
+          })
+          .map((v) => v.id),
+      );
 
-  async function handleSave() {
-    setSaving(true);
+    onChange({
+      colors: nextColors,
+      enabledSizes: Array.from(nextSizesSet),
+      enabledVariantIds: nextVariantIds,
+    });
+  }, [value.id, variantGroups, onChange]);
+
+  function toggleColor(color: string) {
+    const nextColors = new Set(selectedColors);
+    if (nextColors.has(color)) {
+      nextColors.delete(color);
+    } else {
+      nextColors.add(color);
+    }
+    propagateChanges(nextColors, enabledSizes);
+  }
+
+  function toggleSize(size: string) {
+    const nextSizes = new Set(enabledSizes);
+    if (nextSizes.has(size)) {
+      nextSizes.delete(size);
+    } else {
+      nextSizes.add(size);
+    }
+    propagateChanges(selectedColors, nextSizes);
+  }
+
+  async function handleRefreshPrices() {
+    setRefreshingPrices(true);
     try {
-      const res = await fetch(`/api/stores/${store.id}/template`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ defaultPlacement: normalizePlacementData(placementData, false) }),
+      const res = await fetch(`/api/stores/${store.id}/variant-cache/refresh?blueprintId=${value.printifyBlueprintId}&printProviderId=${value.printifyPrintProviderId}`, {
+        method: "POST",
       });
       if (res.ok) {
-        toast.success(`Đã lưu Placement: ${formatPlacementViewDetails(placementData)}`);
-        onSave();
-      } else { const e = await res.json(); toast.error(e.error || "Lỗi"); }
-    } finally { setSaving(false); }
+        toast.success("Đã cập nhật bảng giá từ Printify!");
+        await fetchSizes();
+      } else {
+        const e = await res.json();
+        toast.error(e.error || "Lỗi cập nhật bảng giá");
+      }
+    } catch {
+      toast.error("Lỗi cập nhật bảng giá");
+    } finally {
+      setRefreshingPrices(false);
+    }
   }
 
   return (
     <div>
+      {/* Colors section */}
+      <div style={{ marginBottom: 28 }}>
+        <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
+          <Palette size={18} style={{ opacity: 0.5 }} />
+          <h3 style={{ fontWeight: 700, margin: 0 }}>Màu sắc từ Printify</h3>
+          {selectedColors.size > 0 && (
+            <span
+              className="badge badge-success"
+              style={{ fontSize: "0.72rem", padding: "2px 8px", background: "rgba(159,232,112,0.15)", color: "var(--color-wise-green)" }}
+            >
+              {selectedColors.size} đã chọn
+            </span>
+          )}
+        </div>
+        <p style={{ opacity: 0.5, fontSize: "0.85rem", marginBottom: 16 }}>Chọn các màu bạn muốn bán.</p>
+
+        {loadingVariants ? (
+          <div className="flex items-center gap-2" style={{ padding: 20, opacity: 0.5 }}>
+            <Loader2 size={14} className="animate-spin" /> Đang tải biến thể...
+          </div>
+        ) : variantGroups.length === 0 ? (
+          <div style={{ padding: 16, opacity: 0.4, fontSize: "0.85rem", textAlign: "center" }}>Không tìm thấy màu sắc</div>
+        ) : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <input
+                className="input"
+                value={colorSearch}
+                onChange={(e) => setColorSearch(e.target.value)}
+                placeholder="Tìm màu..."
+                style={{ maxWidth: 240, fontSize: "0.82rem" }}
+              />
+              <button
+                type="button"
+                onClick={() => propagateChanges(new Set(variantGroups.map((g) => g.color)), enabledSizes)}
+                style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "var(--color-wise-green)", fontWeight: 500 }}
+              >
+                Chọn tất cả
+              </button>
+              {selectedColors.size > 0 && (
+                <>
+                  <span style={{ opacity: 0.2 }}>·</span>
+                  <button
+                    type="button"
+                    onClick={() => propagateChanges(new Set(), enabledSizes)}
+                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "#94a3b8", fontWeight: 500 }}
+                  >
+                    Bỏ chọn
+                  </button>
+                </>
+              )}
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {variantGroups
+                .filter((g) => !colorSearch.trim() || g.color.toLowerCase().includes(colorSearch.toLowerCase()))
+                .map((g) => {
+                  const on = selectedColors.has(g.color);
+                  return (
+                    <button
+                      key={g.color}
+                      type="button"
+                      onClick={() => toggleColor(g.color)}
+                      className="flex items-center gap-2"
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: 10,
+                        border: on ? "2px solid var(--color-wise-green)" : "1px solid var(--border-default)",
+                        backgroundColor: on ? "rgba(159,232,112,0.08)" : "transparent",
+                        cursor: "pointer",
+                        fontSize: "0.82rem",
+                        fontWeight: on ? 600 : 400,
+                        transition: "all 0.12s",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 20,
+                          height: 20,
+                          borderRadius: 6,
+                          backgroundColor: g.colorHex,
+                          border: "1px solid rgba(0,0,0,0.1)",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span>{g.color}</span>
+                      <span style={{ opacity: 0.4, fontSize: "0.7rem" }}>({g.sizes.length} sizes)</span>
+                      {on && <CheckCircle2 size={13} style={{ color: "var(--color-wise-green)" }} />}
+                    </button>
+                  );
+                })}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Sizes Section */}
+      <div>
+        <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
+          <Ruler size={18} style={{ opacity: 0.5 }} />
+          <h3 style={{ fontWeight: 700, margin: 0 }}>Kích thước</h3>
+          {enabledSizes.size > 0 && (
+            <span
+              className="badge badge-success"
+              style={{ fontSize: "0.72rem", padding: "2px 8px", background: "rgba(159,232,112,0.15)", color: "var(--color-wise-green)" }}
+            >
+              {enabledSizes.size} đã chọn
+            </span>
+          )}
+          <div style={{ marginLeft: "auto" }}>
+            <button
+              onClick={handleRefreshPrices}
+              disabled={refreshingPrices}
+              className="flex items-center gap-1"
+              style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "var(--color-wise-green)", fontWeight: 500 }}
+            >
+              <RefreshCw size={12} className={refreshingPrices ? "animate-spin" : ""} /> Refresh giá
+            </button>
+          </div>
+        </div>
+        <p style={{ opacity: 0.5, fontSize: "0.85rem", marginBottom: 12 }}>Chọn kích thước muốn bán.</p>
+
+        {warning && (
+          <div
+            className="flex items-center gap-2"
+            style={{
+              padding: "8px 14px",
+              marginBottom: 12,
+              borderRadius: 8,
+              background: "rgba(245,158,11,0.1)",
+              border: "1px solid rgba(245,158,11,0.2)",
+              fontSize: "0.82rem",
+            }}
+          >
+            <AlertTriangle size={14} style={{ color: "#f59e0b", flexShrink: 0 }} />
+            <span>{warning}</span>
+          </div>
+        )}
+
+        {loadingSizes ? (
+          <div className="flex items-center gap-2" style={{ padding: 20, opacity: 0.5 }}>
+            <Loader2 size={14} className="animate-spin" /> Đang tải kích thước...
+          </div>
+        ) : sizes.length === 0 ? (
+          <div style={{ padding: 16, opacity: 0.4, fontSize: "0.85rem", textAlign: "center" }}>Không có kích thước</div>
+        ) : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <button
+                type="button"
+                onClick={() =>
+                  propagateChanges(selectedColors, new Set(sizes.filter((s) => s.isAvailable).map((s) => s.size)))
+                }
+                style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "var(--color-wise-green)", fontWeight: 500 }}
+              >
+                Chọn tất cả khả dụng
+              </button>
+              {enabledSizes.size > 0 && (
+                <>
+                  <span style={{ opacity: 0.2 }}>·</span>
+                  <button
+                    type="button"
+                    onClick={() => propagateChanges(selectedColors, new Set())}
+                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "#94a3b8", fontWeight: 500 }}
+                  >
+                    Bỏ chọn
+                  </button>
+                </>
+              )}
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {sizes.map((s) => {
+                const on = enabledSizes.has(s.size);
+                const disabled = !s.isAvailable;
+                return (
+                  <button
+                    key={s.size}
+                    type="button"
+                    onClick={() => !disabled && toggleSize(s.size)}
+                    className="flex items-center gap-2"
+                    title={disabled ? "Hết hàng tại nhà in này" : `${s.availableColors} màu có sẵn`}
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: 10,
+                      border: on ? "2px solid var(--color-wise-green)" : "1px solid var(--border-default)",
+                      backgroundColor: disabled ? "rgba(148,163,184,0.08)" : on ? "rgba(159,232,112,0.08)" : "transparent",
+                      cursor: disabled ? "not-allowed" : "pointer",
+                      opacity: disabled ? 0.4 : 1,
+                      fontSize: "0.82rem",
+                      fontWeight: on ? 600 : 400,
+                      transition: "all 0.12s",
+                      textDecoration: disabled ? "line-through" : "none",
+                    }}
+                  >
+                    <span>{s.size}</span>
+                    {s.costDeltaCents > 0 && (
+                      <span style={{ fontSize: "0.7rem", color: "#f59e0b", fontWeight: 600 }}>
+                        +${(s.costDeltaCents / 100).toFixed(2)}
+                      </span>
+                    )}
+                    {on && !disabled && <CheckCircle2 size={13} style={{ color: "var(--color-wise-green)" }} />}
+                    {disabled && (
+                      <span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: 600 }}>Hết hàng</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ========== Editor Placement Step ========== */
+function EditorPlacementStep({
+  store,
+  value,
+  onChange,
+}: {
+  store: StoreDetail;
+  value: TemplateDetail;
+  onChange: (data: Partial<TemplateDetail>) => void;
+}) {
+  const [placementData, setPlacementData] = useState<PlacementData>(() =>
+    normalizePlacementData(value.defaultPlacement, true),
+  );
+
+  useEffect(() => {
+    onChange({ defaultPlacement: normalizePlacementData(placementData, false) });
+  }, [placementData, onChange]);
+
+  const bgColor = value.colors?.[0]?.color?.hex || "#EEEEEE";
+
+  return (
+    <div>
       <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
-        <h3 style={{ fontWeight: 700, margin: 0 }}><Move size={18} style={{ display: "inline", marginRight: 8 }} />Placement mặc định</h3>
-        <button onClick={handleSave} disabled={saving || !isDirty} className="btn btn-primary" title={!isDirty ? "Chưa có thay đổi" : ""}>
-          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Lưu Placement
-        </button>
+        <div>
+          <h3 style={{ fontWeight: 700, margin: 0 }}>Vị trí in ấn mặc định</h3>
+          <p style={{ opacity: 0.5, fontSize: "0.85rem", marginTop: 4 }}>
+            Bật các vị trí in bạn muốn hiển thị trên mockups. Wizard tạo listing sẽ kế thừa preset này.
+          </p>
+        </div>
       </div>
       <MultiViewPlacementEditor
         value={placementData}

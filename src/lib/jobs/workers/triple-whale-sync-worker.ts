@@ -12,17 +12,17 @@ export function startTripleWhaleSyncWorker(): Worker<TWSyncJobPayload> {
   tripleWhaleSyncWorker = new Worker<TWSyncJobPayload>(
     TW_SYNC_QUEUE_NAME,
     async (job: Job<TWSyncJobPayload>) => {
-      const { storeId } = job.data;
-      console.log(`[TripleWhaleSync] Starting sync for store ${storeId}`);
+      const { credentialId } = job.data;
+      console.log(`[TripleWhaleSync] Starting sync for credential ${credentialId}`);
 
       try {
-        await syncStore(storeId);
-        console.log(`[TripleWhaleSync] Synced store ${storeId}`);
+        await syncStore(credentialId);
+        console.log(`[TripleWhaleSync] Synced credential ${credentialId}`);
         return { success: true };
       } catch (error) {
-        await handleSyncError(storeId, error);
+        await handleSyncError(credentialId, error);
         if (error instanceof TWAuthError) {
-          console.error(`[TripleWhaleSync] Auth error for store ${storeId}: ${error.message}`);
+          console.error(`[TripleWhaleSync] Auth error for credential ${credentialId}: ${error.message}`);
           return { success: false, error: error.message };
         }
         throw error;
@@ -35,7 +35,7 @@ export function startTripleWhaleSyncWorker(): Worker<TWSyncJobPayload> {
   );
 
   tripleWhaleSyncWorker.on("failed", (job, err) => {
-    console.error(`[TripleWhaleSync] Job failed for store ${job?.data.storeId}:`, err.message);
+    console.error(`[TripleWhaleSync] Job failed for credential ${job?.data.credentialId}:`, err.message);
   });
 
   return tripleWhaleSyncWorker;
