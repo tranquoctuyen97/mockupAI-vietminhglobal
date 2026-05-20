@@ -134,6 +134,16 @@ if [[ ! -d "$UPLOAD_PATH" ]]; then
   log_ok "Đã tạo: $UPLOAD_PATH"
 fi
 
+# Validate domain is not localhost or IP-only (SSL requires real FQDN)
+if [[ "$NO_SSL" == false ]]; then
+  if [[ "$DOMAIN" == "localhost" || "$DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    log_warn "Domain là '$DOMAIN' — Let's Encrypt không cấp SSL cho localhost/IP"
+    log_info "Sửa NEXT_PUBLIC_APP_URL trong .env thành domain thật (vd: https://app.code2ship.cloud)"
+    log_info "Tạm thời chạy HTTP only"
+    NO_SSL=true
+  fi
+fi
+
 # Validate email for SSL
 if [[ "$NO_SSL" == false && -z "$CERTBOT_EMAIL" ]]; then
   log_warn "ADMIN_EMAIL chưa set — sẽ skip SSL"

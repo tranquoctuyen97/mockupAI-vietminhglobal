@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:18-alpine3.23
+    image: postgres:17-alpine
     container_name: mockupai-postgres
     restart: unless-stopped
     ports:
