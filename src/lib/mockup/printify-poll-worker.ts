@@ -274,18 +274,16 @@ export function markPrintifyRowsExcludedForCustomColors<
 
 /**
  * Determines which bucket of rows should be "included" by default.
- * Priority: DRAFT > TEMPLATE > Printify
+ * Driven by template.defaultMockupSource:
+ *   CUSTOM: prefer draft > template > printify (fallback)
+ *   PRINTIFY: always use printify
  */
 export function chooseIncludedSourceBucket(input: {
-  mode: "AUTO" | "TEMPLATE_PRINTIFY" | "DRAFT_CUSTOM";
+  mode: "PRINTIFY" | "CUSTOM";
   hasDraftRows: boolean;
   hasTemplateRows: boolean;
 }): "draft" | "template" | "printify" {
-  if (input.mode === "DRAFT_CUSTOM" && input.hasDraftRows) return "draft";
-  if (input.mode === "TEMPLATE_PRINTIFY" && input.hasTemplateRows) return "template";
-
-  // AUTO: prefer draft > template > printify
-  if (input.mode === "AUTO") {
+  if (input.mode === "CUSTOM") {
     if (input.hasDraftRows) return "draft";
     if (input.hasTemplateRows) return "template";
   }
@@ -297,7 +295,7 @@ async function buildCustomRowsForDraft(input: {
   draftId: string;
   storeId: string;
   variantColorLookup: Map<number, { colorName: string }>;
-}): Promise<{ draftRows: MockupImageRow[]; templateRows: MockupImageRow[]; mode: "AUTO" | "TEMPLATE_PRINTIFY" | "DRAFT_CUSTOM" }> {
+}): Promise<{ draftRows: MockupImageRow[]; templateRows: MockupImageRow[]; mode: "PRINTIFY" | "CUSTOM" }> {
   const draft = await prisma.wizardDraft.findUnique({
     where: { id: input.draftId },
     include: {
@@ -308,7 +306,7 @@ async function buildCustomRowsForDraft(input: {
       mockupLibraryPicks: { select: { sourceId: true } },
     },
   });
-  if (!draft) return { draftRows: [], templateRows: [], mode: "AUTO" };
+  if (!draft) return { draftRows: [], templateRows: [], mode: "PRINTIFY" };
 
   let template = draft.template;
   if (!template) {
@@ -316,7 +314,9 @@ async function buildCustomRowsForDraft(input: {
       where: { storeId: input.storeId, isDefault: true },
     });
   }
-  if (!template) return { draftRows: [], templateRows: [], mode: draft.mockupSourceMode };
+  if (!template) return { draftRows: [], templateRows: [], mode: "PRINTIFY" };
+
+  const defaultMockupSource = template.defaultMockupSource ?? "PRINTIFY";
 
   const enabledColorSet = new Set(draft.enabledColorIds);
   const colorsById = new Map(
@@ -324,7 +324,7 @@ async function buildCustomRowsForDraft(input: {
       .filter((color) => enabledColorSet.has(color.id))
       .map((color) => [color.id, { name: color.name }]),
   );
-  if (colorsById.size === 0) return { draftRows: [], templateRows: [], mode: draft.mockupSourceMode };
+  if (colorsById.size === 0) return { draftRows: [], templateRows: [], mode: defaultMockupSource };
 
   const colorIds = [...colorsById.keys()];
 
@@ -382,7 +382,7 @@ async function buildCustomRowsForDraft(input: {
     sortOffset: 10000,
   });
 
-  return { draftRows, templateRows, mode: draft.mockupSourceMode };
+  return { draftRows, templateRows, mode: defaultMockupSource };
 }
 
 function firstMatchingVariantId(
