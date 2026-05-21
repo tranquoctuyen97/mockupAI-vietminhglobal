@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { isTerminalMockupJobStatus } from "@/lib/mockup/job-sync";
+import {
+  MOCKUP_JOB_STALL_MESSAGE,
+  shouldFailStalledMockupJob,
+} from "@/lib/mockup/job-timeout";
 
 export async function GET(
   request: Request,
@@ -22,6 +26,24 @@ export async function GET(
   });
 
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+
+  if (
+    shouldFailStalledMockupJob({
+      status: job.status,
+      totalImages: job.totalImages,
+      createdAt: job.createdAt,
+    })
+  ) {
+    await prisma.mockupJob.update({
+      where: { id },
+      data: {
+        status: "failed",
+        errorMessage: MOCKUP_JOB_STALL_MESSAGE,
+      },
+    });
+    job.status = "failed";
+    job.errorMessage = MOCKUP_JOB_STALL_MESSAGE;
+  }
 
   const isFinished = job.totalImages > 0 && job.completedImages + job.failedImages >= job.totalImages;
   

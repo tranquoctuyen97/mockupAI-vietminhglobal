@@ -1,13 +1,82 @@
 /**
+ * GET /api/stores/:id/mockup-templates — List templates for wizard/settings
  * POST /api/stores/:id/mockup-templates — Create template (1:N)
  * PATCH /api/stores/:id/mockup-templates — Update default template placement
  */
 
 import { NextResponse } from "next/server";
 import { requireFeature } from "@/lib/auth/guards";
+import { validateSession } from "@/lib/auth/session";
 import { createTemplate, updateTemplatePlacement } from "@/lib/stores/store-service";
 import { prisma } from "@/lib/db";
+import {
+  getTemplateReadiness,
+  getTemplateReadinessLabel,
+} from "@/lib/stores/template-readiness";
 import type { Prisma } from "@prisma/client";
+
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const session = await validateSession();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id: storeId } = await params;
+
+  const store = await prisma.store.findFirst({
+    where: { id: storeId, tenantId: session.tenantId },
+    include: {
+      templates: {
+        orderBy: { sortOrder: "asc" },
+        include: {
+          colors: {
+            orderBy: { sortOrder: "asc" },
+            include: { color: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!store) {
+    return NextResponse.json({ error: "Store not found" }, { status: 404 });
+  }
+
+  const templates = store.templates.map((template) => {
+    const readiness = getTemplateReadiness(template);
+
+    return {
+      id: template.id,
+      name: template.name,
+      isDefault: template.isDefault,
+      sortOrder: template.sortOrder,
+      printifyBlueprintId: template.printifyBlueprintId,
+      printifyPrintProviderId: template.printifyPrintProviderId,
+      blueprintTitle: template.blueprintTitle,
+      printProviderTitle: template.printProviderTitle,
+      enabledVariantIds: template.enabledVariantIds,
+      enabledSizes: template.enabledSizes,
+      defaultPlacement: template.defaultPlacement,
+      readiness: {
+        ready: readiness.ready,
+        missing: readiness.missing,
+        label: getTemplateReadinessLabel(template),
+      },
+      colors: template.colors.map((entry) => ({
+        id: entry.color.id,
+        name: entry.color.name,
+        hex: entry.color.hex,
+        enabled: entry.color.enabled,
+        sortOrder: entry.sortOrder,
+      })),
+    };
+  });
+
+  return NextResponse.json({ templates });
+}
 
 export async function POST(
   request: Request,

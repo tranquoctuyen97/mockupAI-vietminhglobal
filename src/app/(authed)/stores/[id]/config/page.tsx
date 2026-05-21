@@ -98,6 +98,31 @@ interface SizeOption {
 }
 
 type Tab = "printify" | "templates" | "overview";
+type TemplateMissing = "blueprint" | "provider" | "variants" | "colors" | "placement";
+
+const TEMPLATE_MISSING_LABELS: Record<TemplateMissing, string> = {
+  blueprint: "Blueprint",
+  provider: "Provider",
+  variants: "Variants",
+  colors: "Colors",
+  placement: "Placement",
+};
+
+function getTemplateMissing(template: TemplateDetail): TemplateMissing[] {
+  const missing: TemplateMissing[] = [];
+  if (!template.printifyBlueprintId) missing.push("blueprint");
+  if (!template.printifyPrintProviderId) missing.push("provider");
+  if (!template.enabledVariantIds?.length) missing.push("variants");
+  if (!template.colors?.length) missing.push("colors");
+  if (getEnabledViews(normalizePlacementData(template.defaultPlacement, false)).length === 0) {
+    missing.push("placement");
+  }
+  return missing;
+}
+
+function formatTemplateMissingLabels(missing: TemplateMissing[]): string {
+  return missing.map((key) => TEMPLATE_MISSING_LABELS[key]).join(", ");
+}
 
 /* ========== Tab status helpers ========== */
 function getTabStatus(store: StoreDetail, tab: Tab): "done" | "warn" | "none" {
@@ -130,8 +155,8 @@ function StoreConfigContent() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>("printify");
 
-  const fetchStore = useCallback(async () => {
-    setLoading(true);
+  const fetchStore = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) setLoading(true);
     try {
       const res = await fetch("/api/stores");
       if (res.ok) {
@@ -141,7 +166,7 @@ function StoreConfigContent() {
         return found;
       }
     } finally {
-      setLoading(false);
+      if (!options?.silent) setLoading(false);
     }
     return null;
   }, [storeId]);
@@ -155,7 +180,7 @@ function StoreConfigContent() {
   }, []);
 
   function refreshAndGoTo(tab: Tab) {
-    fetchStore().then(() => setActiveTab(tab));
+    fetchStore({ silent: true }).then(() => setActiveTab(tab));
   }
 
   if (loading) {
@@ -538,8 +563,14 @@ function TemplatesSection({
   onRefreshStore,
 }: {
   store: StoreDetail;
-  onRefreshStore: () => Promise<any>;
+  onRefreshStore: (options?: { silent?: boolean }) => Promise<any>;
 }) {
+  type TemplateAction =
+    | { type: "default"; templateId: string }
+    | { type: "duplicate"; templateId: string }
+    | { type: "delete"; templateId: string }
+    | null;
+
   const [editingTemplate, setEditingTemplate] = useState<TemplateDetail | null>(null);
   const [originalTemplate, setOriginalTemplate] = useState<TemplateDetail | null>(null);
   const [tempTemplateData, setTempTemplateData] = useState<TemplateDetail | null>(null);
@@ -547,6 +578,7 @@ function TemplatesSection({
   
   const [searchQuery, setSearchQuery] = useState("");
   const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateAction, setTemplateAction] = useState<TemplateAction>(null);
 
   const updateTempData = useCallback((newData: Partial<TemplateDetail>) => {
     setTempTemplateData((prev) => (prev ? { ...prev, ...newData } : null));
@@ -583,54 +615,70 @@ function TemplatesSection({
   }, [tempTemplateData, originalTemplate]);
 
   async function handleDuplicate(templateId: string) {
+    setTemplateAction({ type: "duplicate", templateId });
     try {
       const res = await fetch(`/api/stores/${store.id}/mockup-templates/${templateId}/duplicate`, {
         method: "POST",
       });
       if (res.ok) {
         toast.success("Đã nhân bản template thành công!");
-        await onRefreshStore();
+        await onRefreshStore({ silent: true });
       } else {
         const err = await res.json();
         toast.error(err.error || "Lỗi nhân bản template");
       }
     } catch {
       toast.error("Lỗi nhân bản template");
+    } finally {
+      setTemplateAction(null);
     }
   }
 
   async function handleSetDefault(templateId: string) {
+    setTemplateAction({ type: "default", templateId });
     try {
       const res = await fetch(`/api/stores/${store.id}/mockup-templates/${templateId}/default`, {
         method: "PUT",
       });
       if (res.ok) {
         toast.success("Đã đặt làm template mặc định!");
-        await onRefreshStore();
+        await onRefreshStore({ silent: true });
       } else {
         const err = await res.json();
-        toast.error(err.error || "Lỗi thiết lập mặc định");
+        const missing = Array.isArray(err.missing)
+          ? formatTemplateMissingLabels(err.missing as TemplateMissing[])
+          : "";
+        toast.error(
+          missing
+            ? `Template chưa hoàn tất: ${missing}. Hoàn tất template trước khi đặt default.`
+            : err.error || "Lỗi thiết lập mặc định",
+        );
       }
     } catch {
       toast.error("Lỗi thiết lập mặc định");
+    } finally {
+      setTemplateAction(null);
     }
   }
 
   async function handleDelete(templateId: string) {
     if (!confirm("Bạn có chắc chắn muốn xoá template này? Thao tác này không thể hoàn tác.")) return;
+    setTemplateAction({ type: "delete", templateId });
     try {
       const res = await fetch(`/api/stores/${store.id}/mockup-templates/${templateId}`, {
         method: "DELETE",
       });
       if (res.ok) {
         toast.success("Đã xoá template thành công!");
-        await onRefreshStore();
+        await onRefreshStore({ silent: true });
       } else {
         const err = await res.json();
         toast.error(err.error || "Lỗi xoá template");
       }
     } catch {
       toast.error("Lỗi xoá template");
+    } finally {
+      setTemplateAction(null);
     }
   }
 
@@ -724,7 +772,7 @@ function TemplatesSection({
         setEditingTemplate(null);
         setTempTemplateData(null);
         setOriginalTemplate(null);
-        await onRefreshStore();
+        await onRefreshStore({ silent: true });
       } else {
         const err = await res.json();
         toast.error(err.error || "Lỗi lưu template");
@@ -770,9 +818,12 @@ function TemplatesSection({
       <div>
         <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
           <div>
-            <h3 style={{ fontWeight: 700, margin: 0 }}>Templates</h3>
+            <div className="flex items-center gap-2">
+              <h3 style={{ fontWeight: 700, margin: 0 }}>🧰 Templates</h3>
+              <span className="badge badge-success" style={{ fontSize: "0.72rem", minWidth: 22, textAlign: "center" }}>{store.templates.length}</span>
+            </div>
             <p style={{ opacity: 0.5, fontSize: "0.85rem", marginTop: 4 }}>
-              Quản lý các cấu hình mockup templates cho store này.
+              Mỗi template gồm blueprint, variants và placement riêng. Default template được dùng khi Wizard chạy.
             </p>
           </div>
           {store.templates.length > 0 && (
@@ -884,6 +935,22 @@ function TemplatesSection({
               </div>
             </div>
 
+            {store.templates.length > 0 && !store.templates.some((t) => t.isDefault && getTemplateMissing(t).length === 0) && (
+              <div
+                className="alert"
+                style={{
+                  marginBottom: 12,
+                  backgroundColor: "rgba(245, 158, 11, 0.06)",
+                  border: "1px solid rgba(245, 158, 11, 0.25)",
+                }}
+              >
+                <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
+                <span className="flex-1" style={{ fontSize: "0.84rem" }}>
+                  Chưa có default template sẵn sàng. Hoàn tất một template rồi đặt làm default để Wizard có thể chạy.
+                </span>
+              </div>
+            )}
+
             <div className="card" style={{ padding: 0, overflow: "hidden", borderRadius: 12 }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
                 <thead>
@@ -899,6 +966,16 @@ function TemplatesSection({
                 <tbody>
                   {filteredTemplates.map((t) => {
                     const enabledViews = getEnabledViews(normalizePlacementData(t.defaultPlacement, false));
+                    const missing = getTemplateMissing(t);
+                    const ready = missing.length === 0;
+                    const statusLabel = t.isDefault
+                      ? ready ? "DEFAULT" : "DEFAULT INCOMPLETE"
+                      : ready ? "READY" : "INCOMPLETE";
+                    const statusStyle = ready
+                      ? { backgroundColor: "rgba(159,232,112,0.18)", color: "#166534" }
+                      : { backgroundColor: "rgba(245, 158, 11, 0.12)", color: "#92400e" };
+                    const rowAction = templateAction?.templateId === t.id ? templateAction.type : null;
+                    const rowBusy = Boolean(rowAction);
                     return (
                       <tr
                         key={t.id}
@@ -907,39 +984,90 @@ function TemplatesSection({
                         className="hover-row"
                       >
                         <td style={{ padding: "12px 16px", fontWeight: 600 }}>
-                          <div className="flex items-center gap-2">
-                            <span>{t.name}</span>
-                            {t.isDefault && <span className="badge badge-success" style={{ fontSize: "0.62rem" }}>DEFAULT</span>}
+                          <div className="flex items-center gap-3">
+                            <div style={{
+                              width: 32, height: 32, borderRadius: "50%",
+                              background: "#d1fae5", color: "#065f46",
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                              fontWeight: 700, fontSize: "0.85rem", textTransform: "uppercase",
+                              flexShrink: 0,
+                            }}>
+                              {t.name?.[0] || "T"}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span>{t.name}</span>
+                                <span
+                                  className="badge"
+                                  style={{
+                                    fontSize: "0.62rem",
+                                    ...statusStyle,
+                                  }}
+                                  title={ready ? statusLabel : `Thiếu: ${formatTemplateMissingLabels(missing)}`}
+                                >
+                                  {statusLabel}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: "0.72rem", opacity: 0.4, fontWeight: 400 }}>
+                                {t.blueprintTitle ? `${t.printProviderTitle || "Provider"}` : "Chưa cấu hình"}
+                              </div>
+                            </div>
                           </div>
                         </td>
                         <td style={{ padding: "12px 16px", opacity: 0.7 }}>
-                          <div>{t.blueprintTitle}</div>
+                          <div>{t.blueprintTitle || "—"}</div>
                           <div style={{ fontSize: "0.72rem", opacity: 0.5 }}>{t.printProviderTitle}</div>
                         </td>
                         <td style={{ padding: "12px 16px", textAlign: "center" }}>
-                          <div style={{ display: "flex", gap: 3, justifyContent: "center", flexWrap: "wrap", maxWidth: 120, margin: "0 auto" }}>
-                            {t.colors.slice(0, 4).map((tc) => (
-                              <div
-                                key={tc.id}
-                                style={{
-                                  width: 14,
-                                  height: 14,
-                                  borderRadius: "50%",
-                                  backgroundColor: tc.color.hex,
-                                  border: "1px solid rgba(0,0,0,0.15)",
-                                }}
-                                title={tc.color.name}
-                              />
-                            ))}
-                            {t.colors.length > 4 && (
-                              <span style={{ fontSize: "0.68rem", opacity: 0.5, alignSelf: "center", marginLeft: 2 }}>
-                                +{t.colors.length - 4}
-                              </span>
+                          <div style={{ display: "flex", gap: 3, justifyContent: "center", alignItems: "center", flexWrap: "wrap", maxWidth: 140, margin: "0 auto" }}>
+                            {t.colors.length > 0 ? (
+                              <>
+                                {t.colors.slice(0, 5).map((tc) => (
+                                  <div
+                                    key={tc.id}
+                                    style={{
+                                      width: 16,
+                                      height: 16,
+                                      borderRadius: "50%",
+                                      backgroundColor: tc.color.hex,
+                                      border: "1.5px solid rgba(0,0,0,0.12)",
+                                    }}
+                                    title={tc.color.name}
+                                  />
+                                ))}
+                                <span style={{ fontSize: "0.75rem", opacity: 0.6, marginLeft: 2, fontWeight: 500 }}>
+                                  {t.colors.length}
+                                </span>
+                              </>
+                            ) : (
+                              <span style={{ fontSize: "0.8rem", opacity: 0.35 }}>0</span>
                             )}
                           </div>
                         </td>
-                        <td style={{ padding: "12px 16px", textAlign: "center", opacity: 0.7 }}>
-                          {t.enabledSizes?.length ?? 0}
+                        <td style={{ padding: "12px 16px", textAlign: "center" }}>
+                          <div style={{ display: "flex", gap: 3, justifyContent: "center", flexWrap: "wrap" }}>
+                            {(t.enabledSizes?.length ?? 0) > 0 ? (
+                              t.enabledSizes.map((size) => (
+                                <span
+                                  key={size}
+                                  style={{
+                                    display: "inline-block",
+                                    padding: "1px 6px",
+                                    fontSize: "0.68rem",
+                                    fontWeight: 600,
+                                    borderRadius: 4,
+                                    background: "var(--bg-inset)",
+                                    border: "1px solid var(--border-default)",
+                                    lineHeight: 1.5,
+                                  }}
+                                >
+                                  {size}
+                                </span>
+                              ))
+                            ) : (
+                              <span style={{ fontSize: "0.8rem", opacity: 0.35 }}>—</span>
+                            )}
+                          </div>
                         </td>
                         <td style={{ padding: "12px 16px" }}>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -967,6 +1095,7 @@ function TemplatesSection({
                             <button
                               onClick={() => startEditing(t)}
                               className="btn btn-secondary"
+                              disabled={rowBusy}
                               style={{ padding: "4px 8px", fontSize: "0.75rem" }}
                               title="Chỉnh sửa template"
                             >
@@ -975,30 +1104,40 @@ function TemplatesSection({
                             <button
                               onClick={() => handleDuplicate(t.id)}
                               className="btn btn-secondary"
+                              disabled={rowBusy}
                               style={{ padding: "4px 8px", fontSize: "0.75rem" }}
                               title="Nhân bản template"
                             >
-                              <Copy size={12} />
+                              {rowAction === "duplicate" ? <Loader2 size={12} className="animate-spin" /> : <Copy size={12} />}
                             </button>
-                            {!t.isDefault && (
-                              <>
-                                <button
-                                  onClick={() => handleSetDefault(t.id)}
-                                  className="btn btn-secondary"
-                                  style={{ padding: "4px 8px", fontSize: "0.75rem" }}
-                                  title="Đặt làm mặc định"
-                                >
-                                  <Star size={12} />
-                                </button>
-                                <button
-                                  onClick={() => handleDelete(t.id)}
-                                  className="btn btn-secondary"
-                                  style={{ padding: "4px 8px", fontSize: "0.75rem", color: "#ef4444" }}
-                                  title="Xoá template"
-                                >
-                                  <Trash2 size={12} />
-                                </button>
-                              </>
+                            {!t.isDefault && ready && (
+                              <button
+                                onClick={() => handleSetDefault(t.id)}
+                                className="btn btn-secondary"
+                                disabled={rowBusy}
+                                style={{
+                                  padding: "4px 8px",
+                                  fontSize: "0.75rem",
+                                }}
+                                title="Đặt làm mặc định"
+                              >
+                                {rowAction === "default" ? <Loader2 size={12} className="animate-spin" /> : <Star size={12} />}
+                              </button>
+                            )}
+                            {(!t.isDefault || !ready) && (
+                              <button
+                                onClick={() => handleDelete(t.id)}
+                                className="btn btn-secondary"
+                                disabled={rowBusy}
+                                style={{
+                                  padding: "4px 8px",
+                                  fontSize: "0.75rem",
+                                  color: "#ef4444",
+                                }}
+                                title="Xoá template"
+                              >
+                                {rowAction === "delete" ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                              </button>
                             )}
                           </div>
                         </td>
@@ -1007,6 +1146,25 @@ function TemplatesSection({
                   })}
                 </tbody>
               </table>
+            </div>
+
+            {/* Info banner */}
+            <div style={{
+              marginTop: 16,
+              padding: "12px 16px",
+              borderRadius: 8,
+              background: "rgba(159,232,112,0.08)",
+              border: "1px solid rgba(159,232,112,0.2)",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              fontSize: "0.82rem",
+              color: "var(--text-secondary)",
+            }}>
+              <span style={{ color: "var(--color-wise-green)", fontSize: "1rem" }}>ℹ️</span>
+              <span>
+                <strong>Default template</strong> sẽ được dùng tự động khi Wizard chạy. Bạn có thể đổi bằng <code>⋯</code> menu hoặc click vào một template.
+              </span>
             </div>
           </div>
         )}

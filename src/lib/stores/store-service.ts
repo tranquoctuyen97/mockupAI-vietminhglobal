@@ -6,7 +6,44 @@ import { prisma } from "@/lib/db";
 import { encrypt, decrypt } from "@/lib/crypto/envelope";
 import { ShopifyClient } from "@/lib/shopify/client";
 import { getPresetStatusSync } from "@/lib/stores/preset";
+import {
+  getTemplateReadiness,
+  type TemplateReadinessInput,
+  type TemplateMissing,
+} from "@/lib/stores/template-readiness";
 import type { Prisma } from "@prisma/client";
+
+export class TemplateNotReadyError extends Error {
+  missing: TemplateMissing[];
+
+  constructor(missing: TemplateMissing[]) {
+    super("Template is incomplete and cannot be set as default");
+    this.name = "TemplateNotReadyError";
+    this.missing = missing;
+  }
+}
+
+export function assertTemplateReadyForDefault(
+  template: TemplateReadinessInput,
+): void {
+  const readiness = getTemplateReadiness(template);
+  if (!readiness.ready) {
+    throw new TemplateNotReadyError(readiness.missing);
+  }
+}
+
+export function shouldCreateTemplateAsDefault(
+  existingCount: number,
+  template: TemplateReadinessInput,
+): boolean {
+  return existingCount === 0 && getTemplateReadiness(template).ready;
+}
+
+export function pickNextReadyDefaultTemplate<T extends TemplateReadinessInput>(
+  templates: T[],
+): T | undefined {
+  return templates.find((candidate) => getTemplateReadiness(candidate).ready);
+}
 
 /**
  * Save Shopify credentials after OAuth callback
@@ -227,7 +264,14 @@ export async function createTemplate(
   },
 ) {
   const existingCount = await prisma.storeMockupTemplate.count({ where: { storeId } });
-  const isDefault = existingCount === 0;
+  const draftTemplateForReadiness = {
+    printifyBlueprintId: data.printifyBlueprintId,
+    printifyPrintProviderId: data.printifyPrintProviderId,
+    enabledVariantIds: data.enabledVariantIds ?? [],
+    defaultPlacement: data.defaultPlacement,
+    colors: data.colorIds ?? [],
+  };
+  const isDefault = shouldCreateTemplateAsDefault(existingCount, draftTemplateForReadiness);
 
   return prisma.$transaction(async (tx) => {
     const template = await tx.storeMockupTemplate.create({
@@ -347,10 +391,12 @@ export async function deleteTemplate(templateId: string) {
     await tx.storeMockupTemplate.delete({ where: { id: templateId } });
 
     if (template.isDefault) {
-      const nextTemplate = await tx.storeMockupTemplate.findFirst({
+      const nextTemplates = await tx.storeMockupTemplate.findMany({
         where: { storeId: template.storeId },
         orderBy: { sortOrder: "asc" },
+        include: { colors: true },
       });
+      const nextTemplate = pickNextReadyDefaultTemplate(nextTemplates);
       if (nextTemplate) {
         await tx.storeMockupTemplate.update({
           where: { id: nextTemplate.id },
@@ -365,6 +411,17 @@ export async function deleteTemplate(templateId: string) {
  * Set a template as default for a store
  */
 export async function setDefaultTemplate(storeId: string, templateId: string) {
+  const template = await prisma.storeMockupTemplate.findFirst({
+    where: { id: templateId, storeId },
+    include: { colors: true },
+  });
+
+  if (!template) {
+    throw new Error(`Template ${templateId} not found`);
+  }
+
+  assertTemplateReadyForDefault(template);
+
   return prisma.$transaction([
     prisma.storeMockupTemplate.updateMany({
       where: { storeId, isDefault: true },

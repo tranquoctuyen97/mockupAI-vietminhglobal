@@ -87,11 +87,44 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
   if (!draft) throw new Error("Draft not found");
 
   const sanitized = sanitizeDraftPatch(patch);
+  const templateChanged =
+    sanitized.templateId !== undefined && sanitized.templateId !== draft.templateId;
+  const enabledSizesChanged =
+    sanitized.enabledSizes !== undefined &&
+    JSON.stringify(sanitized.enabledSizes ?? []) !== JSON.stringify(draft.enabledSizes ?? []);
+  const staleDraftPatch = templateChanged
+    ? {
+        mockupsStale: true,
+        mockupsStaleReason: "template_changed",
+      }
+    : enabledSizesChanged
+      ? {
+          mockupsStale: true,
+          mockupsStaleReason: "colors_changed",
+        }
+      : {};
+
+  if (sanitized.templateId) {
+    const storeId = sanitized.storeId ?? draft.storeId;
+    const template = await prisma.storeMockupTemplate.findFirst({
+      where: {
+        id: sanitized.templateId,
+        storeId: storeId ?? undefined,
+        store: { tenantId },
+      },
+      select: { id: true },
+    });
+
+    if (!template) {
+      throw new Error("Template not found for draft store");
+    }
+  }
 
   return prisma.wizardDraft.update({
     where: { id },
     data: {
       ...sanitized,
+      ...staleDraftPatch,
       placementOverride: sanitized.placementOverride !== undefined
         ? sanitized.placementOverride === null
           ? Prisma.JsonNull

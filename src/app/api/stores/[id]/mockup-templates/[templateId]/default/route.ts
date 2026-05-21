@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireFeature } from "@/lib/auth/guards";
-import { setDefaultTemplate } from "@/lib/stores/store-service";
+import {
+  setDefaultTemplate,
+  TemplateNotReadyError,
+} from "@/lib/stores/store-service";
 import { prisma } from "@/lib/db";
 
 export async function PUT(
@@ -28,6 +31,19 @@ export async function PUT(
     return NextResponse.json({ error: "Template not found" }, { status: 404 });
   }
 
-  await setDefaultTemplate(storeId, templateId);
-  return NextResponse.json({ success: true });
+  try {
+    await setDefaultTemplate(storeId, templateId);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    if (error instanceof TemplateNotReadyError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          missing: error.missing,
+        },
+        { status: 400 },
+      );
+    }
+    throw error;
+  }
 }

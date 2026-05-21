@@ -8,6 +8,7 @@ import { buildVariantColorLookup } from "@/lib/mockup/printify-poll-worker";
 import { getPrintifyMockupQueue } from "@/lib/mockup/queue";
 import { DEFAULT_PLACEMENT } from "@/lib/placement/types";
 import { createOrUpdatePrintifyProduct, ensurePrintifyImage } from "@/lib/printify/product";
+import { formatTemplateMissing, getTemplateReadiness } from "@/lib/stores/template-readiness";
 
 const DEFAULT_PLACEMENT_DATA = {
   version: "2.1",
@@ -27,7 +28,13 @@ export async function POST(request: Request) {
     where: { id: draftId },
     include: {
       design: true,
-      template: true,
+      template: {
+        include: {
+          colors: {
+            include: { color: true },
+          },
+        },
+      },
       store: {
         include: {
           colors: true,
@@ -44,12 +51,28 @@ export async function POST(request: Request) {
   if (!template && draft.storeId) {
     template = await prisma.storeMockupTemplate.findFirst({
       where: { storeId: draft.storeId, isDefault: true },
+      include: {
+        colors: {
+          include: { color: true },
+        },
+      },
     });
   }
 
   if (!template) {
     return NextResponse.json(
       { error: "Store chưa có Blueprint. Vào Store Settings để cấu hình." },
+      { status: 400 },
+    );
+  }
+
+  const readiness = getTemplateReadiness(template);
+  if (!readiness.ready) {
+    return NextResponse.json(
+      {
+        error: `Template chưa sẵn sàng. Còn thiếu: ${formatTemplateMissing(readiness.missing)}.`,
+        code: "TEMPLATE_NOT_READY",
+      },
       { status: 400 },
     );
   }
@@ -66,6 +89,18 @@ export async function POST(request: Request) {
 
   if (!draft.enabledColorIds || draft.enabledColorIds.length === 0) {
     return NextResponse.json({ error: "No colors selected" }, { status: 400 });
+  }
+
+  const templateColorIds = new Set(template.colors.map((entry) => entry.colorId));
+  const invalidColorIds = draft.enabledColorIds.filter((colorId) => !templateColorIds.has(colorId));
+  if (invalidColorIds.length > 0) {
+    return NextResponse.json(
+      {
+        error: "Một hoặc nhiều màu đã chọn không thuộc template hiện tại. Hãy chọn lại template/màu.",
+        code: "COLOR_NOT_IN_TEMPLATE",
+      },
+      { status: 400 },
+    );
   }
 
   const placementData = resolveEffectivePlacementData(

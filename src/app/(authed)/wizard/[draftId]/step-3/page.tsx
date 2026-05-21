@@ -7,6 +7,7 @@ import { useWizardStore } from "@/lib/wizard/use-wizard-store";
 
 import { pickLatestMockupJobId } from "@/lib/mockup/latest-job";
 import { isTerminalMockupJobStatus, shouldSyncFinishedMockupJob } from "@/lib/mockup/job-sync";
+import { MOCKUP_JOB_SOFT_WAIT_MS } from "@/lib/mockup/job-timeout";
 import { isRealPrintifyMockupMedia } from "@/lib/mockup/real-printify-media";
 import { MockupGallery } from "@/components/mockup/MockupGallery";
 import { MultiViewPlacementEditor } from "@/components/placement/MultiViewPlacementEditor";
@@ -32,6 +33,32 @@ import {
   normalizePlacementData,
 } from "@/lib/placement/views";
 
+type TemplateReadinessLabel = "DEFAULT" | "DEFAULT INCOMPLETE" | "READY" | "INCOMPLETE";
+
+type WizardTemplateOption = {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  sortOrder: number;
+  blueprintTitle: string;
+  printProviderTitle: string;
+  enabledVariantIds: number[];
+  enabledSizes: string[];
+  defaultPlacement: unknown | null;
+  readiness: {
+    ready: boolean;
+    missing: string[];
+    label: TemplateReadinessLabel;
+  };
+  colors: Array<{
+    id: string;
+    name: string;
+    hex: string;
+    enabled: boolean;
+    sortOrder: number;
+  }>;
+};
+
 export default function Step3PreviewPage() {
   const { draftId } = useParams<{ draftId: string }>();
   const router = useRouter();
@@ -39,7 +66,9 @@ export default function Step3PreviewPage() {
 
   const [loading, setLoading] = useState(true);
   const [storeColors, setStoreColors] = useState<any[]>([]);
-  const [template, setTemplate] = useState<any>(null);
+  const [templates, setTemplates] = useState<WizardTemplateOption[]>([]);
+  const [template, setTemplate] = useState<WizardTemplateOption | null>(null);
+  const [templateWarning, setTemplateWarning] = useState("");
   const [presetStatus, setPresetStatus] = useState<any>(null);
   const [designPreviewUrl, setDesignPreviewUrl] = useState<string | null>(null);
   const [previewColorIdx, setPreviewColorIdx] = useState(0);
@@ -56,6 +85,8 @@ export default function Step3PreviewPage() {
   const [mockupImages, setMockupImages] = useState<any[]>([]);
   const [jobProgress, setJobProgress] = useState({ completed: 0, total: 0, failed: 0 });
   const [jobStatus, setJobStatus] = useState<string | null>(null);
+  const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
+  const [showSlowMockupWarning, setShowSlowMockupWarning] = useState(false);
 
   // Size selection state
   const [storeSizes, setStoreSizes] = useState<Array<{ size: string; costDeltaCents: number; isAvailable: boolean }>>([]);
@@ -70,6 +101,8 @@ export default function Step3PreviewPage() {
   const isGenerating =
     generating ||
     (jobStatus ? !isTerminalMockupJobStatus(jobStatus) && !progressFinished : false);
+  const selectedTemplate = template;
+  const selectedTemplateReady = Boolean(selectedTemplate?.readiness.ready);
   const generateButtonLabel = isGenerating
     ? progressFinished
       ? "Đang đồng bộ kết quả..."
@@ -81,6 +114,14 @@ export default function Step3PreviewPage() {
     [draft?.placementOverride],
   );
   const isAdmin = userRole === "ADMIN" || userRole === "SUPER_ADMIN";
+  const PRESET_MISSING_LABELS: Record<string, string> = {
+    blueprint: "Blueprint",
+    provider: "Provider",
+    variants: "Variants",
+    colors: "Colors",
+    placement: "Placement đã lưu",
+    template: "Template",
+  };
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -88,6 +129,22 @@ export default function Step3PreviewPage() {
       .then((data) => setUserRole(data?.role ?? null))
       .catch(() => setUserRole(null));
   }, []);
+
+  useEffect(() => {
+    if (!isGenerating || !generationStartedAt || jobProgress.total > 0) {
+      setShowSlowMockupWarning(false);
+      return;
+    }
+
+    const remaining = MOCKUP_JOB_SOFT_WAIT_MS - (Date.now() - generationStartedAt);
+    if (remaining <= 0) {
+      setShowSlowMockupWarning(true);
+      return;
+    }
+
+    const timeout = setTimeout(() => setShowSlowMockupWarning(true), remaining);
+    return () => clearTimeout(timeout);
+  }, [generationStartedAt, isGenerating, jobProgress.total]);
 
   useEffect(() => {
     if (!draftId) {
@@ -149,44 +206,63 @@ export default function Step3PreviewPage() {
     }
 
     setLoading(true);
-    // Fetch store template and colors
-    Promise.all([
-      fetch(`/api/stores/${draft.storeId}/template`).then(r => r.json()),
-      fetch(`/api/stores/${draft.storeId}/colors`).then(r => r.json()),
-      fetch(`/api/stores/${draft.storeId}/preset-status`).then(r => r.json())
-    ]).then(([tData, cData, pData]) => {
-      setTemplate(tData.template);
-      const enabledColors = (cData.colors || []).filter((c: any) => c.enabled);
-      setStoreColors(enabledColors);
-      setPresetStatus(pData);
+    fetch(`/api/stores/${draft.storeId}/mockup-templates`)
+      .then(async (r) => {
+        if (!r.ok) throw new Error("Failed to fetch templates");
+        return r.json();
+      })
+      .then((tData) => {
+        const nextTemplates: WizardTemplateOption[] = Array.isArray(tData.templates)
+          ? tData.templates
+          : [];
+        const activeTemplate =
+          nextTemplates.find((candidate) => candidate.id === draft.templateId) ??
+          nextTemplates.find((candidate) => candidate.isDefault) ??
+          nextTemplates[0] ??
+          null;
 
-      // Fetch sizes for this store
-      if (draft.storeId) {
-        fetch(`/api/stores/${draft.storeId}/sizes`)
+        setTemplates(nextTemplates);
+        setTemplate(activeTemplate);
+        setTemplateWarning("");
+
+        const enabledColors = (activeTemplate?.colors ?? []).filter((color) => color.enabled !== false);
+        setStoreColors(enabledColors);
+        setPresetStatus(activeTemplate?.readiness ?? { ready: false, missing: ["template"] });
+
+        if (!activeTemplate || !draft.storeId) {
+          setStoreSizes([]);
+          setSelectedSizes(new Set());
+          setLoading(false);
+          return;
+        }
+
+        const sizeUrl = `/api/stores/${draft.storeId}/sizes?templateId=${activeTemplate.id}`;
+        fetch(sizeUrl)
           .then(async (r) => {
             if (!r.ok) return;
             const sData = await r.json();
-            const templateEnabledSizes: string[] = sData.enabledSizes ?? sData.sizes?.map((s: any) => s.size) ?? [];
-            setStoreSizes(
-              (sData.sizes ?? []).filter((s: any) => templateEnabledSizes.includes(s.size)),
+            const templateEnabledSizes: string[] =
+              activeTemplate.enabledSizes?.length
+                ? activeTemplate.enabledSizes
+                : sData.enabledSizes ?? sData.sizes?.map((s: any) => s.size) ?? [];
+            const availableSizes = (sData.sizes ?? []).filter((s: any) =>
+              templateEnabledSizes.includes(s.size),
             );
-            // Init selectedSizes from draft or default to all enabled
-            const draftSizes: string[] = (draft as any)?.enabledSizes ?? [];
-            if (draftSizes.length > 0) {
-              setSelectedSizes(new Set(draftSizes));
-            } else {
-              setSelectedSizes(new Set(templateEnabledSizes));
-            }
+            setStoreSizes(availableSizes);
+            const draftSizes: string[] = ((draft as any)?.enabledSizes ?? []).filter((size: string) =>
+              templateEnabledSizes.includes(size),
+            );
+            setSelectedSizes(new Set(draftSizes.length > 0 ? draftSizes : templateEnabledSizes));
           })
-          .catch(() => {});
-      }
-      setLoading(false);
-    }).catch(err => {
-      console.error(err);
-      setError("Không tải được preset store. Vui lòng thử lại.");
-      setLoading(false);
-    });
-  }, [draft?.id, draft?.storeId, draftId, retryNonce]);
+          .catch(() => {})
+          .finally(() => setLoading(false));
+      })
+      .catch((err) => {
+        console.error(err);
+        setError("Không tải được preset store. Vui lòng thử lại.");
+        setLoading(false);
+      });
+  }, [draft?.id, draft?.storeId, draft?.templateId, draftId, retryNonce]);
 
   // Load existing mockups if available
   useEffect(() => {
@@ -259,6 +335,8 @@ export default function Step3PreviewPage() {
           timeoutId = setTimeout(pollJob, 2000);
         } else {
           setGenerating(false);
+          setGenerationStartedAt(null);
+          setShowSlowMockupWarning(false);
           if (job.status === "completed" && job.images?.length > 0) {
             toast.success(`Đã tạo ${job.images.length} mockups`);
           } else if (job.status === "failed") {
@@ -285,6 +363,8 @@ export default function Step3PreviewPage() {
       } catch (err) {
         console.error("Polling error:", err);
         setGenerating(false);
+        setGenerationStartedAt(null);
+        setShowSlowMockupWarning(false);
       }
     };
 
@@ -323,9 +403,54 @@ export default function Step3PreviewPage() {
     updateDraft({ enabledSizes: Array.from(next) });
   };
 
+  const handleTemplateChange = async (templateId: string) => {
+    const nextTemplate = templates.find((candidate) => candidate.id === templateId);
+    if (!nextTemplate) return;
+    if (!nextTemplate.readiness.ready) {
+      setTemplateWarning("Template này chưa sẵn sàng. Hãy hoàn tất preset trước khi tạo mockup.");
+      return;
+    }
+
+    const nextColorIds = nextTemplate.colors
+      .filter((color) => color.enabled !== false)
+      .map((color) => color.id);
+    const nextSizes = nextTemplate.enabledSizes ?? [];
+
+    setTemplate(nextTemplate);
+    setTemplateWarning("");
+    setStoreColors(nextTemplate.colors.filter((color) => color.enabled !== false));
+    setSelectedColorIds(new Set(nextColorIds));
+    setSelectedSizes(new Set(nextSizes));
+    setPlacementOverride(null);
+    setPreviewColorIdx(0);
+    setLivePreviewView("front");
+    setMockupJobId(null);
+    setMockupImages([]);
+    setJobStatus(null);
+    setJobProgress({ completed: 0, total: 0, failed: 0 });
+    setGenerating(false);
+    setGenerationStartedAt(null);
+    setShowSlowMockupWarning(false);
+    setError("");
+
+    await updateDraft({
+      templateId: nextTemplate.id,
+      enabledColorIds: nextColorIds,
+      enabledSizes: nextSizes,
+      enabledVariantIdsOverride: [],
+      placementOverride: null,
+    });
+    await saveDraftImmediately();
+    setRetryNonce((value) => value + 1);
+  };
+
   const handleGenerate = async () => {
     if (selectedColorIds.size === 0) {
       setError("Vui lòng chọn ít nhất 1 màu");
+      return;
+    }
+    if (!selectedTemplate?.readiness.ready) {
+      setError("Template đang chọn chưa sẵn sàng. Vui lòng chọn template READY hoặc hoàn tất preset.");
       return;
     }
 
@@ -333,12 +458,16 @@ export default function Step3PreviewPage() {
     setJobStatus("pending");
     setJobProgress({ completed: 0, total: 0, failed: 0 });
     setMockupImages([]);
+    setGenerationStartedAt(Date.now());
+    setShowSlowMockupWarning(false);
     setError("");
 
     // 1. Save state to draft
     const enabledColorIds = Array.from(selectedColorIds);
     await updateDraft({
+      templateId: selectedTemplate.id,
       enabledColorIds,
+      enabledSizes: Array.from(selectedSizes),
       placementOverride: placementOverride || undefined,
     });
     await saveDraftImmediately();
@@ -358,6 +487,8 @@ export default function Step3PreviewPage() {
           setError(data.error || "Không thể tạo mockup");
         }
         setGenerating(false);
+        setGenerationStartedAt(null);
+        setShowSlowMockupWarning(false);
       } else {
         setMockupJobId(data.jobId);
         setJobStatus(data.status ?? "pending");
@@ -365,6 +496,8 @@ export default function Step3PreviewPage() {
     } catch (e) {
       setError("Lỗi kết nối");
       setGenerating(false);
+      setGenerationStartedAt(null);
+      setShowSlowMockupWarning(false);
     }
   };
 
@@ -404,6 +537,7 @@ export default function Step3PreviewPage() {
 
   // Determine active placement (override or default)
   const activePlacement = normalizePlacementData(placementOverride || template?.defaultPlacement, true);
+  const savedPlacementViews = getEnabledViews(normalizePlacementData(placementOverride || template?.defaultPlacement, false));
   const placementCountLabel = formatPlacementViewCount(activePlacement);
   const placementDetailLabel = formatPlacementViewDetails(activePlacement);
   const enabledPlacementViews = getEnabledViews(activePlacement);
@@ -433,7 +567,13 @@ export default function Step3PreviewPage() {
           <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
           <div className="flex-1">
             <p style={{ margin: 0, fontWeight: 500 }}>⚠️ Preset chưa hoàn thiện</p>
-            <p style={{ margin: 0, fontSize: "0.85rem", opacity: 0.6 }}>Store của bạn còn thiếu: {presetStatus.missing.join(", ")}.</p>
+            <p style={{ margin: 0, fontSize: "0.85rem", opacity: 0.6 }}>
+              Template đang chọn chưa sẵn sàng. Còn thiếu:{" "}
+              {(presetStatus.missing as string[])
+                .map((key) => PRESET_MISSING_LABELS[key] ?? key)
+                .join(", ")}
+              .
+            </p>
           </div>
           {isAdmin ? (
             <button
@@ -489,6 +629,81 @@ export default function Step3PreviewPage() {
 
         {/* LEFT PANEL: COLORS & PLACEMENT */}
         <div className="space-y-6">
+          <div className="card" style={{ padding: 16 }}>
+            <div className="flex items-center justify-between gap-3" style={{ marginBottom: 12 }}>
+              <div style={{ minWidth: 0 }}>
+                <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Mockup template</h3>
+                <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                  Chọn template cho listing hiện tại
+                </p>
+              </div>
+              {selectedTemplate && (
+                <span
+                  className={`badge ${selectedTemplate.readiness.ready ? "badge-success" : "badge-warning"}`}
+                  style={{ flexShrink: 0, fontSize: "0.65rem" }}
+                >
+                  {selectedTemplate.readiness.label}
+                </span>
+              )}
+            </div>
+
+            {templates.length > 1 ? (
+              <div style={{ display: "grid", gap: 8 }}>
+                {templates.map((candidate) => {
+                  const active = selectedTemplate?.id === candidate.id;
+                  const disabled = !candidate.readiness.ready;
+                  return (
+                    <button
+                      key={candidate.id}
+                      type="button"
+                      onClick={() => handleTemplateChange(candidate.id)}
+                      disabled={disabled}
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: active ? "1px solid var(--color-wise-green)" : "1px solid var(--border-default)",
+                        backgroundColor: active ? "rgba(146, 198, 72, 0.06)" : "transparent",
+                        opacity: disabled ? 0.5 : 1,
+                        cursor: disabled ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span style={{ fontWeight: 800, fontSize: "0.82rem", overflowWrap: "anywhere" }}>
+                          {candidate.name}
+                        </span>
+                        <span style={{ fontSize: "0.65rem", fontWeight: 800, opacity: 0.65, flexShrink: 0 }}>
+                          {candidate.readiness.label}
+                        </span>
+                      </div>
+                      <p style={{ margin: "4px 0 0", fontSize: "0.72rem", opacity: 0.6, lineHeight: 1.3 }}>
+                        {candidate.blueprintTitle || "Chưa có blueprint"} · {candidate.colors.length} màu · {candidate.enabledSizes.length} sizes
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : selectedTemplate ? (
+              <div style={{ fontSize: "0.8rem", lineHeight: 1.4 }}>
+                <strong>{selectedTemplate.name}</strong>
+                <p style={{ margin: "4px 0 0", opacity: 0.6 }}>
+                  {selectedTemplate.blueprintTitle || "Chưa có blueprint"} · {selectedTemplate.colors.length} màu · {selectedTemplate.enabledSizes.length} sizes
+                </p>
+              </div>
+            ) : (
+              <p style={{ margin: 0, opacity: 0.6, fontSize: "0.8rem" }}>
+                Store chưa có template.
+              </p>
+            )}
+
+            {templateWarning && (
+              <p style={{ margin: "10px 0 0", color: "var(--color-warning)", fontSize: "0.75rem", lineHeight: 1.35 }}>
+                {templateWarning}
+              </p>
+            )}
+          </div>
+
           <div className="card" style={{ padding: 16 }}>
             <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
               <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Màu sắc</h3>
@@ -613,7 +828,9 @@ export default function Step3PreviewPage() {
                 <p style={{ margin: 0, opacity: 0.5, fontSize: "0.72rem", lineHeight: 1.35 }}>
                   {placementOverride
                     ? "Chỉ áp dụng cho listing hiện tại."
-                    : "Đang dùng preset mặc định của store."}
+                    : savedPlacementViews.length > 0
+                      ? "Đang dùng placement đã lưu trong template đang chọn."
+                      : "Preview có thể dùng fallback để xem nhanh, nhưng template vẫn cần placement đã lưu."}
                 </p>
               </div>
 
@@ -773,15 +990,31 @@ export default function Step3PreviewPage() {
             <div className="flex justify-between items-center" style={{ marginBottom: 16 }}>
               <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>Mockup chính thức</h3>
               <button
-                className={`btn flex items-center gap-2 px-4 py-2 rounded font-medium ${draft?.designId && !isGenerating && presetStatus?.ready ? 'btn-primary' : ''}`}
+                className={`btn flex items-center gap-2 px-4 py-2 rounded font-medium ${draft?.designId && !isGenerating && selectedTemplateReady ? 'btn-primary' : ''}`}
                 onClick={handleGenerate}
-                disabled={isGenerating || !draft?.designId || selectedColorIds.size === 0 || !presetStatus?.ready}
-                style={(!draft?.designId || isGenerating || selectedColorIds.size === 0 || !presetStatus?.ready) ? { backgroundColor: "var(--bg-tertiary)", color: "var(--color-text)", opacity: 0.5, cursor: "not-allowed" } : {}}
+                disabled={isGenerating || !draft?.designId || selectedColorIds.size === 0 || !selectedTemplateReady}
+                style={(!draft?.designId || isGenerating || selectedColorIds.size === 0 || !selectedTemplateReady) ? { backgroundColor: "var(--bg-tertiary)", color: "var(--color-text)", opacity: 0.5, cursor: "not-allowed" } : {}}
               >
                 {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
                 {generateButtonLabel}
               </button>
             </div>
+
+            {showSlowMockupWarning && isGenerating && jobProgress.total === 0 && (
+              <div
+                className="alert"
+                style={{
+                  marginBottom: 12,
+                  backgroundColor: "rgba(234, 179, 8, 0.06)",
+                  border: "1px solid rgba(234, 179, 8, 0.25)",
+                }}
+              >
+                <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
+                <span style={{ fontSize: "0.82rem" }}>
+                  Printify đang render lâu hơn bình thường. Hệ thống vẫn đang kiểm tra và sẽ hiện lỗi nếu job bị kẹt.
+                </span>
+              </div>
+            )}
 
             {/* Outdated mockup banner */}
             {draft?.mockupsStale && mockupImages.length > 0 && !isGenerating && (
