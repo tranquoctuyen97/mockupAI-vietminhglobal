@@ -18,7 +18,7 @@ async function main() {
   console.log("Step 1: Load draft...");
   const draft = await prisma.wizardDraft.findUnique({
     where: { id: DRAFT_ID },
-    include: { mockupJobs: true, design: true, store: { include: { template: true, colors: true } } },
+    include: { mockupJobs: true, design: true, store: { include: { templates: true, colors: true } } },
   });
   if (!draft) { console.error("❌ Draft not found"); return; }
   console.log(`  ✅ Draft found | status: ${draft.status} | storeId: ${draft.storeId}`);
@@ -74,7 +74,7 @@ async function main() {
 
   // Step 8: Check variant IDs
   console.log("Step 8: Check variants...");
-  const variantIds = draft.store.template?.enabledVariantIds ?? [];
+  const variantIds = draft.store.templates?.[0]?.enabledVariantIds ?? [];
   console.log(`  ${variantIds.length > 0 ? "✅" : "❌"} ${variantIds.length} enabled variant IDs`);
 
   console.log("\n========== VERIFICATION COMPLETE ==========\n");

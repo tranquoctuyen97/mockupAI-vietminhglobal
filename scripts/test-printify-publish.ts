@@ -50,7 +50,7 @@ async function main() {
           account: { select: { id: true, apiKeyEncrypted: true, status: true } },
         },
       },
-      template: true,
+      templates: true,
     },
   });
 
@@ -84,8 +84,8 @@ async function main() {
   }
 
   // 3. Test catalog access — get blueprint variants
-  const blueprintId = store.template?.printifyBlueprintId ?? 6;
-  const printProviderId = store.template?.printifyPrintProviderId ?? 99;
+  const blueprintId = store.templates?.[0]?.printifyBlueprintId ?? 6;
+  const printProviderId = store.templates?.[0]?.printifyPrintProviderId ?? 99;
 
   console.log(`\n--- Test 2: GET /catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json ---`);
   let catalogVariants: any[] = [];
