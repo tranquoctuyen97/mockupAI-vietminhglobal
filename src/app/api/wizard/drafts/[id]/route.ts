@@ -143,8 +143,9 @@ export async function buildChecklist(
   let placementValid = true;
   try {
     if (PRODUCT_DEFAULTS.placement.boundaryStrict) {
+      const template = draft.template || draft.store?.templates?.find((t: any) => t.isDefault) || null;
       const placementData: PlacementData = migratePlacementOnRead(
-        draft.placementOverride ?? draft.store?.template?.defaultPlacement,
+        draft.placementOverride ?? template?.defaultPlacement,
       );
       const design = draft.design as { width: number; height: number; dpi: number | null } | null;
       if (design) {

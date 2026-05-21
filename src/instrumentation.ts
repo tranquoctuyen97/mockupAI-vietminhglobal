@@ -7,13 +7,13 @@
  */
 
 export async function register() {
+  if (process.env.NEXT_PHASE === "phase-production-build") {
+    return;
+  }
+
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    const { startHealthCheckWorker } = await import(
-      "@/lib/queue/workers/health-check-worker"
-    );
-    const { startMockupWorker } = await import(
-      "@/lib/queue/workers/mockup-worker"
-    );
+    const { startHealthCheckWorker } = await import("@/lib/queue/workers/health-check-worker");
+    const { startMockupWorker } = await import("@/lib/queue/workers/mockup-worker");
 
     try {
       startHealthCheckWorker();

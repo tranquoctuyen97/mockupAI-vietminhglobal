@@ -4,14 +4,9 @@
  */
 
 import { prisma } from "@/lib/db";
-import { getEnabledViews, normalizePlacementData } from "@/lib/placement/views";
+import { getTemplateReadiness, type TemplateMissing } from "@/lib/stores/template-readiness";
 
-export type PresetMissing =
-  | "blueprint"
-  | "provider"
-  | "variants"
-  | "colors"
-  | "placement";
+export type PresetMissing = TemplateMissing;
 
 export interface PresetStatus {
   ready: boolean;
@@ -25,24 +20,12 @@ const TOTAL_PRESET_ITEMS = 5;
  * Compute store preset readiness by querying template + colors
  */
 export async function computePresetStatus(storeId: string): Promise<PresetStatus> {
-  const [template, colorCount] = await Promise.all([
-    prisma.storeMockupTemplate.findUnique({ where: { storeId } }),
-    prisma.storeColor.count({ where: { storeId, enabled: true } }),
-  ]);
+  const template = await prisma.storeMockupTemplate.findFirst({
+    where: { storeId, isDefault: true },
+    include: { colors: true },
+  });
 
-  const missing: PresetMissing[] = [];
-
-  if (!template?.printifyBlueprintId) missing.push("blueprint");
-  if (!template?.printifyPrintProviderId) missing.push("provider");
-  if (!template?.enabledVariantIds?.length) missing.push("variants");
-  if (colorCount === 0) missing.push("colors");
-
-  const placementFilled = Boolean(
-    template?.defaultPlacement &&
-    getEnabledViews(normalizePlacementData(template.defaultPlacement, false)).length > 0,
-  );
-  if (!placementFilled) missing.push("placement");
-
+  const { missing } = getTemplateReadiness(template);
   const done = TOTAL_PRESET_ITEMS - missing.length;
   return {
     ready: missing.length === 0,
@@ -63,32 +46,20 @@ export const MISSING_TO_TAB: Record<PresetMissing, string> = {
 };
 
 /**
- * Sync version for use in listStores (when template is already loaded via include)
+ * Sync version for use in listStores (when templates are already loaded via include)
  */
 export function getPresetStatusSync(store: {
-  template?: {
+  templates?: Array<{
     printifyBlueprintId?: number | null;
     printifyPrintProviderId?: number | null;
     enabledVariantIds?: number[];
     defaultPlacement?: unknown;
-  } | null;
-  colors?: { enabled?: boolean }[];
+    isDefault?: boolean;
+    colors?: unknown[];
+  }> | null;
 }): PresetStatus {
-  const template = store.template;
-  const enabledColors = store.colors?.filter(c => c.enabled !== false) ?? [];
-  const missing: PresetMissing[] = [];
-
-  if (!template?.printifyBlueprintId) missing.push("blueprint");
-  if (!template?.printifyPrintProviderId) missing.push("provider");
-  if (!template?.enabledVariantIds?.length) missing.push("variants");
-  if (enabledColors.length === 0) missing.push("colors");
-
-  const placementFilled = Boolean(
-    template?.defaultPlacement &&
-    getEnabledViews(normalizePlacementData(template.defaultPlacement, false)).length > 0,
-  );
-  if (!placementFilled) missing.push("placement");
-
+  const template = store.templates?.find((t) => t.isDefault) ?? null;
+  const { missing } = getTemplateReadiness(template);
   const done = TOTAL_PRESET_ITEMS - missing.length;
   return {
     ready: missing.length === 0,

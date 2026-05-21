@@ -24,15 +24,38 @@ export async function GET(
 
   const { id: storeId } = await params;
 
-  const store = await prisma.store.findFirst({
-    where: { id: storeId, tenantId: session.tenantId },
-    include: { template: true },
-  });
-  if (!store?.template) {
-    return NextResponse.json(
-      { error: "Store template not found" },
-      { status: 404 },
-    );
+  const url = new URL(request.url);
+  const templateId = url.searchParams.get("templateId");
+  const queryBlueprintId = url.searchParams.get("blueprintId");
+  const queryPrintProviderId = url.searchParams.get("printProviderId");
+
+  let blueprintId: number;
+  let printProviderId: number;
+  let enabledSizes: string[] = [];
+
+  if (queryBlueprintId && queryPrintProviderId) {
+    blueprintId = parseInt(queryBlueprintId, 10);
+    printProviderId = parseInt(queryPrintProviderId, 10);
+  } else {
+    const store = await prisma.store.findFirst({
+      where: { id: storeId, tenantId: session.tenantId },
+      include: {
+        templates: {
+          where: templateId ? { id: templateId } : { isDefault: true },
+        },
+      },
+    });
+
+    const template = store?.templates[0] ?? null;
+    if (!template) {
+      return NextResponse.json(
+        { error: "Store template not found" },
+        { status: 404 },
+      );
+    }
+    blueprintId = template.printifyBlueprintId;
+    printProviderId = template.printifyPrintProviderId;
+    enabledSizes = template.enabledSizes;
   }
 
   try {
@@ -42,15 +65,15 @@ export async function GET(
     const variants = await ensureVariantCostCache({
       client,
       shopId: externalShopId,
-      blueprintId: store.template.printifyBlueprintId,
-      printProviderId: store.template.printifyPrintProviderId,
+      blueprintId,
+      printProviderId,
     });
 
     const sizes = groupSizes(variants);
 
     return NextResponse.json({
       sizes,
-      enabledSizes: store.template.enabledSizes,
+      enabledSizes,
     });
   } catch (err) {
     // Fallback: return catalog-based sizes without cost data
@@ -58,8 +81,8 @@ export async function GET(
 
     const { client } = await getClientForStore(storeId);
     const catalogResponse = await client.getBlueprintVariants(
-      store.template.printifyBlueprintId,
-      store.template.printifyPrintProviderId,
+      blueprintId,
+      printProviderId,
     );
 
     // Extract unique sizes from catalog variant titles
@@ -79,7 +102,7 @@ export async function GET(
 
     return NextResponse.json({
       sizes,
-      enabledSizes: store.template.enabledSizes,
+      enabledSizes,
       pricing: "unavailable",
       warning:
         "Không lấy được giá Printify. Variants vẫn dùng được, nhưng size delta sẽ = $0.",

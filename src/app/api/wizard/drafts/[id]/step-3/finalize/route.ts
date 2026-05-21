@@ -27,7 +27,11 @@ export async function POST(
 
     const draft = await db.wizardDraft.findUnique({
       where: { id: draftId },
-      include: { design: true, store: { include: { template: true } } },
+      include: {
+        design: true,
+        template: true,
+        store: true,
+      },
     });
 
     if (!draft) {
@@ -38,17 +42,25 @@ export async function POST(
       return NextResponse.json({ error: "Draft has no design" }, { status: 400 });
     }
 
+    // Get active template
+    let template = draft.template;
+    if (!template && draft.storeId) {
+      template = await db.storeMockupTemplate.findFirst({
+        where: { storeId: draft.storeId, isDefault: true },
+      });
+    }
+
     // 1. Migrate placement on-read. If the draft has no override, validate the store preset.
     const placementData: PlacementData = normalizePlacementData(
-      migratePlacementOnRead(draft.placementOverride ?? draft.store?.template?.defaultPlacement),
+      migratePlacementOnRead(draft.placementOverride ?? template?.defaultPlacement),
       true,
     );
 
     // 2. Resolve print area (use first-variant active view; finalize against FRONT as default)
     let printArea = DEFAULT_PRINT_AREA;
-    if (draft.store?.template?.printifyBlueprintId) {
+    if (template?.printifyBlueprintId) {
       const dbArea = await db.blueprintPrintArea.findFirst({
-        where: { printifyBlueprintId: draft.store.template.printifyBlueprintId, position: "FRONT" as any },
+        where: { printifyBlueprintId: template.printifyBlueprintId, position: "FRONT" as any },
       });
       if (dbArea) {
         printArea = {

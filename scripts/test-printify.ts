@@ -30,7 +30,7 @@ async function testPrintify() {
 
   const draft = await prisma.wizardDraft.findUnique({
     where: { id: listing.wizardDraftId },
-    include: { mockupJobs: true, design: true, store: { include: { template: true } } },
+    include: { mockupJobs: true, design: true, store: { include: { templates: true } } },
   });
 
   if (!draft) {

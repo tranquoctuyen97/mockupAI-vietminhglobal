@@ -111,7 +111,58 @@ export async function createOrUpdatePrintifyProduct(input: {
   description: string;
   tags?: string[];
 }): Promise<{ productId: string; images: ParsedPrintifyMockupImage[] }> {
-  const payload = buildPrintifyProductPayload(input);
+  // Fetch full catalog variants for this blueprint+provider.
+  // Printify requires ALL variants to be present in the payload (especially for PUT).
+  // Selected variants → is_enabled: true, rest → is_enabled: false.
+  let fullVariants: Array<{ id: number; price: number; is_enabled: boolean }> | undefined;
+
+  if (!input.variants) {
+    try {
+      const { variants: catalogVariants } = await input.client.getBlueprintVariants(
+        input.blueprintId,
+        input.printProviderId,
+      );
+      const enabledSet = new Set(input.variantIds);
+      fullVariants = catalogVariants.map((v) => ({
+        id: v.id,
+        price: 2000,
+        is_enabled: enabledSet.has(v.id),
+      }));
+    } catch (err) {
+      console.warn("[Printify] Failed to fetch catalog variants for full payload, falling back to subset:", err);
+      // Fallback: use only the selected variant IDs (may fail on PUT)
+    }
+  }
+
+  const payloadInput = fullVariants
+    ? { ...input, variants: fullVariants }
+    : input;
+
+  const payload = buildPrintifyProductPayload(payloadInput);
+
+  // Debug log — dump payload summary before sending to Printify
+  const payloadVariants = (payload.variants as Array<{ id: number; is_enabled: boolean }>) ?? [];
+  const printAreas = (payload.print_areas as Array<{ variant_ids: number[] }>) ?? [];
+  const enabledCount = payloadVariants.filter(v => v.is_enabled).length;
+  const disabledCount = payloadVariants.length - enabledCount;
+  const printAreaVariantIds = printAreas.flatMap(pa => pa.variant_ids);
+  const variantIdsNotInPrintArea = payloadVariants.map(v => v.id).filter(id => !printAreaVariantIds.includes(id));
+  const printAreaIdsNotInVariants = printAreaVariantIds.filter(id => !payloadVariants.some(v => v.id === id));
+
+  console.log(`[Printify] ${input.productId ? "PUT" : "POST"} payload debug:`, JSON.stringify({
+    shopId: input.shopId,
+    productId: input.productId ?? "NEW",
+    blueprintId: payload.blueprint_id,
+    printProviderId: payload.print_provider_id,
+    totalVariants: payloadVariants.length,
+    enabledVariants: enabledCount,
+    disabledVariants: disabledCount,
+    printAreaVariantIdCount: printAreaVariantIds.length,
+    variantIdsNotInPrintArea,
+    printAreaIdsNotInVariants,
+    placeholders: printAreas.map(pa => (pa as any).placeholders?.map((ph: any) => ph.position)),
+  }, null, 2));
+
   const product = input.productId
     ? await input.client.updateProduct(input.shopId, input.productId, payload)
     : await input.client.createProduct(input.shopId, payload);

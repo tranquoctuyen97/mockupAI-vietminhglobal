@@ -87,10 +87,10 @@ export async function ensureVariantCostCache(input: {
     description: "Internal product to fetch variant costs. Auto-deleted.",
     blueprint_id: blueprintId,
     print_provider_id: printProviderId,
-    variants: catalogVariants.map((v) => ({
+    variants: catalogVariants.map((v, idx) => ({
       id: v.id,
       price: 100, // $1.00 placeholder — Printify requires non-zero
-      is_enabled: true,
+      is_enabled: idx < 100, // Only enable first 100 to avoid Printify API limit (code 8251)
     })),
     print_areas: [
       {

@@ -43,6 +43,7 @@ interface DraftData {
   id: string;
   designId: string | null;
   storeId: string | null;
+  templateId: string | null;
   productType: string | null;
   blueprintId: number | null;
   printProviderId: number | null;
@@ -56,6 +57,16 @@ interface DraftData {
       defaultPlacement?: unknown;
       enabledVariantIds?: number[];
     } | null;
+    templates?: Array<{
+      id: string;
+      name: string;
+      isDefault: boolean;
+      blueprintTitle?: string;
+      printProviderTitle?: string;
+      defaultPlacement?: unknown;
+      enabledVariantIds?: number[];
+      enabledSizes?: string[];
+    }>;
   } | null;
   placementOverride: unknown | null;
   placement: unknown | null;

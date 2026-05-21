@@ -12,7 +12,7 @@ import { z } from "zod";
 const ColorSchema = z.object({
   name: z.string().min(1),
   hex: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
-  printifyColorId: z.string().optional(),
+  printifyColorId: z.string().nullable().optional(),
   enabled: z.boolean().default(true),
   sortOrder: z.number().int().default(0),
 });
@@ -76,20 +76,41 @@ export async function PUT(
 
   const { colors } = parsed.data;
 
-  // Transaction: delete existing + insert new (full replace)
-  await prisma.$transaction(async (tx) => {
-    await tx.storeColor.deleteMany({ where: { storeId } });
+  const incomingNames = new Set(colors.map((c) => c.name));
 
-    if (colors.length > 0) {
-      await tx.storeColor.createMany({
-        data: colors.map((c, i) => ({
+  // Transaction: safe upsert to avoid cascading delete of TemplateColor
+  await prisma.$transaction(async (tx) => {
+    // 1. Delete colors that are not in the incoming batch
+    await tx.storeColor.deleteMany({
+      where: {
+        storeId,
+        name: { notIn: Array.from(incomingNames) },
+      },
+    });
+
+    // 2. Upsert incoming colors
+    for (const [i, color] of colors.entries()) {
+      await tx.storeColor.upsert({
+        where: {
+          storeId_name: {
+            storeId,
+            name: color.name,
+          },
+        },
+        create: {
           storeId,
-          name: c.name,
-          hex: c.hex,
-          printifyColorId: c.printifyColorId ?? null,
-          enabled: c.enabled,
-          sortOrder: c.sortOrder ?? i,
-        })),
+          name: color.name,
+          hex: color.hex,
+          printifyColorId: color.printifyColorId ?? null,
+          enabled: color.enabled,
+          sortOrder: color.sortOrder ?? i,
+        },
+        update: {
+          hex: color.hex,
+          printifyColorId: color.printifyColorId ?? null,
+          enabled: color.enabled,
+          sortOrder: color.sortOrder ?? i,
+        },
       });
     }
   });

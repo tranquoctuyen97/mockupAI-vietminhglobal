@@ -55,3 +55,36 @@ test("getDraft includes mockup job images for review step", () => {
   assert.match(source, /include:\s*{\s*images:\s*{/);
   assert.match(source, /images:\s*{\s*orderBy:\s*{\s*sortOrder:\s*"asc"/);
 });
+
+test("wizard draft state accepts templateId patches", () => {
+  const sanitized = sanitizeDraftPatch({
+    templateId: "template_1",
+    enabledSizes: ["S", "M"],
+    unknownTemplateField: "drop",
+  });
+
+  assert.deepEqual(sanitized, {
+    templateId: "template_1",
+    enabledSizes: ["S", "M"],
+  });
+});
+
+test("updateDraft marks mockups stale when template changes", () => {
+  const source = readFileSync(
+    join(process.cwd(), "src/lib/wizard/state.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /templateChanged/);
+  assert.match(source, /mockupsStale:\s*true/);
+  assert.match(source, /mockupsStaleReason:\s*"template_changed"/);
+});
+
+test("step 1 resets templateId when store changes", () => {
+  const source = readFileSync(
+    join(process.cwd(), "src/app/(authed)/wizard/[draftId]/step-1/page.tsx"),
+    "utf8",
+  );
+
+  assert.match(source, /templateId:\s*null/);
+});

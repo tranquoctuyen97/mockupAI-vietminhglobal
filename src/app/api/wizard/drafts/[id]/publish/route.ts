@@ -21,7 +21,12 @@ export async function POST(
   // Load draft with all data
   const draft = await prisma.wizardDraft.findFirst({
     where: { id: draftId, tenantId: session.tenantId },
-    include: { design: true, mockupJobs: true, store: { include: { template: true, colors: true } } },
+    include: {
+      design: true,
+      mockupJobs: true,
+      template: true,
+      store: { include: { colors: true } },
+    },
   });
 
   if (!draft) {
@@ -39,7 +44,16 @@ export async function POST(
   if (!draft.store) {
     return NextResponse.json({ error: "Store không tồn tại. Vui lòng chọn lại store." }, { status: 400 });
   }
-  const productType = draft.store?.template?.blueprintTitle || draft.store?.name || "T-Shirt";
+
+  // Get active template
+  let template = draft.template;
+  if (!template && draft.storeId) {
+    template = await prisma.storeMockupTemplate.findFirst({
+      where: { storeId: draft.storeId, isDefault: true },
+    });
+  }
+
+  const productType = template?.blueprintTitle || draft.store?.name || "T-Shirt";
 
   const aiContent = draft.aiContent as { title?: string; description?: string; tags?: string[] } | null;
   if (!aiContent?.title) {
@@ -74,6 +88,7 @@ export async function POST(
       tenantId: session.tenantId,
       storeId: draft.storeId,
       designId: draft.designId,
+      templateId: template?.id || null,
       wizardDraftId: draftId,
       title: aiContent.title || "",
       descriptionHtml: aiContent.description || "",

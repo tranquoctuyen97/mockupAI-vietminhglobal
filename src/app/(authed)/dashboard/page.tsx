@@ -1,6 +1,7 @@
 import { validateSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
 import { getDashboardSummary } from "@/lib/analytics/queries";
+import { prisma } from "@/lib/db";
 import DashboardClient from "./DashboardClient";
 
 export const metadata = {
@@ -16,11 +17,19 @@ export default async function DashboardPage() {
   const session = await validateSession();
   if (!session) redirect("/login");
 
-  const summary = await getDashboardSummary(session.tenantId);
+  const [summary, tenant] = await Promise.all([
+    getDashboardSummary(session.tenantId),
+    prisma.tenant.findUnique({
+      where: { id: session.tenantId },
+      select: { twTimezone: true },
+    }),
+  ]);
 
   return (
     <DashboardClient
       summary={summary}
+      twTimezone={tenant?.twTimezone ?? "America/Los_Angeles"}
     />
   );
 }
+

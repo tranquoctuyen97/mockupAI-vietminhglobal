@@ -55,7 +55,9 @@ export default function Step1StorePage() {
     updateDraft({
       storeId,
       // Reset store-dependent selections when store changes.
+      templateId: null,
       enabledColorIds: [],
+      enabledSizes: [],
       enabledVariantIdsOverride: [],
       placementOverride: null,
     });

@@ -45,8 +45,8 @@ export async function GET(
     return NextResponse.json({ error: "Store not found" }, { status: 404 });
   }
 
-  const template = await prisma.storeMockupTemplate.findUnique({
-    where: { storeId },
+  const template = await prisma.storeMockupTemplate.findFirst({
+    where: { storeId, isDefault: true },
   });
 
   return NextResponse.json({ template });
@@ -81,8 +81,8 @@ export async function PATCH(
   const data = parsed.data;
 
   // Check template exists
-  const existing = await prisma.storeMockupTemplate.findUnique({
-    where: { storeId },
+  const existing = await prisma.storeMockupTemplate.findFirst({
+    where: { storeId, isDefault: true },
   });
 
   if (!existing) {
@@ -137,7 +137,7 @@ export async function PATCH(
   }
 
   const template = await prisma.storeMockupTemplate.update({
-    where: { storeId },
+    where: { id: existing.id },
     data: updateData,
   });
 

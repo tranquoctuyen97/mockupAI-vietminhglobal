@@ -46,7 +46,7 @@ async function main() {
     orderBy: { updatedAt: "desc" },
     include: {
       design: true,
-      store: { include: { template: true, colors: true, printifyShop: { include: { account: true } } } },
+      store: { include: { templates: true, colors: true, printifyShop: { include: { account: true } } } },
     },
   });
 
@@ -57,7 +57,7 @@ async function main() {
 
   const draft = latestDraft;
   const store = draft.store!;
-  const template = store.template;
+  const template = store.templates?.[0];
   const apiKey = dec(store.printifyShop!.account.apiKeyEncrypted);
   const shopId = store.printifyShop!.externalShopId;
   const blueprintId = template?.printifyBlueprintId ?? 0;

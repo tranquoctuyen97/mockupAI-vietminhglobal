@@ -40,7 +40,12 @@ export async function POST(
   const draft = listing.wizardDraftId
     ? await prisma.wizardDraft.findUnique({
         where: { id: listing.wizardDraftId },
-        include: { design: true, mockupJobs: true, store: { include: { template: true } } },
+        include: {
+          design: true,
+          mockupJobs: true,
+          template: true,
+          store: true,
+        },
       })
     : null;
 

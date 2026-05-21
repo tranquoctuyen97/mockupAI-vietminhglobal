@@ -9,7 +9,7 @@
 
 import { ShopifyClient } from "@/lib/shopify/client";
 import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, extname } from "node:path";
 
 export type ShopifyMockupImage =
   | { kind: "local"; path: string; colorName?: string }
@@ -260,10 +260,84 @@ async function uploadProductImages(
   }));
 }
 
+/**
+ * Detect image MIME type from magic bytes in the buffer header.
+ * Falls back to extension-based detection, then "image/png".
+ */
+function detectImageMime(buffer: Buffer, filePath: string): { mime: string; ext: string } {
+  // Check magic bytes (first 4-12 bytes)
+  if (buffer.length >= 8) {
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if (
+      buffer[0] === 0x89 &&
+      buffer[1] === 0x50 &&
+      buffer[2] === 0x4e &&
+      buffer[3] === 0x47
+    ) {
+      return { mime: "image/png", ext: ".png" };
+    }
+    // JPEG: FF D8 FF
+    if (
+      buffer[0] === 0xff &&
+      buffer[1] === 0xd8 &&
+      buffer[2] === 0xff
+    ) {
+      return { mime: "image/jpeg", ext: ".jpg" };
+    }
+    // WEBP: RIFF....WEBP
+    if (
+      buffer[0] === 0x52 && // R
+      buffer[1] === 0x49 && // I
+      buffer[2] === 0x46 && // F
+      buffer[3] === 0x46 && // F
+      buffer.length >= 12 &&
+      buffer[8] === 0x57 && // W
+      buffer[9] === 0x45 && // E
+      buffer[10] === 0x42 && // B
+      buffer[11] === 0x50    // P
+    ) {
+      return { mime: "image/webp", ext: ".webp" };
+    }
+    // GIF: 47 49 46 38
+    if (
+      buffer[0] === 0x47 &&
+      buffer[1] === 0x49 &&
+      buffer[2] === 0x46 &&
+      buffer[3] === 0x38
+    ) {
+      return { mime: "image/gif", ext: ".gif" };
+    }
+  }
+
+  // Fallback: guess from file extension
+  const currentExt = extname(filePath).toLowerCase();
+  const extMap: Record<string, { mime: string; ext: string }> = {
+    ".png": { mime: "image/png", ext: ".png" },
+    ".jpg": { mime: "image/jpeg", ext: ".jpg" },
+    ".jpeg": { mime: "image/jpeg", ext: ".jpeg" },
+    ".webp": { mime: "image/webp", ext: ".webp" },
+    ".gif": { mime: "image/gif", ext: ".gif" },
+  };
+  return extMap[currentExt] ?? { mime: "image/png", ext: ".png" };
+}
+
 async function stageLocalProductImages(
   client: ShopifyClient,
   localImages: Array<Extract<ShopifyMockupImage, { kind: "local" }>>,
 ): Promise<Array<{ originalSource: string; colorName?: string }>> {
+  // Step 1: Read all file buffers first to detect actual MIME types
+  const fileData = await Promise.all(
+    localImages.map(async (img) => {
+      const buffer = await readFile(img.path);
+      const detected = detectImageMime(buffer, img.path);
+      // Build filename with correct extension matching the detected MIME
+      const nameWithoutExt = basename(img.path, extname(img.path));
+      const correctedFilename = `${nameWithoutExt}${detected.ext}`;
+      return { img, buffer, mime: detected.mime, filename: correctedFilename };
+    }),
+  );
+
+  // Step 2: Create staged uploads with correct filename + mimeType
   const stagesMutation = `
     mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
       stagedUploadsCreate(input: $input) {
@@ -277,9 +351,9 @@ async function stageLocalProductImages(
     }
   `;
 
-  const stagedInput = localImages.map((img) => ({
-    filename: basename(img.path),
-    mimeType: "image/png",
+  const stagedInput = fileData.map((f) => ({
+    filename: f.filename,
+    mimeType: f.mime,
     httpMethod: "PUT",
     resource: "PRODUCT_IMAGE",
   }));
@@ -303,14 +377,13 @@ async function stageLocalProductImages(
 
   const targets = stagedData.stagedUploadsCreate.stagedTargets;
 
+  // Step 3: Upload file buffers with correct Content-Type
   for (let i = 0; i < targets.length; i++) {
     const target = targets[i];
-    const fileBuffer = await readFile(localImages[i].path);
-
     await fetch(target.url, {
       method: "PUT",
-      headers: { "Content-Type": "image/png" },
-      body: fileBuffer,
+      headers: { "Content-Type": fileData[i].mime },
+      body: fileData[i].buffer,
     });
   }
 

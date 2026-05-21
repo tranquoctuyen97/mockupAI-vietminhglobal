@@ -41,7 +41,7 @@ async function main() {
       printifyShop: {
         include: { account: { select: { apiKeyEncrypted: true } } },
       },
-      template: true,
+      templates: true,
     },
   });
 
@@ -51,8 +51,8 @@ async function main() {
   const shopId = store.printifyShop.externalShopId;
   const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
 
-  const blueprintId = store.template?.printifyBlueprintId ?? 5;
-  const printProviderId = store.template?.printifyPrintProviderId ?? 42;
+  const blueprintId = store.templates?.[0]?.printifyBlueprintId ?? 5;
+  const printProviderId = store.templates?.[0]?.printifyPrintProviderId ?? 42;
 
   // Get latest published draft
   const draft = await prisma.wizardDraft.findFirst({
