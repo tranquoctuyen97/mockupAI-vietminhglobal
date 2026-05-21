@@ -5,7 +5,7 @@
  */
 
 import sharp from "sharp";
-import { Placement } from "../placement/types";
+import type { Placement } from "../placement/types";
 
 export interface CompositeImageOptions {
   mockupBuffer: Buffer;
@@ -15,16 +15,22 @@ export interface CompositeImageOptions {
   outputPath: string;
 }
 
+export interface CustomCompositeRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotationDeg: number;
+}
+
 /**
  * Generate a mockup by overlaying design onto a mockup image
  */
 export async function compositeImage(options: CompositeImageOptions): Promise<void> {
-  const { mockupBuffer, designBuffer, placement, colorHex, outputPath } = options;
+  const { mockupBuffer, designBuffer, placement, outputPath } = options;
 
-  let baseImage = sharp(mockupBuffer);
-  const metadata = await baseImage.metadata();
+  const baseImage = sharp(mockupBuffer);
   const outputWidth = 1200; // Resvg fitTo.value is 1200
-  const outputHeight = 1400; // Because aspect ratio is 600x700 -> 1200x1400
 
   // Map LivePreview logic:
   // SVG_VIEWBOX = 600x700
@@ -80,5 +86,38 @@ export async function compositeImage(options: CompositeImageOptions): Promise<vo
       },
     ])
     .png()
+    .toFile(outputPath);
+}
+
+export async function compositeImageOnCustomMockup(
+  mockupBuffer: Buffer,
+  designBuffer: Buffer,
+  region: CustomCompositeRegion,
+  outputPath: string,
+): Promise<void> {
+  const designWidth = Math.max(1, Math.round(region.width));
+  const designHeight = Math.max(1, Math.round(region.height));
+  const left = Math.max(0, Math.round(region.x));
+  const top = Math.max(0, Math.round(region.y));
+
+  let design = sharp(designBuffer)
+    .resize(designWidth, designHeight, {
+      fit: "contain",
+      withoutEnlargement: false,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
+    .png();
+
+  if (region.rotationDeg !== 0) {
+    design = design.rotate(region.rotationDeg, {
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    });
+  }
+
+  const overlay = await design.toBuffer();
+
+  await sharp(mockupBuffer)
+    .composite([{ input: overlay, left, top }])
+    .jpeg({ quality: 90 })
     .toFile(outputPath);
 }

@@ -10,9 +10,12 @@ interface TokenCache {
   expiresAt: number;
 }
 
+type InkhubCredentials = { username: string; password: string };
+
 // Per-tenant token cache
 const cache = new Map<string, TokenCache>();
 const pendingLogin = new Map<string, Promise<void>>();
+let credentialsForTest: InkhubCredentials | null = null;
 
 function parseJwtExp(token: string): number {
   const payload = JSON.parse(
@@ -21,7 +24,9 @@ function parseJwtExp(token: string): number {
   return payload.exp * 1000;
 }
 
-async function getCredentials(tenantId: string): Promise<{ username: string; password: string }> {
+async function getCredentials(tenantId: string): Promise<InkhubCredentials> {
+  if (credentialsForTest) return credentialsForTest;
+
   const row = await prisma.inkhubCredential.findUnique({
     where: { tenantId },
   });
@@ -88,4 +93,9 @@ export function invalidateToken(tenantId: string): void {
 export function _resetForTest(): void {
   cache.clear();
   pendingLogin.clear();
+  credentialsForTest = null;
+}
+
+export function _setCredentialsForTest(credentials: InkhubCredentials): void {
+  credentialsForTest = credentials;
 }

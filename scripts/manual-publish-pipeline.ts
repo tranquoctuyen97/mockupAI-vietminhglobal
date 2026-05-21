@@ -1,6 +1,6 @@
 /**
  * Pre-publish verification: Test all prerequisites before publish
- * Run: npx tsx scripts/test-publish-pipeline.ts
+ * Run: npx tsx scripts/manual-publish-pipeline.ts
  */
 
 import "dotenv/config";

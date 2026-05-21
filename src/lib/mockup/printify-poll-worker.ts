@@ -1,13 +1,12 @@
-import { Worker, type Job } from "bullmq";
+import { type Job, Worker } from "bullmq";
 import { prisma } from "../db";
-import type { PrintifyMockupPollPayload } from "./queue";
 import { getClientForStore } from "../printify/account";
-import {
-  pollPrintifyMockups,
-  type ParsedPrintifyMockupImage,
-} from "../printify/product";
+import { type ParsedPrintifyMockupImage, pollPrintifyMockups } from "../printify/product";
 import { isFinalBullMqAttempt } from "./progress";
+import type { PrintifyMockupPollPayload } from "./queue";
+import { getMockupCompositeQueue } from "./queue";
 import { cacheRemoteMockupImage } from "./remote-media";
+import { buildCustomMockupSourceUrl, type MockupSourceType } from "./source-url";
 
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
 const concurrency = parseInt(process.env.PRINTIFY_MOCKUP_WORKER_CONCURRENCY || "2", 10);
@@ -68,10 +67,47 @@ export async function processPrintifyMockupPollJob(
       client,
       externalShopId,
     });
-    const rows = await buildMockupImageRows({ mockups, variantColorLookup });
+    const printifyRows = await buildMockupImageRows({ mockups, variantColorLookup });
+    const { draftRows, templateRows, mode } = await buildCustomRowsForDraft({
+      draftId,
+      storeId,
+      variantColorLookup,
+    });
+
+    // Determine which bucket gets default inclusion
+    const bucket = chooseIncludedSourceBucket({
+      mode,
+      hasDraftRows: draftRows.length > 0,
+      hasTemplateRows: templateRows.length > 0,
+    });
+
+    // Collect custom color keys for exclusion of Printify rows
+    const customColorKeys = new Set([
+      ...draftRows.map((row) => normalizeColorKey(row.colorName)),
+      ...templateRows.map((row) => normalizeColorKey(row.colorName)),
+    ]);
+
+    // If custom mockups exist for colors, exclude Printify rows for those colors
+    if (bucket === "draft" || bucket === "template") {
+      markPrintifyRowsExcludedForCustomColors(printifyRows, customColorKeys);
+    }
+
+    // Set inclusion based on bucket priority
+    if (bucket !== "draft") {
+      for (const row of draftRows) row.included = false;
+    }
+    if (bucket !== "template") {
+      for (const row of templateRows) row.included = false;
+    }
+
+    const rows = [...draftRows, ...templateRows, ...printifyRows];
+    const completedImageCount = rows.filter((row) => row.compositeStatus === "completed").length;
+    const hasPendingImages = completedImageCount < rows.length;
 
     if (rows.length === 0) {
-      throw new Error("Printify returned no mockup images for the selected colors and enabled variants");
+      throw new Error(
+        "Printify returned no mockup images for the selected colors and enabled variants",
+      );
     }
 
     await prisma.$transaction(async (tx) => {
@@ -87,9 +123,9 @@ export async function processPrintifyMockupPollJob(
       await tx.mockupJob.update({
         where: { id: mockupJobId },
         data: {
-          status: "completed",
+          status: hasPendingImages ? "running" : "completed",
           totalImages: rows.length,
-          completedImages: rows.length,
+          completedImages: completedImageCount,
           failedImages: 0,
           errorMessage: null,
         },
@@ -102,6 +138,37 @@ export async function processPrintifyMockupPollJob(
         },
       });
     });
+
+    const pendingCustomImages = await prisma.mockupImage.findMany({
+      where: {
+        mockupJobId,
+        compositeStatus: "pending",
+        OR: [
+          { sourceUrl: { contains: "/composite/" } },
+          { sourceUrl: { startsWith: "mockup://custom-composite/" } },
+        ],
+      },
+      select: { id: true, sourceUrl: true },
+    });
+    const design = await prisma.design.findFirst({
+      where: {
+        wizardDrafts: {
+          some: { id: draftId },
+        },
+      },
+      select: { storagePath: true },
+    });
+    if (design && pendingCustomImages.length > 0) {
+      const queue = getMockupCompositeQueue();
+      for (const image of pendingCustomImages) {
+        await queue.add("composite-custom-mockup", {
+          mockupImageId: image.id,
+          sourceUrl: image.sourceUrl,
+          designStoragePath: design.storagePath,
+          placementData: {},
+        });
+      }
+    }
 
     return { success: true, imageCount: rows.length };
   } catch (error) {
@@ -124,24 +191,231 @@ export async function processPrintifyMockupPollJob(
   }
 }
 
-export async function buildMockupImageRows(input: {
-  mockups: ParsedPrintifyMockupImage[];
-  variantColorLookup: Map<number, { colorName: string }>;
-  cacheImage?: (url: string, keySeed: string) => Promise<string>;
-}): Promise<Array<{
+type CustomSourceInput = {
+  id: string;
+  colorId: string;
+  label: string | null;
+  view: string;
+  sceneType: string;
+  renderMode: "FINAL" | "COMPOSITE";
+  outputPath: string | null;
+  isPrimary: boolean;
+  sortOrder: number;
+};
+
+type CustomColorInput = {
+  name: string;
+};
+
+type MockupImageRow = {
   printifyMockupId: string;
   variantId: number;
   colorName: string;
   viewPosition: string;
   sourceUrl: string;
-  compositeUrl: string;
-  compositeStatus: "completed";
+  compositeUrl: string | null;
+  compositeStatus: "pending" | "completed";
   mockupType: string;
   isDefault: boolean;
   cameraLabel: string | null;
   included: boolean;
   sortOrder: number;
-}>> {
+};
+
+export function buildCustomMockupImageRows(input: {
+  sources: CustomSourceInput[];
+  colorsById: Map<string, CustomColorInput>;
+  variantColorLookup: Map<number, { colorName: string }>;
+  scope: "TEMPLATE" | "DRAFT";
+  sortOffset?: number;
+}): MockupImageRow[] {
+  const rows: MockupImageRow[] = [];
+  const sortOffset = input.sortOffset ?? 0;
+
+  for (const source of [...input.sources].sort((a, b) => a.sortOrder - b.sortOrder)) {
+    const color = input.colorsById.get(source.colorId);
+    if (!color) continue;
+
+    rows.push({
+      printifyMockupId: `custom:${source.id}`,
+      variantId: firstMatchingVariantId(color.name, input.variantColorLookup),
+      colorName: color.name,
+      viewPosition: source.view,
+      sourceUrl: buildCustomMockupSourceUrl(source.id, input.scope, source.renderMode),
+      compositeUrl: source.renderMode === "FINAL" ? source.outputPath : null,
+      compositeStatus: source.renderMode === "FINAL" ? "completed" : "pending",
+      mockupType: source.sceneType,
+      isDefault: source.isPrimary,
+      cameraLabel: source.label,
+      included: true,
+      sortOrder: sortOffset + source.sortOrder,
+    });
+  }
+
+  return rows;
+}
+
+export function markPrintifyRowsExcludedForCustomColors<
+  T extends {
+    colorName: string;
+    included: boolean;
+    sortOrder?: number;
+  },
+>(rows: T[], customColorKeys: Set<string>): void {
+  for (const row of rows) {
+    if (customColorKeys.has(normalizeColorKey(row.colorName))) {
+      row.included = false;
+      if (typeof row.sortOrder === "number") {
+        row.sortOrder += 20000;
+      }
+    }
+  }
+}
+
+/**
+ * Determines which bucket of rows should be "included" by default.
+ * Priority: DRAFT > TEMPLATE > Printify
+ */
+export function chooseIncludedSourceBucket(input: {
+  mode: "AUTO" | "TEMPLATE_PRINTIFY" | "DRAFT_CUSTOM";
+  hasDraftRows: boolean;
+  hasTemplateRows: boolean;
+}): "draft" | "template" | "printify" {
+  if (input.mode === "DRAFT_CUSTOM" && input.hasDraftRows) return "draft";
+  if (input.mode === "TEMPLATE_PRINTIFY" && input.hasTemplateRows) return "template";
+
+  // AUTO: prefer draft > template > printify
+  if (input.mode === "AUTO") {
+    if (input.hasDraftRows) return "draft";
+    if (input.hasTemplateRows) return "template";
+  }
+
+  return "printify";
+}
+
+async function buildCustomRowsForDraft(input: {
+  draftId: string;
+  storeId: string;
+  variantColorLookup: Map<number, { colorName: string }>;
+}): Promise<{ draftRows: MockupImageRow[]; templateRows: MockupImageRow[]; mode: "AUTO" | "TEMPLATE_PRINTIFY" | "DRAFT_CUSTOM" }> {
+  const draft = await prisma.wizardDraft.findUnique({
+    where: { id: input.draftId },
+    include: {
+      template: true,
+      store: {
+        include: { colors: true },
+      },
+      mockupLibraryPicks: { select: { sourceId: true } },
+    },
+  });
+  if (!draft) return { draftRows: [], templateRows: [], mode: "AUTO" };
+
+  let template = draft.template;
+  if (!template) {
+    template = await prisma.storeMockupTemplate.findFirst({
+      where: { storeId: input.storeId, isDefault: true },
+    });
+  }
+  if (!template) return { draftRows: [], templateRows: [], mode: draft.mockupSourceMode };
+
+  const enabledColorSet = new Set(draft.enabledColorIds);
+  const colorsById = new Map(
+    (draft.store?.colors ?? [])
+      .filter((color) => enabledColorSet.has(color.id))
+      .map((color) => [color.id, { name: color.name }]),
+  );
+  if (colorsById.size === 0) return { draftRows: [], templateRows: [], mode: draft.mockupSourceMode };
+
+  const colorIds = [...colorsById.keys()];
+
+  // Load DRAFT sources
+  const draftSources = await prisma.customMockupSource.findMany({
+    where: {
+      scope: "DRAFT",
+      draftId: input.draftId,
+      colorId: { in: colorIds },
+      isActive: true,
+      deletedAt: null,
+    },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+  });
+
+  // Load TEMPLATE sources: use picks if any, otherwise all active for template
+  const pickedSourceIds = draft.mockupLibraryPicks?.map((p) => p.sourceId) ?? [];
+  const templateSources = await prisma.customMockupSource.findMany({
+    where: {
+      scope: "TEMPLATE",
+      templateId: template.id,
+      colorId: { in: colorIds },
+      isActive: true,
+      deletedAt: null,
+      ...(pickedSourceIds.length > 0 ? { id: { in: pickedSourceIds } } : {}),
+    },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+  });
+
+  const mapSource = (source: typeof draftSources[number]) => ({
+    id: source.id,
+    colorId: source.colorId,
+    label: source.label,
+    view: source.view,
+    sceneType: source.sceneType,
+    renderMode: source.renderMode,
+    outputPath: source.outputPath,
+    isPrimary: source.isPrimary,
+    sortOrder: source.sortOrder,
+  });
+
+  const draftRows = buildCustomMockupImageRows({
+    sources: draftSources.map(mapSource),
+    colorsById,
+    variantColorLookup: input.variantColorLookup,
+    scope: "DRAFT",
+    sortOffset: 0,
+  });
+
+  const templateRows = buildCustomMockupImageRows({
+    sources: templateSources.map(mapSource),
+    colorsById,
+    variantColorLookup: input.variantColorLookup,
+    scope: "TEMPLATE",
+    sortOffset: 10000,
+  });
+
+  return { draftRows, templateRows, mode: draft.mockupSourceMode };
+}
+
+function firstMatchingVariantId(
+  colorName: string,
+  variantColorLookup: Map<number, { colorName: string }>,
+): number {
+  const target = normalizeColorKey(colorName);
+  for (const [variantId, color] of variantColorLookup) {
+    if (normalizeColorKey(color.colorName) === target) return variantId;
+  }
+  return 0;
+}
+
+export async function buildMockupImageRows(input: {
+  mockups: ParsedPrintifyMockupImage[];
+  variantColorLookup: Map<number, { colorName: string }>;
+  cacheImage?: (url: string, keySeed: string) => Promise<string>;
+}): Promise<
+  Array<{
+    printifyMockupId: string;
+    variantId: number;
+    colorName: string;
+    viewPosition: string;
+    sourceUrl: string;
+    compositeUrl: string;
+    compositeStatus: "completed";
+    mockupType: string;
+    isDefault: boolean;
+    cameraLabel: string | null;
+    included: boolean;
+    sortOrder: number;
+  }>
+> {
   const cacheImage = input.cacheImage ?? cacheRemoteMockupImage;
   const rows: Array<{
     printifyMockupId: string;
@@ -160,10 +434,14 @@ export async function buildMockupImageRows(input: {
   const seen = new Set<string>();
 
   for (const mockup of input.mockups) {
-    const variantIds = mockup.variantIds.length > 0
-      ? mockup.variantIds
-      : Array.from(input.variantColorLookup.keys());
-    const representativeVariantByColor = new Map<string, { variantId: number; colorName: string }>();
+    const variantIds =
+      mockup.variantIds.length > 0
+        ? mockup.variantIds
+        : Array.from(input.variantColorLookup.keys());
+    const representativeVariantByColor = new Map<
+      string,
+      { variantId: number; colorName: string }
+    >();
 
     for (const variantId of variantIds) {
       const color = input.variantColorLookup.get(variantId);
@@ -189,7 +467,10 @@ export async function buildMockupImageRows(input: {
       try {
         compositeUrl = await cacheImage(mockup.sourceUrl, keySeed);
       } catch (error) {
-        console.warn("[PrintifyMockupPoll] Failed to cache Printify mockup image, keeping remote URL", error);
+        console.warn(
+          "[PrintifyMockupPoll] Failed to cache Printify mockup image, keeping remote URL",
+          error,
+        );
       }
 
       rows.push({
@@ -258,12 +539,14 @@ export async function buildVariantColorLookup(input: {
   }
   if (!template) return lookup;
 
-  const enabledVariantIds = draft.enabledVariantIdsOverride.length > 0
-    ? draft.enabledVariantIdsOverride
-    : template.enabledVariantIds;
+  const enabledVariantIds =
+    draft.enabledVariantIdsOverride.length > 0
+      ? draft.enabledVariantIdsOverride
+      : template.enabledVariantIds;
   const enabledVariantSet = new Set(enabledVariantIds);
   const selectedColorSet = new Set(draft.enabledColorIds);
-  const selectedColors = draft.store?.colors.filter((color) => selectedColorSet.has(color.id)) ?? [];
+  const selectedColors =
+    draft.store?.colors.filter((color) => selectedColorSet.has(color.id)) ?? [];
 
   const variantResponse = await input.client.getBlueprintVariants(
     template.printifyBlueprintId,
@@ -288,7 +571,7 @@ function variantMatchesColor(
   variant: { title: string; options?: Record<string, string | undefined> | null },
   color: { name: string; printifyColorId?: string | null },
 ): boolean {
-  const titleParts = variant.title.split(/[\/,|]/g);
+  const titleParts = variant.title.split(/[/,|]/g);
   const variantKeys = new Set(
     [
       variant.options?.color ?? "",

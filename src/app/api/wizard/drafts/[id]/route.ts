@@ -182,5 +182,9 @@ function normalizeColorName(value: string): string {
 }
 
 function isRealPrintifyMockup(image: { compositeUrl?: string | null; sourceUrl?: string | null }): boolean {
+  // Accept both real Printify media AND custom mockup sources
+  if (image.sourceUrl?.startsWith("mockup://custom/") || image.sourceUrl?.startsWith("mockup://custom-")) {
+    return true;
+  }
   return isRealPrintifyMockupMedia(image);
 }

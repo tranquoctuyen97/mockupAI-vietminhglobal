@@ -1,0 +1,5 @@
+-- RenameIndex
+ALTER INDEX "custom_mockup_sources_scope_store_id_template_id_color_id_is_ac" RENAME TO "custom_mockup_sources_scope_store_id_template_id_color_id_i_idx";
+
+-- RenameIndex
+ALTER INDEX "custom_mockup_sources_scope_wizard_draft_id_color_id_is_active_" RENAME TO "custom_mockup_sources_scope_wizard_draft_id_color_id_is_act_idx";

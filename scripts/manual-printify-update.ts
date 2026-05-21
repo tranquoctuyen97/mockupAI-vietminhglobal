@@ -1,7 +1,7 @@
 /**
  * Test Printify PUT update — replicate the exact payload the worker sends
  *
- * Usage: npx tsx scripts/test-printify-update.ts
+ * Usage: npx tsx scripts/manual-printify-update.ts
  */
 
 import { PrismaPg } from "@prisma/adapter-pg";

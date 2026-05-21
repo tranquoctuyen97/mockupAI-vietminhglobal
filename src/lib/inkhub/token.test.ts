@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getToken, _resetForTest } from "./token";
+import { getToken, _resetForTest, _setCredentialsForTest } from "./token";
 
 function makeJwt(expSeconds: number): string {
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
@@ -8,8 +8,13 @@ function makeJwt(expSeconds: number): string {
   return `${header}.${payload}.signature`;
 }
 
-test("calls login once and caches token", async () => {
+function resetWithCredentials(): void {
   _resetForTest();
+  _setCredentialsForTest({ username: "test-user", password: "test-password" });
+}
+
+test("calls login once and caches token", async () => {
+  resetWithCredentials();
   const futureExp = Math.floor(Date.now() / 1000) + 3600;
   let callCount = 0;
   globalThis.fetch = async () => {
@@ -22,7 +27,7 @@ test("calls login once and caches token", async () => {
 });
 
 test("returns correct orgId from organizations[0].id", async () => {
-  _resetForTest();
+  resetWithCredentials();
   const futureExp = Math.floor(Date.now() / 1000) + 3600;
   globalThis.fetch = async () => ({
     ok: true,
@@ -33,7 +38,7 @@ test("returns correct orgId from organizations[0].id", async () => {
 });
 
 test("refreshes after _resetForTest simulates expiry", async () => {
-  _resetForTest();
+  resetWithCredentials();
   const futureExp = Math.floor(Date.now() / 1000) + 3600;
   let callCount = 0;
   globalThis.fetch = async () => {
@@ -41,13 +46,13 @@ test("refreshes after _resetForTest simulates expiry", async () => {
     return { ok: true, json: async () => ({ token: makeJwt(futureExp), organizations: [{ id: 1 }] }) } as Response;
   };
   await getToken("test-tenant");
-  _resetForTest();
+  resetWithCredentials();
   await getToken("test-tenant");
   assert.equal(callCount, 2);
 });
 
 test("throws when login returns non-ok status", async () => {
-  _resetForTest();
+  resetWithCredentials();
   globalThis.fetch = async () => ({ ok: false, status: 401 } as Response);
   await assert.rejects(() => getToken("test-tenant"), /Inkhub login failed: 401/);
 });

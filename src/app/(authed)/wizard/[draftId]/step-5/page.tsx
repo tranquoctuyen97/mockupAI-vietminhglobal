@@ -144,11 +144,13 @@ export default function Step6ReviewPage() {
   );
   const allMockups = useMemo(
     () => (latestCompletedJob?.images ?? [])
-      .filter((image) =>
-        image.included &&
-        isRealPrintifyMockupMedia(image) &&
-        colorHexLookup.has(normalizeColorName(image.colorName)),
-      ), // Only show real Printify mockups for selected colors
+      .filter((image) => {
+        const isCustomSource = image.sourceUrl?.startsWith("mockup://custom/") || image.sourceUrl?.startsWith("mockup://custom-");
+        const isPrintifySource = isRealPrintifyMockupMedia(image);
+        return image.included &&
+          (isCustomSource || isPrintifySource) &&
+          colorHexLookup.has(normalizeColorName(image.colorName));
+      }),
     [latestCompletedJob, colorHexLookup],
   );
   const latestMockupJob = mockupJobs[mockupJobs.length - 1] ?? null;

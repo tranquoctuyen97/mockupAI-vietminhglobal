@@ -1,4 +1,4 @@
-import { Readable } from "node:stream";
+import type { Readable } from "node:stream";
 
 /**
  * Storage provider interface — abstracts file storage
@@ -19,6 +19,11 @@ export interface StorageProvider {
    * Get public URL for a file
    */
   getPublicUrl(key: string): string;
+
+  /**
+   * Read a file into memory
+   */
+  getBuffer(key: string): Promise<Buffer>;
 
   /**
    * Delete a file

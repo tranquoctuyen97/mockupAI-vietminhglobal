@@ -10,6 +10,7 @@ import { isTerminalMockupJobStatus, shouldSyncFinishedMockupJob } from "@/lib/mo
 import { MOCKUP_JOB_SOFT_WAIT_MS } from "@/lib/mockup/job-timeout";
 import { isRealPrintifyMockupMedia } from "@/lib/mockup/real-printify-media";
 import { MockupGallery } from "@/components/mockup/MockupGallery";
+import { WizardMockupSourcePanel } from "@/components/mockup/WizardMockupSourcePanel";
 import { MultiViewPlacementEditor } from "@/components/placement/MultiViewPlacementEditor";
 import { LivePreview } from "@/components/mockup/LivePreview";
 import {
@@ -986,6 +987,17 @@ export default function Step3PreviewPage() {
           })()}
 
           {/* Generate button + Real Mockup Gallery */}
+          {/* MOCKUP SOURCE PANEL */}
+          {draft?.storeId && selectedTemplate && (
+            <WizardMockupSourcePanel
+              draftId={draftId as string}
+              storeId={draft.storeId}
+              templateId={selectedTemplate.id}
+              enabledColorIds={Array.from(selectedColorIds)}
+              storeColors={storeColors}
+            />
+          )}
+
           <div className="card" style={{ padding: 20, minHeight: 200 }}>
             <div className="flex justify-between items-center" style={{ marginBottom: 16 }}>
               <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>Mockup chính thức</h3>
@@ -1056,7 +1068,9 @@ export default function Step3PreviewPage() {
                 draftId={draftId as string}
                 images={mockupImages.filter((img) => {
                   const normalizedColorName = img.colorName.trim().toLowerCase();
-                  return isRealPrintifyMockupMedia(img) && storeColors.some(
+                  const isCustomSource = img.sourceUrl?.startsWith("mockup://custom/") || img.sourceUrl?.startsWith("mockup://custom-");
+                  const isPrintifySource = isRealPrintifyMockupMedia(img);
+                  return (isCustomSource || isPrintifySource) && storeColors.some(
                     (c) =>
                       selectedColorIds.has(c.id) &&
                       c.name.trim().toLowerCase() === normalizedColorName

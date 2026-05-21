@@ -1,8 +1,8 @@
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { createWriteStream } from "node:fs";
-import { mkdir, unlink, access } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { access, mkdir, readFile, unlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import type { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type { StorageProvider } from "./types";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || "./uploads";
@@ -18,14 +18,14 @@ export class LocalDiskStorage implements StorageProvider {
     this.baseDir = baseDir || UPLOAD_DIR;
   }
 
-  async putStream(key: string, stream: Readable): Promise<void> {
+  async putStream(key: string, stream: Readable, _mime?: string): Promise<void> {
     const filePath = this.resolvePath(key);
     await mkdir(dirname(filePath), { recursive: true });
     const writeStream = createWriteStream(filePath);
     await pipeline(stream, writeStream);
   }
 
-  async putBuffer(key: string, buffer: Buffer): Promise<void> {
+  async putBuffer(key: string, buffer: Buffer, _mime?: string): Promise<void> {
     const filePath = this.resolvePath(key);
     await mkdir(dirname(filePath), { recursive: true });
     const { writeFile } = await import("node:fs/promises");
@@ -35,6 +35,18 @@ export class LocalDiskStorage implements StorageProvider {
   getPublicUrl(key: string): string {
     // In dev: serve via API route; in prod: Nginx /media/
     return `/api/files/${key}`;
+  }
+
+  async getBuffer(key: string): Promise<Buffer> {
+    const filePath = this.resolvePath(key);
+    try {
+      return await readFile(filePath);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(`Storage file not found: ${key}`);
+      }
+      throw err;
+    }
   }
 
   async delete(key: string): Promise<void> {
