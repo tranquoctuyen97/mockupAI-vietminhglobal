@@ -217,21 +217,41 @@ export async function upsertStoreColors(
   storeId: string,
   colors: Array<{ name: string; hex: string; printifyColorId?: string; sortOrder?: number }>,
 ) {
-  // Delete existing colors and recreate (simpler than individual upserts)
-  await prisma.$transaction([
-    prisma.storeColor.deleteMany({ where: { storeId } }),
-    ...colors.map((color, i) =>
-      prisma.storeColor.create({
-        data: {
+  const incomingNames = new Set(colors.map((c) => c.name));
+
+  await prisma.$transaction(async (tx) => {
+    // 1. Delete colors that are not in the incoming batch
+    await tx.storeColor.deleteMany({
+      where: {
+        storeId,
+        name: { notIn: Array.from(incomingNames) },
+      },
+    });
+
+    // 2. Upsert incoming colors
+    for (const [i, color] of colors.entries()) {
+      await tx.storeColor.upsert({
+        where: {
+          storeId_name: {
+            storeId,
+            name: color.name,
+          },
+        },
+        create: {
           storeId,
           name: color.name,
           hex: color.hex,
           printifyColorId: color.printifyColorId ?? null,
           sortOrder: color.sortOrder ?? i,
         },
-      }),
-    ),
-  ] as Prisma.PrismaPromise<unknown>[]);
+        update: {
+          hex: color.hex,
+          printifyColorId: color.printifyColorId ?? null,
+          sortOrder: color.sortOrder ?? i,
+        },
+      });
+    }
+  });
 
   return prisma.storeColor.findMany({
     where: { storeId },

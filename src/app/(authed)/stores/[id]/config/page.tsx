@@ -697,8 +697,8 @@ function TemplatesSection({
     try {
       // 1. Register selected colors in the store color master list
       const templateColors = tempTemplateData.colors.map((tc) => tc.color);
-      const existingNames = new Set(store.colors.map((c) => c.name));
-      const newColorsToRegister = templateColors.filter((tc) => !existingNames.has(tc.name));
+      const existingNames = new Set(store.colors.map((c) => c.name.trim().toLowerCase()));
+      const newColorsToRegister = templateColors.filter((tc) => !existingNames.has(tc.name.trim().toLowerCase()));
       
       let allStoreColors = [...store.colors];
 
@@ -729,12 +729,20 @@ function TemplatesSection({
         if (colorsRes.ok) {
           const data = await colorsRes.json();
           allStoreColors = data.colors;
+        } else {
+          const err = await colorsRes.json();
+          throw new Error(err.error || "Không thể đăng ký màu sắc cho store");
         }
       }
 
-      // Map color names to store color IDs
+      // Map color names to store color IDs (case-insensitive and trimmed)
       const colorIds = tempTemplateData.colors
-        .map((tc) => allStoreColors.find((c) => c.name === tc.color.name)?.id)
+        .map((tc) => {
+          const found = allStoreColors.find(
+            (c) => c.name.trim().toLowerCase() === tc.color.name.trim().toLowerCase()
+          );
+          return found?.id;
+        })
         .filter((id): id is string => !!id);
 
       // 2. Save template details
