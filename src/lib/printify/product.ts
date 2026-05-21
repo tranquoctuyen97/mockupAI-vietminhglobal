@@ -111,7 +111,34 @@ export async function createOrUpdatePrintifyProduct(input: {
   description: string;
   tags?: string[];
 }): Promise<{ productId: string; images: ParsedPrintifyMockupImage[] }> {
-  const payload = buildPrintifyProductPayload(input);
+  // Fetch full catalog variants for this blueprint+provider.
+  // Printify requires ALL variants to be present in the payload (especially for PUT).
+  // Selected variants → is_enabled: true, rest → is_enabled: false.
+  let fullVariants: Array<{ id: number; price: number; is_enabled: boolean }> | undefined;
+
+  if (!input.variants) {
+    try {
+      const { variants: catalogVariants } = await input.client.getBlueprintVariants(
+        input.blueprintId,
+        input.printProviderId,
+      );
+      const enabledSet = new Set(input.variantIds);
+      fullVariants = catalogVariants.map((v) => ({
+        id: v.id,
+        price: 2000,
+        is_enabled: enabledSet.has(v.id),
+      }));
+    } catch (err) {
+      console.warn("[Printify] Failed to fetch catalog variants for full payload, falling back to subset:", err);
+      // Fallback: use only the selected variant IDs (may fail on PUT)
+    }
+  }
+
+  const payloadInput = fullVariants
+    ? { ...input, variants: fullVariants }
+    : input;
+
+  const payload = buildPrintifyProductPayload(payloadInput);
 
   // Debug log — dump payload summary before sending to Printify
   const payloadVariants = (payload.variants as Array<{ id: number; is_enabled: boolean }>) ?? [];
@@ -135,7 +162,6 @@ export async function createOrUpdatePrintifyProduct(input: {
     printAreaIdsNotInVariants,
     placeholders: printAreas.map(pa => (pa as any).placeholders?.map((ph: any) => ph.position)),
   }, null, 2));
-  console.log(`[Printify] Full payload:`, JSON.stringify(payload));
 
   const product = input.productId
     ? await input.client.updateProduct(input.shopId, input.productId, payload)
