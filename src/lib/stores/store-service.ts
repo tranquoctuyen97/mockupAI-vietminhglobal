@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { encrypt, decrypt } from "@/lib/crypto/envelope";
 import { ShopifyClient } from "@/lib/shopify/client";
 import { getPresetStatusSync } from "@/lib/stores/preset";
+import { enrichColorHex } from "@/lib/printify/color-hex";
 import {
   getTemplateReadiness,
   type TemplateReadinessInput,
@@ -187,12 +188,47 @@ export async function listStores(tenantId: string) {
     orderBy: { createdAt: "desc" },
   });
 
+  // Enrich template color hex from PrintifyVariantCache
+  const bpPairs = new Set<string>();
+  for (const store of stores) {
+    for (const t of store.templates) {
+      bpPairs.add(`${t.printifyBlueprintId}:${t.printifyPrintProviderId}`);
+    }
+  }
+  const cacheHexMap = new Map<string, string>();
+  for (const pair of bpPairs) {
+    const [bpId, ppId] = pair.split(":").map(Number);
+    const cachedColors = await prisma.printifyVariantCache.findMany({
+      where: { blueprintId: bpId, printProviderId: ppId },
+      distinct: ["colorName"],
+      select: { colorName: true, colorHex: true },
+    });
+    for (const c of cachedColors) {
+      if (c.colorHex) cacheHexMap.set(c.colorName, c.colorHex);
+    }
+  }
+
   // Compute presetStatus for each store + serialize Decimal fields
-  return stores.map((store) => ({
-    ...store,
-    defaultPriceUsd: Number(store.defaultPriceUsd), // Decimal → number for Client Components
-    presetStatus: getPresetStatusSync(store),
-  }));
+  return stores.map((store) => {
+    // Enrich template color hex in-place before returning
+    const enrichedTemplates = store.templates.map((t) => ({
+      ...t,
+      colors: t.colors.map((tc) => ({
+        ...tc,
+        color: {
+          ...tc.color,
+          hex: cacheHexMap.get(tc.color.name) || enrichColorHex(tc.color.name, tc.color.hex),
+        },
+      })),
+    }));
+
+    return {
+      ...store,
+      templates: enrichedTemplates,
+      defaultPriceUsd: Number(store.defaultPriceUsd), // Decimal → number for Client Components
+      presetStatus: getPresetStatusSync(store),
+    };
+  });
 }
 
 /**

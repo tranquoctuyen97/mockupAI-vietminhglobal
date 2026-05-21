@@ -9,6 +9,7 @@ import { requireFeature } from "@/lib/auth/guards";
 import { validateSession } from "@/lib/auth/session";
 import { createTemplate, updateTemplatePlacement } from "@/lib/stores/store-service";
 import { prisma } from "@/lib/db";
+import { enrichColorHex } from "@/lib/printify/color-hex";
 import {
   getTemplateReadiness,
   getTemplateReadinessLabel,
@@ -45,6 +46,24 @@ export async function GET(
     return NextResponse.json({ error: "Store not found" }, { status: 404 });
   }
 
+  // Collect unique blueprint+provider pairs to query cache for real hex
+  const bpPairs = new Set<string>();
+  for (const t of store.templates) {
+    bpPairs.add(`${t.printifyBlueprintId}:${t.printifyPrintProviderId}`);
+  }
+  const cacheHexMap = new Map<string, string>();
+  for (const pair of bpPairs) {
+    const [bpId, ppId] = pair.split(":").map(Number);
+    const cachedColors = await prisma.printifyVariantCache.findMany({
+      where: { blueprintId: bpId, printProviderId: ppId },
+      distinct: ["colorName"],
+      select: { colorName: true, colorHex: true },
+    });
+    for (const c of cachedColors) {
+      if (c.colorHex) cacheHexMap.set(c.colorName, c.colorHex);
+    }
+  }
+
   const templates = store.templates.map((template) => {
     const readiness = getTemplateReadiness(template);
 
@@ -68,7 +87,7 @@ export async function GET(
       colors: template.colors.map((entry) => ({
         id: entry.color.id,
         name: entry.color.name,
-        hex: entry.color.hex,
+        hex: cacheHexMap.get(entry.color.name) || enrichColorHex(entry.color.name, entry.color.hex),
         enabled: entry.color.enabled,
         sortOrder: entry.sortOrder,
       })),
