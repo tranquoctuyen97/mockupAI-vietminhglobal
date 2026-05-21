@@ -284,6 +284,7 @@ model StoreMockupTemplate {
   // UI Improvement — blueprint metadata cache (Sprint 4.1)
   blueprintImageUrl       String?          @map("blueprint_image_url")
   blueprintBrand          String?          @map("blueprint_brand")
+  defaultMockupSource     TemplateDefaultMockupSource @default(PRINTIFY) @map("default_mockup_source")
 
   store               Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
   colors              TemplateColor[]
@@ -313,6 +314,11 @@ enum TemplatePosition {
   FRONT
   BACK
   SLEEVE
+}
+
+enum TemplateDefaultMockupSource {
+  PRINTIFY
+  CUSTOM
 }
 
 enum CustomMockupScope {

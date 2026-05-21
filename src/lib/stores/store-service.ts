@@ -388,6 +388,7 @@ export async function updateTemplate(
     printAreasByView?: Prisma.InputJsonValue;
     blueprintImageUrl?: string;
     blueprintBrand?: string;
+    defaultMockupSource?: "PRINTIFY" | "CUSTOM";
     colorIds?: string[];
   },
 ) {
@@ -410,6 +411,7 @@ export async function updateTemplate(
         printAreasByView: data.printAreasByView ?? undefined,
         blueprintImageUrl: data.blueprintImageUrl,
         blueprintBrand: data.blueprintBrand,
+        defaultMockupSource: data.defaultMockupSource,
       },
     });
 
