@@ -269,6 +269,8 @@ export default function Step6ReviewPage() {
 
     // Setup SSE connection
     const evtSource = new EventSource(`/api/wizard/drafts/${draftId}/events`);
+    let sseCompleted = false; // Track whether we received a terminal event
+
     evtSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
@@ -278,7 +280,11 @@ export default function Step6ReviewPage() {
         if (data.type === "publish.shopify.done") {
           setPublishLogs(prev => [...prev, { stage: "SHOPIFY", message: "Đã publish lên Shopify", status: "success" }]);
         }
+        if (data.type === "publish.printify.done") {
+          setPublishLogs(prev => [...prev, { stage: "PRINTIFY", message: "Đã publish lên Printify", status: "success" }]);
+        }
         if (data.type === "publish.complete") {
+          sseCompleted = true;
           if (data.data.status === "ACTIVE") {
             if (data.data.listingId) setSuccessListingId(data.data.listingId);
             setPublishStatus("SUCCESS");
@@ -293,6 +299,7 @@ export default function Step6ReviewPage() {
           evtSource.close();
         }
         if (data.type === "publish.failed") {
+          sseCompleted = true;
           setPublishStatus("ERROR");
           setPublishLogs(prev => [...prev, { stage: "ERROR", message: data.data.error || "Có lỗi xảy ra khi publish", status: "error" }]);
           toast.error(data.data.error || "Có lỗi xảy ra khi publish");
@@ -304,7 +311,8 @@ export default function Step6ReviewPage() {
     };
     evtSource.onerror = () => {
       evtSource.close();
-      if (publishStatus === "PUBLISHING") {
+      // Only show error if we never received a terminal event (publish.complete/publish.failed)
+      if (!sseCompleted) {
         setPublishStatus("ERROR");
         toast.error("Mất kết nối server");
       }
@@ -354,10 +362,13 @@ export default function Step6ReviewPage() {
 
     // Listen for SSE events
     const evtSource = new EventSource(`/api/wizard/drafts/${draftId}/events`);
+    let sseRetryCompleted = false;
+
     evtSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         if (data.type === "publish.complete") {
+          sseRetryCompleted = true;
           if (data.data.status === "ACTIVE") {
             setPublishStatus("SUCCESS");
             setPublishLogs(prev => [...prev, { stage: "DONE", message: "Printify publish thành công!", status: "success" }]);
@@ -377,7 +388,7 @@ export default function Step6ReviewPage() {
     evtSource.onerror = () => {
       evtSource.close();
       setRetrying(false);
-      if (publishStatus === "PUBLISHING") {
+      if (!sseRetryCompleted) {
         setPublishStatus("ERROR");
         toast.error("Mất kết nối server");
       }

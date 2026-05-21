@@ -112,6 +112,31 @@ export async function createOrUpdatePrintifyProduct(input: {
   tags?: string[];
 }): Promise<{ productId: string; images: ParsedPrintifyMockupImage[] }> {
   const payload = buildPrintifyProductPayload(input);
+
+  // Debug log — dump payload summary before sending to Printify
+  const payloadVariants = (payload.variants as Array<{ id: number; is_enabled: boolean }>) ?? [];
+  const printAreas = (payload.print_areas as Array<{ variant_ids: number[] }>) ?? [];
+  const enabledCount = payloadVariants.filter(v => v.is_enabled).length;
+  const disabledCount = payloadVariants.length - enabledCount;
+  const printAreaVariantIds = printAreas.flatMap(pa => pa.variant_ids);
+  const variantIdsNotInPrintArea = payloadVariants.map(v => v.id).filter(id => !printAreaVariantIds.includes(id));
+  const printAreaIdsNotInVariants = printAreaVariantIds.filter(id => !payloadVariants.some(v => v.id === id));
+
+  console.log(`[Printify] ${input.productId ? "PUT" : "POST"} payload debug:`, JSON.stringify({
+    shopId: input.shopId,
+    productId: input.productId ?? "NEW",
+    blueprintId: payload.blueprint_id,
+    printProviderId: payload.print_provider_id,
+    totalVariants: payloadVariants.length,
+    enabledVariants: enabledCount,
+    disabledVariants: disabledCount,
+    printAreaVariantIdCount: printAreaVariantIds.length,
+    variantIdsNotInPrintArea,
+    printAreaIdsNotInVariants,
+    placeholders: printAreas.map(pa => (pa as any).placeholders?.map((ph: any) => ph.position)),
+  }, null, 2));
+  console.log(`[Printify] Full payload:`, JSON.stringify(payload));
+
   const product = input.productId
     ? await input.client.updateProduct(input.shopId, input.productId, payload)
     : await input.client.createProduct(input.shopId, payload);

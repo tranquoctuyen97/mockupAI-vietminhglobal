@@ -437,6 +437,10 @@ export async function runPrintifyStage(
       where: { id: printifyJob.id },
       data: { status: "SUCCEEDED", completedAt: new Date() },
     });
+    // Emit printify done before final complete
+    sseChannels.emit(channelId, { type: "publish.printify.done", data: { printifyProductId: printifyResult.printifyProductId } });
+    sseChannels.emit(draftId, { type: "publish.printify.done", data: { printifyProductId: printifyResult.printifyProductId } });
+
     sseChannels.emit(channelId, {
       type: "publish.complete",
       data: { status: "ACTIVE", printifyProductId: printifyResult.printifyProductId },
