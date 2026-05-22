@@ -57,9 +57,10 @@ export function ColorMockupCard({
   const [placementOpen, setPlacementOpen] = useState(false);
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [savingPlacement, setSavingPlacement] = useState(false);
+  const [placementDirty, setPlacementDirty] = useState(false);
 
-  const bgUrl = source?.imageUrl ?? source?.outputUrl ?? null;
-  const canEditPlacement = source?.scope === "DRAFT";
+  const bgUrl = normalizeImageUrl(source?.imageUrl ?? source?.outputUrl ?? null);
+  const canEditPlacement = !!source;
 
   // Detect image dimensions when placement modal opens
   useEffect(() => {
@@ -76,7 +77,7 @@ export function ColorMockupCard({
   }, [placementOpen, bgUrl, source?.imageWidth, source?.imageHeight]);
 
   async function savePlacement(regionPx: CanvasRegionPx) {
-    if (!source || source.scope !== "DRAFT") return;
+    if (!source) return;
     setSavingPlacement(true);
     try {
       const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources/${source.id}`, {
@@ -87,6 +88,7 @@ export function ColorMockupCard({
       if (!res.ok) throw new Error((await res.json()).error || "Lỗi lưu vị trí");
       toast.success("Đã lưu vị trí design");
       setPlacementOpen(false);
+      if (state === "GENERATED") setPlacementDirty(true);
       onPlacementSaved();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Lỗi lưu vị trí");
@@ -158,7 +160,9 @@ export function ColorMockupCard({
                 </p>
               )}
               {state === "GENERATED" && (
-                <p style={{ margin: "0 0 8px", fontSize: "0.78rem", opacity: 0.6 }}>Đã tạo mockup</p>
+                <p style={{ margin: "0 0 8px", fontSize: "0.78rem", opacity: 0.6 }}>
+                  {placementDirty ? "Đã chỉnh vị trí · cần tạo lại mockup" : "Đã tạo mockup"}
+                </p>
               )}
 
               <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
@@ -171,6 +175,16 @@ export function ColorMockupCard({
                   >
                     <SlidersHorizontal size={12} />
                     {state === "NO_PLACEMENT" ? "Chỉnh vị trí" : "Chỉnh lại"}
+                  </button>
+                )}
+                {state === "GENERATED" && canEditPlacement && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ fontSize: "0.75rem", padding: "5px 10px" }}
+                    onClick={() => setPlacementOpen(true)}
+                  >
+                    <SlidersHorizontal size={12} /> Chỉnh vị trí design
                   </button>
                 )}
                 {state === "GENERATED" && (
