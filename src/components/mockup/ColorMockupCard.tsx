@@ -99,7 +99,7 @@ export function ColorMockupCard({
     ? <Check size={14} color="var(--color-wise-green)" />
     : <AlertTriangle size={14} color="#f59e0b" />;
 
-  const thumbUrl = state === "GENERATED" ? (generatedOutputUrl ?? null) : bgUrl;
+  const thumbUrl = state === "GENERATED" ? normalizeImageUrl(generatedOutputUrl) : bgUrl;
 
   return (
     <>
@@ -183,14 +183,16 @@ export function ColorMockupCard({
                     <RefreshCw size={12} /> Đổi mockup
                   </button>
                 )}
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  style={{ fontSize: "0.75rem", padding: "5px 10px" }}
-                  onClick={onUploadClick}
-                >
-                  <Upload size={12} /> {source?.scope === "TEMPLATE" ? "Upload mockup riêng" : "Đổi mockup"}
-                </button>
+                {state !== "GENERATED" && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ fontSize: "0.75rem", padding: "5px 10px" }}
+                    onClick={onUploadClick}
+                  >
+                    <Upload size={12} /> {source?.scope === "TEMPLATE" ? "Upload mockup riêng" : "Đổi mockup"}
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -232,4 +234,10 @@ export function ColorMockupCard({
       )}
     </>
   );
+}
+
+function normalizeImageUrl(url: string | null | undefined): string | null {
+  if (!url || url.startsWith("mockup://")) return null;
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("/") || url.startsWith("data:")) return url;
+  return `/api/files/${url.split("/").map(encodeURIComponent).join("/")}`;
 }
