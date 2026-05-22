@@ -80,12 +80,34 @@ export function ColorMockupCard({
     if (!source) return;
     setSavingPlacement(true);
     try {
-      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources/${source.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ compositeRegionPx: regionPx }),
-      });
-      if (!res.ok) throw new Error((await res.json()).error || "Lỗi lưu vị trí");
+      if (source.scope === "TEMPLATE") {
+        // Clone template source → new DRAFT source with custom placement
+        if (!bgUrl) throw new Error("Không tìm thấy ảnh mockup");
+        const imgRes = await fetch(bgUrl);
+        if (!imgRes.ok) throw new Error("Không tải được ảnh mockup");
+        const blob = await imgRes.blob();
+        const form = new FormData();
+        form.set("file", blob, "mockup.jpg");
+        form.set("colorId", color.id);
+        form.set("view", "front");
+        form.set("sceneType", "flat_lay");
+        form.set("renderMode", "COMPOSITE");
+        form.set("isPrimary", "false");
+        form.set("sortOrder", "0");
+        form.set("compositeRegionPx", JSON.stringify(regionPx));
+        const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources`, {
+          method: "POST",
+          body: form,
+        });
+        if (!res.ok) throw new Error((await res.json()).error || "Lỗi lưu vị trí");
+      } else {
+        const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources/${source.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ compositeRegionPx: regionPx }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || "Lỗi lưu vị trí");
+      }
       toast.success("Đã lưu vị trí design");
       setPlacementOpen(false);
       if (state === "GENERATED") setPlacementDirty(true);

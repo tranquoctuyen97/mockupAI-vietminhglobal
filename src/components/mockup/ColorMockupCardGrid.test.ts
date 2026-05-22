@@ -21,6 +21,12 @@ test("findSourceForColor: falls back to colorName match", () => {
   assert.equal(found?.id, "s1");
 });
 
+test("findSourceForColor: falls back to nested color.name match", () => {
+  const sourceWithNestedColor = { ...sourceReady, colorId: null, colorName: null, color: { id: "c1", name: "Red", hex: "#ff0000" } };
+  const found = findSourceForColor("c1", [sourceWithNestedColor], colors);
+  assert.equal(found?.id, "s1");
+});
+
 test("findSourceForColor: returns null when no match", () => {
   assert.equal(findSourceForColor("c99", [sourceReady]), null);
 });

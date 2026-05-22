@@ -16,25 +16,31 @@ interface SourcesResponse {
     defaultMockupSource: string;
     selectedColors: ColorInfo[];
   } | null;
-  draftSources: (CardSource & { colorId?: string | null; colorName?: string | null })[];
-  eligibleTemplateSources: (CardSource & { colorId?: string | null; colorName?: string | null })[];
+  draftSources: SourceWithColor[];
+  eligibleTemplateSources: SourceWithColor[];
 }
+
+type SourceWithColor = CardSource & {
+  colorId?: string | null;
+  colorName?: string | null;
+  color?: { id: string; name: string; hex: string } | null;
+};
 
 // --- Pure logic (exported for tests) ---
 
 export function findSourceForColor(
   colorId: string,
-  sources: Array<CardSource & { colorId?: string | null; colorName?: string | null }>,
+  sources: SourceWithColor[],
   colors?: ColorInfo[],
-): (CardSource & { colorId?: string | null; colorName?: string | null }) | null {
+): SourceWithColor | null {
   // Try id match first
   const byId = sources.find((s) => s.colorId === colorId);
   if (byId) return byId;
-  // Fall back to name match
+  // Fall back to name match (check both flat colorName and nested color.name)
   if (!colors) return null;
   const colorName = colors.find((c) => c.id === colorId)?.name;
   if (!colorName) return null;
-  return sources.find((s) => s.colorName === colorName) ?? null;
+  return sources.find((s) => s.colorName === colorName || s.color?.name === colorName) ?? null;
 }
 
 export interface ReadinessResult {
