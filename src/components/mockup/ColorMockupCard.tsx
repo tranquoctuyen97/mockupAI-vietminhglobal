@@ -80,6 +80,14 @@ export function ColorMockupCard({
     if (!source) return;
     setSavingPlacement(true);
     try {
+      // API requires integer values for compositeRegionPx
+      const roundedRegion = {
+        ...regionPx,
+        x: Math.round(regionPx.x),
+        y: Math.round(regionPx.y),
+        width: Math.max(1, Math.round(regionPx.width)),
+        height: Math.max(1, Math.round(regionPx.height)),
+      };
       if (source.scope === "TEMPLATE") {
         // Clone template source → new DRAFT source with custom placement
         if (!bgUrl) throw new Error("Không tìm thấy ảnh mockup");
@@ -94,7 +102,7 @@ export function ColorMockupCard({
         form.set("renderMode", "COMPOSITE");
         form.set("isPrimary", "false");
         form.set("sortOrder", "0");
-        form.set("compositeRegionPx", JSON.stringify(regionPx));
+        form.set("compositeRegionPx", JSON.stringify(roundedRegion));
         const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources`, {
           method: "POST",
           body: form,
@@ -104,7 +112,7 @@ export function ColorMockupCard({
         const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources/${source.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ compositeRegionPx: regionPx }),
+          body: JSON.stringify({ compositeRegionPx: roundedRegion }),
         });
         if (!res.ok) throw new Error((await res.json()).error || "Lỗi lưu vị trí");
       }
