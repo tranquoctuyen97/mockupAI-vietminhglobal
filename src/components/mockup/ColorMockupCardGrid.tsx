@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { ArrowRight, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { ColorMockupCard, type CardSource } from "./ColorMockupCard";
 import { UploadMockupModal, type UploadMockupModalValue, type UploadMockupTemplate } from "./UploadMockupModal";
@@ -75,6 +75,8 @@ interface ColorMockupCardGridProps {
   onGenerate: () => void;
   isGenerating: boolean;
   generateButtonLabel: string;
+  hasRenderedMockups: boolean;
+  onNextStep: () => Promise<void>;
 }
 
 export function ColorMockupCardGrid({
@@ -86,6 +88,8 @@ export function ColorMockupCardGrid({
   onGenerate,
   isGenerating,
   generateButtonLabel,
+  hasRenderedMockups,
+  onNextStep,
 }: ColorMockupCardGridProps) {
   const [loading, setLoading] = useState(true);
   const [sources, setSources] = useState<SourcesResponse | null>(null);
@@ -196,17 +200,31 @@ export function ColorMockupCardGrid({
             {readiness.readyCount}/{readiness.totalCount} màu sẵn sàng
           </p>
         </div>
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={onGenerate}
-          disabled={isGenerating || !readiness.allReady}
-          title={!readiness.allReady ? `${readiness.totalCount - readiness.readyCount} màu chưa sẵn sàng` : undefined}
-          style={(!readiness.allReady || isGenerating) ? { opacity: 0.5, cursor: "not-allowed" } : {}}
-        >
-          {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-          {generateButtonLabel}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className={`btn ${hasRenderedMockups ? "btn-secondary" : "btn-primary"}`}
+            onClick={onGenerate}
+            disabled={isGenerating || !readiness.allReady}
+            title={!readiness.allReady ? `${readiness.totalCount - readiness.readyCount} màu chưa sẵn sàng` : undefined}
+            style={(!readiness.allReady || isGenerating) ? { opacity: 0.5, cursor: "not-allowed" } : {}}
+          >
+            {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+            {generateButtonLabel}
+          </button>
+          {hasRenderedMockups && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={onNextStep}
+              disabled={isGenerating}
+              style={isGenerating ? { opacity: 0.5, cursor: "not-allowed" } : {}}
+            >
+              Tiếp theo
+              <ArrowRight size={14} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Color cards */}

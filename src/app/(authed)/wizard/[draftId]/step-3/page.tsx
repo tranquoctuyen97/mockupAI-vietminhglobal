@@ -1093,6 +1093,17 @@ export default function Step3PreviewPage() {
                 onGenerate={handleGenerate}
                 isGenerating={isGenerating}
                 generateButtonLabel={generateButtonLabel}
+                hasRenderedMockups={mockupImages.length > 0}
+                onNextStep={async () => {
+                  if (draft) {
+                    const store = useWizardStore.getState();
+                    store.updateDraft({
+                      currentStep: Math.max(draft.currentStep, 4),
+                    });
+                    await store.saveDraftImmediately();
+                  }
+                  router.push(`/wizard/${draftId}/step-4`);
+                }}
               />
             ) : null
           ) : (
