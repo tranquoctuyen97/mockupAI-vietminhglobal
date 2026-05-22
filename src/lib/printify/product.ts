@@ -114,20 +114,31 @@ export async function createOrUpdatePrintifyProduct(input: {
   // Fetch full catalog variants for this blueprint+provider.
   // Printify requires ALL variants to be present in the payload (especially for PUT).
   // Selected variants → is_enabled: true, rest → is_enabled: false.
-  let fullVariants: Array<{ id: number; price: number; is_enabled: boolean }> | undefined;
+  // For PUT updates, ALWAYS fetch full catalog even if input.variants is provided,
+  // because the local cost cache may be stale/incomplete vs the live Printify catalog.
+  let fullVariants: Array<{ id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean }> | undefined;
 
-  if (!input.variants) {
+  if (!input.variants || input.productId) {
     try {
       const { variants: catalogVariants } = await input.client.getBlueprintVariants(
         input.blueprintId,
         input.printProviderId,
       );
       const enabledSet = new Set(input.variantIds);
-      fullVariants = catalogVariants.map((v) => ({
-        id: v.id,
-        price: 2000,
-        is_enabled: enabledSet.has(v.id),
-      }));
+      // Merge provided variant prices/SKUs with the full catalog
+      const providedMap = new Map(
+        (input.variants ?? []).map(v => [v.id, v]),
+      );
+      fullVariants = catalogVariants.map((v) => {
+        const provided = providedMap.get(v.id);
+        return {
+          id: v.id,
+          price: provided?.price ?? 2000,
+          is_enabled: provided?.is_enabled ?? enabledSet.has(v.id),
+          ...(provided?.sku ? { sku: provided.sku } : {}),
+          ...(provided?.is_default ? { is_default: true } : {}),
+        };
+      });
     } catch (err) {
       console.warn("[Printify] Failed to fetch catalog variants for full payload, falling back to subset:", err);
       // Fallback: use only the selected variant IDs (may fail on PUT)

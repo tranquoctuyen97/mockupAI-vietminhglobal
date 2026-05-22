@@ -90,7 +90,7 @@ export async function ensureVariantCostCache(input: {
     variants: catalogVariants.map((v, idx) => ({
       id: v.id,
       price: 100, // $1.00 placeholder — Printify requires non-zero
-      is_enabled: idx < 100, // Only enable first 100 to avoid Printify API limit (code 8251)
+      is_enabled: true, // Enable all to fetch cost data for every variant
     })),
     print_areas: [
       {
