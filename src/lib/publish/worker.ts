@@ -19,7 +19,7 @@ import {
 import { parseMockupSourceUrl } from "@/lib/mockup/source-url";
 import { DEFAULT_PLACEMENT, type PlacementData } from "@/lib/placement/types";
 import { getClientForStore } from "@/lib/printify/account";
-import { PrintifyNotFoundError } from "@/lib/printify/client";
+import { PrintifyApiError, PrintifyNotFoundError } from "@/lib/printify/client";
 import { createOrUpdatePrintifyProduct, ensurePrintifyImage } from "@/lib/printify/product";
 import { buildVariantPayload, ensureVariantCostCache } from "@/lib/printify/variant-catalog";
 import { ShopifyClient } from "@/lib/shopify/client";
@@ -623,10 +623,12 @@ async function publishExistingPrintifyDraftProduct(input: {
     });
     return { printifyProductId: product.productId };
   } catch (err) {
-    if (err instanceof PrintifyNotFoundError) {
-      // Draft product was deleted from Printify — clear stale ref and CREATE new
+    // Draft product was deleted or corrupted on Printify — clear stale ref and CREATE new
+    const isNotFound = err instanceof PrintifyNotFoundError;
+    const isServerError = err instanceof PrintifyApiError && /\(5\d{2}\)/.test(err.message);
+    if (isNotFound || isServerError) {
       console.warn(
-        `[PublishWorker] Draft product ${input.productId} not found (404). Clearing stale ref and creating new product.`,
+        `[PublishWorker] Draft product ${input.productId} ${isNotFound ? "not found (404)" : "server error (5xx)"}. Clearing stale ref and creating new product.`,
       );
       await prisma.wizardDraft.update({
         where: { id: input.draftId },
