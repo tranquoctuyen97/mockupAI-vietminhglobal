@@ -254,9 +254,7 @@ export default function Step6ReviewPage() {
   const step4Url = `/wizard/${draftId}/step-4`;
   const step3Url = `/wizard/${draftId}/step-3`;
   const currentMockup = allMockups[carouselIdx] ?? null;
-  const currentMockupUrl = currentMockup
-    ? toPublicUrl(currentMockup.compositeUrl ?? currentMockup.sourceUrl)
-    : null;
+  const currentMockupUrl = currentMockup ? toPublicUrl(currentMockup.compositeUrl) : null;
   const currentMockupColorHex = currentMockup
     ? colorHexLookup.get(normalizeColorName(currentMockup.colorName)) ?? "var(--bg-tertiary)"
     : "var(--bg-tertiary)";
@@ -510,10 +508,10 @@ export default function Step6ReviewPage() {
             )}
           </div>
 
-          {allMockups.length > 1 && (
+              {allMockups.length > 1 && (
             <div className="flex gap-2" style={{ marginTop: 8, overflowX: "auto" }}>
               {allMockups.map((mockup, idx) => {
-                const thumbnailUrl = toPublicUrl(mockup.compositeUrl ?? mockup.sourceUrl);
+                const thumbnailUrl = toPublicUrl(mockup.compositeUrl);
                 const thumbnailColorHex = colorHexLookup.get(normalizeColorName(mockup.colorName)) ?? "var(--bg-tertiary)";
                 return (
                   <div
@@ -697,7 +695,7 @@ export default function Step6ReviewPage() {
                     <div className="flex items-center gap-3" style={{ marginBottom: 16, padding: "10px 12px", backgroundColor: "var(--bg-tertiary)", borderRadius: "var(--radius-sm)", textAlign: "left" }}>
                       <div style={{ width: 56, height: 56, borderRadius: "var(--radius-sm)", overflow: "hidden", flexShrink: 0, backgroundColor: "var(--bg-tertiary)" }}>
                         <img
-                          src={toPublicUrl(allMockups[0].compositeUrl ?? allMockups[0].sourceUrl) ?? undefined}
+                          src={toPublicUrl(allMockups[0].compositeUrl) ?? undefined}
                           alt="mockup"
                           style={{ width: "100%", height: "100%", objectFit: "cover" }}
                         />

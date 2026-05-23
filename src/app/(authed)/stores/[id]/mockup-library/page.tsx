@@ -1,38 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useParams, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
   ArrowLeft,
-  Check,
+  Eye,
   ImagePlus,
+  Info,
   Loader2,
-  Pencil,
   Plus,
-  Save,
-  Star,
-  Trash2,
+  Search,
   Upload,
-  X,
 } from "lucide-react";
 import {
-  CompositeRegionEditor,
-  type CompositeRegion,
-} from "@/components/mockup/CompositeRegionEditor";
-
-const VIEW_OPTIONS = [
-  "front",
-  "back",
-  "sleeve_left",
-  "sleeve_right",
-  "detail",
-  "lifestyle",
-] as const;
-
-const SCENE_OPTIONS = ["flat_lay", "hanging", "lifestyle", "model", "detail"] as const;
-const RENDER_OPTIONS = ["FINAL", "COMPOSITE"] as const;
+  MockupLibraryFilterBar,
+  type MockupLibraryFilter,
+} from "@/components/mockup/MockupLibraryFilterBar";
+import {
+  UploadMockupModal,
+  type UploadMockupModalValue,
+} from "@/components/mockup/UploadMockupModal";
+import type { CompositeRegion } from "@/components/mockup/CompositeRegionEditor";
 
 interface CustomSource {
   id: string;
@@ -47,6 +37,8 @@ interface CustomSource {
   compositeRegionPx: CompositeRegion | null;
   isPrimary: boolean;
   sortOrder: number;
+  imageWidth?: number | null;
+  imageHeight?: number | null;
 }
 
 interface TemplateGroup {
@@ -54,6 +46,7 @@ interface TemplateGroup {
   name: string;
   blueprintTitle: string;
   printProviderTitle: string;
+  defaultMockupSource?: "PRINTIFY" | "CUSTOM";
   colors: Array<{
     id: string;
     name: string;
@@ -67,46 +60,30 @@ interface LibraryResponse {
   templates: TemplateGroup[];
 }
 
-interface UploadDraft {
-  sourceId?: string;
-  templateId: string;
-  colorId: string;
-  label: string;
-  view: string;
-  sceneType: string;
-  renderMode: "FINAL" | "COMPOSITE";
-  isPrimary: boolean;
-  sortOrder: number;
-  compositeRegionPx: CompositeRegion | null;
-  file: File | null;
-  previewUrl: string | null;
-  imageWidth: number;
-  imageHeight: number;
-}
-
-const emptyDraft: UploadDraft = {
-  templateId: "",
-  colorId: "",
-  label: "",
-  view: "front",
-  sceneType: "flat_lay",
-  renderMode: "FINAL",
-  isPrimary: false,
-  sortOrder: 0,
-  compositeRegionPx: null,
-  file: null,
-  previewUrl: null,
-  imageWidth: 0,
-  imageHeight: 0,
-};
+type ModalTarget = {
+  source?: CustomSource;
+  templateId?: string;
+  colorId?: string;
+} | null;
 
 export default function MockupLibraryPage() {
+  return (
+    <Suspense fallback={<LibraryLoading />}>
+      <MockupLibraryPageContent />
+    </Suspense>
+  );
+}
+
+function MockupLibraryPageContent() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const storeId = params.id;
+  const templateIdFromUrl = searchParams.get("templateId");
   const [data, setData] = useState<LibraryResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [draft, setDraft] = useState<UploadDraft | null>(null);
+  const [activeFilter, setActiveFilter] = useState<MockupLibraryFilter>("all");
+  const [search, setSearch] = useState("");
+  const [modalTarget, setModalTarget] = useState<ModalTarget>(null);
 
   async function fetchLibrary() {
     setLoading(true);
@@ -122,145 +99,142 @@ export default function MockupLibraryPage() {
   }
 
   useEffect(() => {
-    fetchLibrary();
+    void fetchLibrary();
   }, [storeId]);
 
-  const selectedTemplate = useMemo(
-    () => data?.templates.find((template) => template.id === draft?.templateId) ?? null,
-    [data?.templates, draft?.templateId],
-  );
-  const selectedColor = useMemo(
-    () => selectedTemplate?.colors.find((color) => color.id === draft?.colorId) ?? null,
-    [selectedTemplate, draft?.colorId],
-  );
-
-  function openUpload(templateId?: string, colorId?: string) {
-    setDraft({
-      ...emptyDraft,
-      templateId: templateId ?? data?.templates[0]?.id ?? "",
-      colorId: colorId ?? data?.templates[0]?.colors[0]?.id ?? "",
-    });
-  }
-
-  function openEdit(source: CustomSource, templateId: string, colorId: string) {
-    setDraft({
-      sourceId: source.id,
-      templateId,
-      colorId,
-      label: source.label ?? "",
-      view: source.view,
-      sceneType: source.sceneType,
-      renderMode: source.renderMode,
-      isPrimary: source.isPrimary,
-      sortOrder: source.sortOrder,
-      compositeRegionPx: source.compositeRegionPx,
-      file: null,
-      previewUrl: source.imageUrl,
-      imageWidth: 0,
-      imageHeight: 0,
-    });
-  }
-
-  async function handleFile(file: File) {
-    const previewUrl = URL.createObjectURL(file);
-    const dimensions = await readImageDimensions(previewUrl);
-    setDraft((current) => current
-      ? {
-          ...current,
-          file,
-          previewUrl,
-          imageWidth: dimensions.width,
-          imageHeight: dimensions.height,
-          compositeRegionPx: current.compositeRegionPx ?? defaultRegion(dimensions.width, dimensions.height),
-        }
-      : current);
-  }
-
-  async function saveDraft() {
-    if (!draft) return;
-    setSaving(true);
-    try {
-      if (draft.sourceId) {
-        const res = await fetch(`/api/stores/${storeId}/mockup-library/${draft.sourceId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            label: draft.label,
-            view: draft.view,
-            sceneType: draft.sceneType,
-            sortOrder: draft.sortOrder,
-            isPrimary: draft.isPrimary,
-            ...(draft.renderMode === "COMPOSITE" ? { compositeRegionPx: draft.compositeRegionPx } : {}),
-          }),
-        });
-        if (!res.ok) throw new Error((await res.json()).error || "Không lưu được mockup");
-        toast.success("Đã cập nhật mockup");
-      } else {
-        if (!draft.file) throw new Error("Chưa chọn ảnh");
-        const form = new FormData();
-        form.set("file", draft.file);
-        form.set("templateId", draft.templateId);
-        form.set("colorId", draft.colorId);
-        form.set("label", draft.label);
-        form.set("view", draft.view);
-        form.set("sceneType", draft.sceneType);
-        form.set("renderMode", draft.renderMode);
-        form.set("sortOrder", String(draft.sortOrder));
-        form.set("isPrimary", String(draft.isPrimary));
-        if (draft.renderMode === "COMPOSITE") {
-          form.set("compositeRegionPx", JSON.stringify(draft.compositeRegionPx));
-        }
-
-        const res = await fetch(`/api/stores/${storeId}/mockup-library`, {
-          method: "POST",
-          body: form,
-        });
-        if (!res.ok) throw new Error((await res.json()).error || "Không upload được mockup");
-        toast.success("Đã upload mockup");
+  const libraryTemplates = useMemo(() => {
+    if (!data) return [];
+    return data.templates.filter((template) => {
+      if (templateIdFromUrl) {
+        return template.defaultMockupSource === "CUSTOM" && template.id === templateIdFromUrl;
       }
-      setDraft(null);
-      await fetchLibrary();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Không lưu được mockup");
-    } finally {
-      setSaving(false);
+      return template.defaultMockupSource === "CUSTOM";
+    });
+  }, [data, templateIdFromUrl]);
+
+  const rows = useMemo(() => {
+    return libraryTemplates.flatMap((template) =>
+      template.colors.map((color) => ({
+        template,
+        color,
+        sourceCount: color.sources.length,
+      })),
+    );
+  }, [libraryTemplates]);
+
+  const stats = useMemo(() => {
+    const readyPairs = rows.filter((row) => row.sourceCount > 0).length;
+    const totalPairs = rows.length;
+    const totalMockups = rows.reduce((sum, row) => sum + row.sourceCount, 0);
+    return { readyPairs, totalPairs, totalMockups };
+  }, [rows]);
+
+  const counts = useMemo<Record<MockupLibraryFilter, number>>(
+    () => ({
+      all: rows.length,
+      has: rows.filter((row) => row.sourceCount > 0).length,
+      missing: rows.filter((row) => row.sourceCount === 0).length,
+    }),
+    [rows],
+  );
+
+  const filteredRows = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return rows.filter((row) => {
+      const matchesSearch =
+        !query ||
+        row.template.name.toLowerCase().includes(query) ||
+        row.template.blueprintTitle.toLowerCase().includes(query) ||
+        row.color.name.toLowerCase().includes(query);
+      const matchesFilter =
+        activeFilter === "all" ||
+        (activeFilter === "has" && row.sourceCount > 0) ||
+        (activeFilter === "missing" && row.sourceCount === 0);
+      return matchesSearch && matchesFilter;
+    });
+  }, [activeFilter, rows, search]);
+
+  const groupedRows = useMemo(() => {
+    const groups = new Map<string, { template: TemplateGroup; rows: typeof filteredRows }>();
+    for (const row of filteredRows) {
+      const current = groups.get(row.template.id) ?? { template: row.template, rows: [] };
+      current.rows.push(row);
+      groups.set(row.template.id, current);
     }
+    return Array.from(groups.values());
+  }, [filteredRows]);
+
+  const modalTemplates = useMemo(() => {
+    if (!data || !modalTarget) return null;
+    const templates = modalTarget.templateId
+      ? data.templates.filter((entry) => entry.id === modalTarget.templateId)
+      : libraryTemplates;
+    return templates.map((template) => ({
+      id: template.id,
+      name: template.name,
+      blueprintTitle: template.blueprintTitle,
+      printProviderTitle: template.printProviderTitle,
+      colors: template.colors.map((color) => ({ id: color.id, name: color.name, hex: color.hex })),
+    }));
+  }, [data, libraryTemplates, modalTarget]);
+
+  function openTemplateColorDetail(templateId: string, colorId: string) {
+    const template = data?.templates.find((entry) => entry.id === templateId);
+    const color = template?.colors.find((entry) => entry.id === colorId);
+    if (!color) return;
+    const source = color.sources.find((entry) => entry.isPrimary) ?? color.sources[0];
+    setModalTarget(source ? { source, templateId, colorId } : { templateId, colorId });
   }
 
-  async function deleteSource(source: CustomSource) {
-    if (!confirm(`Xóa mockup "${source.label || source.view}"?`)) return;
-    try {
-      const res = await fetch(`/api/stores/${storeId}/mockup-library/${source.id}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) throw new Error("Không xóa được mockup");
-      toast.success("Đã xóa mockup");
-      await fetchLibrary();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Không xóa được mockup");
-    }
-  }
-
-  async function setPrimary(source: CustomSource) {
-    try {
-      const res = await fetch(`/api/stores/${storeId}/mockup-library/${source.id}`, {
+  async function saveModal(value: UploadMockupModalValue) {
+    if (value.sourceId) {
+      const res = await fetch(`/api/stores/${storeId}/mockup-library/${value.sourceId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isPrimary: true }),
+        body: JSON.stringify({
+          label: value.label,
+        }),
       });
-      if (!res.ok) throw new Error("Không đặt được primary");
-      await fetchLibrary();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Không đặt được primary");
+      if (!res.ok) throw new Error((await res.json()).error || "Không lưu được mockup");
+      toast.success("Đã cập nhật mockup");
+    } else {
+      if (!value.file) throw new Error("Chưa chọn ảnh");
+      const form = new FormData();
+      form.set("file", value.file);
+      form.set("templateId", value.templateId);
+      form.set("colorId", value.colorId);
+      form.set("label", value.label);
+      form.set("view", "front");
+      form.set("sceneType", "flat_lay");
+      form.set("renderMode", "FINAL");
+      form.set("isPrimary", "false");
+
+      const res = await fetch(`/api/stores/${storeId}/mockup-library`, {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Không upload được mockup");
+      toast.success("Đã upload mockup");
     }
+
+    setModalTarget(null);
+    await fetchLibrary();
+  }
+
+  async function deleteModalSource() {
+    const sourceId = modalTarget?.source?.id;
+    if (!sourceId) return;
+    const res = await fetch(`/api/stores/${storeId}/mockup-library/${sourceId}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) throw new Error("Không xóa được mockup");
+    toast.success("Đã xóa mockup");
+    setModalTarget(null);
+    await fetchLibrary();
   }
 
   if (loading) {
-    return (
-      <div style={{ padding: 60, textAlign: "center" }}>
-        <Loader2 className="animate-spin" size={24} style={{ margin: "0 auto" }} />
-      </div>
-    );
+    return <LibraryLoading />;
   }
 
   if (!data) {
@@ -274,9 +248,11 @@ export default function MockupLibraryPage() {
     );
   }
 
+  const nextMissing = rows.find((row) => row.sourceCount === 0);
+
   return (
-    <div style={{ maxWidth: 1120, margin: "0 auto", display: "grid", gap: 22 }}>
-      <div className="flex items-center justify-between">
+    <div style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 22 }}>
+      <div className="flex items-start justify-between gap-4" style={{ flexWrap: "wrap" }}>
         <div className="flex items-center gap-3">
           <Link href="/stores" style={{ opacity: 0.55 }}>
             <ArrowLeft size={18} />
@@ -286,370 +262,360 @@ export default function MockupLibraryPage() {
             <p className="page-subtitle" style={{ margin: "4px 0 0" }}>{data.store.name}</p>
           </div>
         </div>
-        <button className="btn btn-primary" onClick={() => openUpload()} type="button">
+        <div className="flex items-center gap-2">
+          <StatCounter value={`${stats.readyPairs}/${stats.totalPairs}`} label="Cặp đã có mockup" />
+          <StatCounter value={String(stats.totalMockups)} label="Mockup tổng" />
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-3" style={{ flexWrap: "wrap" }}>
+        <label
+          style={{
+            flex: "1 1 320px",
+            display: "flex",
+            alignItems: "center",
+            gap: 9,
+            minHeight: 42,
+            padding: "0 12px",
+            border: "1px solid var(--border-default)",
+            borderRadius: 10,
+            background: "var(--bg-primary)",
+          }}
+        >
+          <Search size={16} style={{ color: "var(--text-muted)" }} />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Tìm theo mẫu hoặc màu..."
+            style={{
+              border: 0,
+              outline: 0,
+              background: "transparent",
+              width: "100%",
+              fontSize: "0.86rem",
+              color: "var(--text-primary)",
+            }}
+          />
+        </label>
+        <button
+          className="btn btn-primary"
+          type="button"
+          onClick={() => {
+            if (libraryTemplates.length === 0) {
+              toast.info("Tạo Custom template và màu trước khi upload mockup.");
+              return;
+            }
+            setModalTarget({});
+          }}
+        >
           <Upload size={16} />
-          Upload Mockup
+          Upload mockup tái sử dụng
         </button>
       </div>
 
-      {data.templates.length === 0 ? (
-        <div className="card" style={{ padding: 40, textAlign: "center" }}>
-          Chưa có template nào.
+      <MockupLibraryFilterBar activeFilter={activeFilter} counts={counts} onChange={setActiveFilter} />
+
+      {rows.length === 0 ? (
+        <CmlEmptyLibrary
+          missing={0}
+          total={0}
+          onUpload={() => toast.info("Tạo template và màu trước khi upload mockup.")}
+          nextMissingLabel={null}
+        />
+      ) : groupedRows.length === 0 ? (
+        <div className="card" style={{ padding: 28, textAlign: "center", color: "var(--text-muted)" }}>
+          Không có dòng nào khớp bộ lọc hiện tại.
         </div>
       ) : (
-        data.templates.map((template) => (
-          <section key={template.id} style={{ display: "grid", gap: 12 }}>
-            <div>
-              <h2 style={{ fontSize: "1rem", fontWeight: 800, margin: 0 }}>
-                {template.name}
-              </h2>
-              <p style={{ margin: "4px 0 0", fontSize: "0.8rem", opacity: 0.55 }}>
-                {template.blueprintTitle || "Blueprint chưa có tên"}
-              </p>
-            </div>
-
-            {template.colors.map((color) => (
-              <div key={color.id} className="card" style={{ padding: 16 }}>
-                <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
-                  <div className="flex items-center gap-2">
-                    <span
-                      style={{
-                        width: 18,
-                        height: 18,
-                        borderRadius: "50%",
-                        background: color.hex,
-                        border: "1px solid rgba(0,0,0,0.15)",
-                      }}
-                    />
-                    <span style={{ fontWeight: 800 }}>{color.name}</span>
-                    <span style={{ fontSize: "0.75rem", opacity: 0.5 }}>{color.sources.length} ảnh</span>
-                  </div>
-                  <button className="btn btn-secondary" onClick={() => openUpload(template.id, color.id)} type="button">
-                    <Plus size={14} />
-                    Add
-                  </button>
+        groupedRows.map(({ template, rows: templateRows }) => {
+          const missingCount = template.colors.filter((color) => color.sources.length === 0).length;
+          return (
+            <section key={template.id} style={{ display: "grid", gap: 10 }}>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 style={{ fontSize: "1rem", fontWeight: 950, margin: 0 }}>{template.name}</h2>
+                  <p style={{ margin: "3px 0 0", fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                    {template.blueprintTitle || "Blueprint chưa có tên"} · {template.printProviderTitle || "Provider chưa có tên"}
+                  </p>
                 </div>
-
-                {color.sources.length === 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => openUpload(template.id, color.id)}
-                    style={{
-                      width: "100%",
-                      padding: 24,
-                      border: "1px dashed var(--border-default)",
-                      borderRadius: 8,
-                      background: "transparent",
-                      cursor: "pointer",
-                      color: "var(--text-muted)",
-                    }}
-                  >
-                    <ImagePlus size={22} style={{ margin: "0 auto 8px" }} />
-                    Add mockup for {color.name}
-                  </button>
-                ) : (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
-                    {color.sources.map((source) => {
-                      const thumb = source.outputUrl ?? source.imageUrl;
-                      return (
-                        <div key={source.id} style={{ display: "grid", gap: 7 }}>
-                          <button
-                            type="button"
-                            onClick={() => openEdit(source, template.id, color.id)}
-                            style={{
-                              position: "relative",
-                              aspectRatio: "1 / 1",
-                              borderRadius: 8,
-                              overflow: "hidden",
-                              border: source.isPrimary
-                                ? "2px solid var(--color-wise-green)"
-                                : "1px solid var(--border-default)",
-                              background: "var(--bg-tertiary)",
-                              cursor: "pointer",
-                              padding: 0,
-                            }}
-                          >
-                            {thumb ? (
-                              <img src={thumb} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                            ) : (
-                              <div style={{ height: "100%", display: "grid", placeItems: "center", opacity: 0.55 }}>
-                                <Loader2 className="animate-spin" size={20} />
-                              </div>
-                            )}
-                            <div style={{ position: "absolute", top: 6, left: 6, display: "flex", gap: 4, flexWrap: "wrap" }}>
-                              <Badge tone={source.renderMode === "FINAL" ? "blue" : "purple"}>
-                                {source.renderMode === "FINAL" ? "Custom Final" : "Custom Composite"}
-                              </Badge>
-                              {source.isPrimary && <Badge tone="green">Primary</Badge>}
-                            </div>
-                          </button>
-                          <div className="flex items-center justify-between gap-2">
-                            <span style={{ fontSize: "0.75rem", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {source.label || source.view}
-                            </span>
-                            <div className="flex items-center gap-1">
-                              <button className="btn btn-secondary" title="Edit" style={iconButton} onClick={() => openEdit(source, template.id, color.id)} type="button">
-                                <Pencil size={13} />
-                              </button>
-                              <button className="btn btn-secondary" title="Primary" style={iconButton} onClick={() => setPrimary(source)} type="button">
-                                <Star size={13} fill={source.isPrimary ? "currentColor" : "none"} />
-                              </button>
-                              <button className="btn btn-danger" title="Delete" style={iconButton} onClick={() => deleteSource(source)} type="button">
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                <span
+                  style={{
+                    borderRadius: 999,
+                    padding: "5px 10px",
+                    fontSize: "0.72rem",
+                    fontWeight: 950,
+                    background: missingCount === 0 ? "rgba(159,232,112,0.2)" : "rgba(245,158,11,0.12)",
+                    color: missingCount === 0 ? "var(--color-wise-dark-green)" : "#92400e",
+                  }}
+                >
+                  {missingCount === 0 ? "Đủ mockup" : `Thiếu ${missingCount} màu`}
+                </span>
               </div>
-            ))}
-          </section>
-        ))
+
+              <div style={{ display: "grid", gap: 9 }}>
+                {templateRows.map((row) => (
+                  <TemplateColorRow
+                    key={`${row.template.id}:${row.color.id}`}
+                    template={row.template}
+                    color={row.color}
+                    onOpen={() => openTemplateColorDetail(row.template.id, row.color.id)}
+                    onView={() => openTemplateColorDetail(row.template.id, row.color.id)}
+                    onUpload={() => setModalTarget({ templateId: row.template.id, colorId: row.color.id })}
+                  />
+                ))}
+              </div>
+            </section>
+          );
+        })
       )}
 
-      {draft && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 70,
-            background: "rgba(0,0,0,0.45)",
-            display: "flex",
-            justifyContent: "flex-end",
+      {rows.length > 0 && stats.readyPairs === 0 && (
+        <CmlEmptyLibrary
+          missing={stats.totalPairs - stats.readyPairs}
+          total={stats.totalPairs}
+          onUpload={() => {
+            const first = rows[0];
+            if (first) setModalTarget({ templateId: first.template.id, colorId: first.color.id });
           }}
-        >
-          <div
+          nextMissingLabel={nextMissing ? `${nextMissing.template.name} · ${nextMissing.color.name}` : null}
+        />
+      )}
+
+      <div
+        className="card"
+        style={{
+          padding: 14,
+          display: "flex",
+          gap: 10,
+          alignItems: "flex-start",
+          background: "rgba(59,130,246,0.07)",
+          border: "1px solid rgba(59,130,246,0.18)",
+          color: "#1d4ed8",
+        }}
+      >
+        <Info size={17} style={{ flexShrink: 0, marginTop: 1 }} />
+        <span style={{ fontSize: "0.8rem", lineHeight: 1.45, fontWeight: 800 }}>
+          Mockup tái sử dụng chỉ ảnh hưởng tới ảnh listing. Sản phẩm, variants và fulfill vẫn lấy từ Printify theo template.
+        </span>
+      </div>
+
+      {modalTarget && modalTemplates && modalTemplates.length > 0 && (
+        <UploadMockupModal
+          open
+          scope="TEMPLATE"
+          templates={modalTemplates}
+          lockedTemplateId={modalTarget.templateId ?? null}
+          lockedColorId={modalTarget.colorId ?? null}
+          initialValue={
+            modalTarget.source && modalTarget.templateId && modalTarget.colorId
+              ? sourceToModalValue(modalTarget.source, modalTarget.templateId, modalTarget.colorId)
+              : null
+          }
+          onClose={() => setModalTarget(null)}
+          onSave={saveModal}
+          onDelete={modalTarget.source ? deleteModalSource : undefined}
+        />
+      )}
+    </div>
+  );
+}
+
+function LibraryLoading() {
+  return (
+    <div style={{ padding: 60, textAlign: "center" }}>
+      <Loader2 className="animate-spin" size={24} style={{ margin: "0 auto" }} />
+    </div>
+  );
+}
+
+function TemplateColorRow({
+  template,
+  color,
+  onOpen,
+  onView,
+  onUpload,
+}: {
+  template: TemplateGroup;
+  color: TemplateGroup["colors"][number];
+  onOpen: () => void;
+  onView: () => void;
+  onUpload: () => void;
+}) {
+  const hasMockup = color.sources.length > 0;
+  return (
+    <div
+      className="card"
+      role="button"
+      tabIndex={0}
+      aria-label={`Mở ${template.name} · ${color.name}`}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+      style={{
+        padding: 14,
+        borderLeft: hasMockup ? "3px solid #9fe870" : "3px solid var(--border-default)",
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) auto",
+        gap: 12,
+        alignItems: "center",
+        cursor: "pointer",
+      }}
+    >
+      <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
+        <span
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 999,
+            background: color.hex,
+            border: "1px solid rgba(0,0,0,0.14)",
+            flexShrink: 0,
+          }}
+        />
+        <div style={{ minWidth: 0 }}>
+          <h3 style={{ margin: 0, fontSize: "0.88rem", fontWeight: 950, overflowWrap: "anywhere" }}>
+            {template.name} · {color.name}
+          </h3>
+          <p style={{ margin: "3px 0 0", fontSize: "0.74rem", color: "var(--text-muted)" }}>
+            {template.blueprintTitle || "Blueprint chưa có tên"}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3" style={{ justifyContent: "end", flexWrap: "wrap" }}>
+        {hasMockup ? (
+          <div style={{ textAlign: "right" }}>
+            <strong style={{ display: "block", fontSize: 18, lineHeight: 1 }}>{color.sources.length}</strong>
+            <span style={{ fontSize: "0.62rem", fontWeight: 950, color: "var(--text-muted)" }}>MOCKUP</span>
+          </div>
+        ) : (
+          <span
             style={{
-              width: "min(680px, 100vw)",
-              height: "100%",
-              overflow: "auto",
-              background: "var(--bg-primary)",
-              padding: 24,
-              boxShadow: "-16px 0 40px rgba(0,0,0,0.18)",
+              borderRadius: 999,
+              border: "1px dashed var(--border-default)",
+              padding: "5px 9px",
+              fontSize: "0.72rem",
+              color: "var(--text-muted)",
+              fontWeight: 900,
             }}
           >
-            <div className="flex items-center justify-between" style={{ marginBottom: 18 }}>
-              <h2 style={{ fontSize: "1.1rem", fontWeight: 900, margin: 0 }}>
-                {draft.sourceId ? "Edit Mockup" : "Upload Mockup"}
-              </h2>
-              <button className="btn btn-secondary" style={iconButton} onClick={() => setDraft(null)} type="button">
-                <X size={16} />
-              </button>
-            </div>
+            Chưa có mockup
+          </span>
+        )}
+        {hasMockup && (
+          <button
+            className="btn btn-secondary"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onView();
+            }}
+          >
+            <Eye size={14} />
+            Xem
+          </button>
+        )}
+        <button
+          className={hasMockup ? "btn btn-secondary" : "btn btn-primary"}
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onUpload();
+          }}
+        >
+          {hasMockup ? <Plus size={14} /> : <Upload size={14} />}
+          {hasMockup ? "Thêm" : "Upload"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
-            <div style={{ display: "grid", gap: 14 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <Field label="Template">
-                  <select
-                    value={draft.templateId}
-                    disabled={!!draft.sourceId}
-                    onChange={(event) => {
-                      const template = data.templates.find((entry) => entry.id === event.target.value);
-                      setDraft({ ...draft, templateId: event.target.value, colorId: template?.colors[0]?.id ?? "" });
-                    }}
-                    style={inputStyle}
-                  >
-                    {data.templates.map((template) => (
-                      <option key={template.id} value={template.id}>{template.name}</option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Color">
-                  <select
-                    value={draft.colorId}
-                    disabled={!!draft.sourceId}
-                    onChange={(event) => setDraft({ ...draft, colorId: event.target.value })}
-                    style={inputStyle}
-                  >
-                    {(selectedTemplate?.colors ?? []).map((color) => (
-                      <option key={color.id} value={color.id}>{color.name}</option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
+function CmlEmptyLibrary({
+  missing,
+  total,
+  onUpload,
+  nextMissingLabel,
+}: {
+  missing: number;
+  total: number;
+  onUpload: () => void;
+  nextMissingLabel: string | null;
+}) {
+  return (
+    <div className="card" style={{ padding: 32, display: "grid", gap: 18 }}>
+      <div style={{ textAlign: "center", display: "grid", gap: 8, justifyItems: "center" }}>
+        <ImagePlus size={34} style={{ color: "var(--color-wise-dark-green)" }} />
+        <h2 style={{ margin: 0, fontSize: "1.12rem", fontWeight: 950 }}>
+          {missing} · {total} chưa có mockup
+        </h2>
+        <div className="flex items-center gap-2" style={{ flexWrap: "wrap", justifyContent: "center" }}>
+          <button className="btn btn-primary" type="button" onClick={onUpload}>
+            <Upload size={14} />
+            Upload mockup tái sử dụng
+          </button>
+        </div>
+      </div>
 
-              {!draft.sourceId && (
-                <Field label="Image">
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      if (file) handleFile(file);
-                    }}
-                    style={inputStyle}
-                  />
-                </Field>
-              )}
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                <Field label="View">
-                  <select value={draft.view} onChange={(event) => setDraft({ ...draft, view: event.target.value })} style={inputStyle}>
-                    {VIEW_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select>
-                </Field>
-                <Field label="Scene">
-                  <select value={draft.sceneType} onChange={(event) => setDraft({ ...draft, sceneType: event.target.value })} style={inputStyle}>
-                    {SCENE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select>
-                </Field>
-                <Field label="Mode">
-                  <select
-                    value={draft.renderMode}
-                    disabled={!!draft.sourceId}
-                    onChange={(event) => setDraft({ ...draft, renderMode: event.target.value as UploadDraft["renderMode"] })}
-                    style={inputStyle}
-                  >
-                    {RENDER_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select>
-                </Field>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
-                <Field label="Label">
-                  <input value={draft.label} onChange={(event) => setDraft({ ...draft, label: event.target.value })} style={inputStyle} />
-                </Field>
-                <Field label="Sort">
-                  <input
-                    type="number"
-                    value={draft.sortOrder}
-                    onChange={(event) => setDraft({ ...draft, sortOrder: Number.parseInt(event.target.value, 10) || 0 })}
-                    style={inputStyle}
-                  />
-                </Field>
-              </div>
-
-              <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", fontWeight: 800 }}>
-                <input
-                  type="checkbox"
-                  checked={draft.isPrimary}
-                  onChange={(event) => setDraft({ ...draft, isPrimary: event.target.checked })}
-                />
-                Primary image
-              </label>
-
-              {draft.previewUrl && (
-                draft.renderMode === "COMPOSITE" && draft.imageWidth > 0 && draft.imageHeight > 0 ? (
-                  <CompositeRegionEditor
-                    imageUrl={draft.previewUrl}
-                    imageWidth={draft.imageWidth}
-                    imageHeight={draft.imageHeight}
-                    value={draft.compositeRegionPx}
-                    onChange={(region) => setDraft({ ...draft, compositeRegionPx: region })}
-                  />
-                ) : (
-                  <div style={{ width: 240, aspectRatio: "1 / 1", borderRadius: 8, overflow: "hidden", border: "1px solid var(--border-default)" }}>
-                    <img
-                      src={draft.previewUrl}
-                      alt=""
-                      onLoad={(event) => {
-                        const image = event.currentTarget;
-                        if (!draft.imageWidth || !draft.imageHeight) {
-                          setDraft((current) => current
-                            ? {
-                                ...current,
-                                imageWidth: image.naturalWidth,
-                                imageHeight: image.naturalHeight,
-                                compositeRegionPx: current.compositeRegionPx ?? defaultRegion(image.naturalWidth, image.naturalHeight),
-                              }
-                            : current);
-                        }
-                      }}
-                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                    />
-                  </div>
-                )
-              )}
-
-              <div className="flex items-center justify-end gap-2" style={{ marginTop: 8 }}>
-                <button className="btn btn-secondary" onClick={() => setDraft(null)} type="button">
-                  <X size={14} />
-                  Cancel
-                </button>
-                <button className="btn btn-primary" disabled={saving || !draft.templateId || !draft.colorId} onClick={saveDraft} type="button">
-                  {saving ? <Loader2 size={14} className="animate-spin" /> : draft.sourceId ? <Save size={14} /> : <Check size={14} />}
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>
+      {nextMissingLabel && (
+        <div
+          style={{
+            padding: 12,
+            borderRadius: 10,
+            background: "rgba(245,158,11,0.1)",
+            color: "#92400e",
+            fontSize: "0.78rem",
+            fontWeight: 850,
+          }}
+        >
+          Màu chưa có mockup tiếp theo: {nextMissingLabel}
         </div>
       )}
     </div>
   );
 }
 
-function Badge({ children, tone }: { children: React.ReactNode; tone: "blue" | "purple" | "green" }) {
-  const colors = {
-    blue: ["#dbeafe", "#1d4ed8"],
-    purple: ["#ede9fe", "#6d28d9"],
-    green: ["rgba(159,232,112,0.24)", "var(--color-wise-dark-green)"],
-  } as const;
+function StatCounter({ value, label }: { value: string; label: string }) {
   return (
-    <span
+    <div
       style={{
-        borderRadius: 999,
-        padding: "2px 7px",
-        fontSize: "0.62rem",
-        fontWeight: 900,
-        background: colors[tone][0],
-        color: colors[tone][1],
+        minWidth: 120,
+        padding: "9px 12px",
+        borderRadius: 10,
+        border: "1px solid var(--border-default)",
+        background: "var(--bg-primary)",
       }}
     >
-      {children}
-    </span>
+      <strong style={{ display: "block", fontSize: "1rem", lineHeight: 1 }}>{value}</strong>
+      <span style={{ display: "block", marginTop: 4, fontSize: "0.68rem", color: "var(--text-muted)", fontWeight: 900 }}>
+        {label}
+      </span>
+    </div>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: "grid", gap: 6, fontSize: "0.78rem", fontWeight: 800 }}>
-      {label}
-      {children}
-    </label>
-  );
-}
-
-function defaultRegion(width: number, height: number): CompositeRegion {
+function sourceToModalValue(
+  source: CustomSource,
+  templateId: string,
+  colorId: string,
+): Partial<UploadMockupModalValue> {
   return {
-    x: Math.max(0, Math.round(width * 0.3)),
-    y: Math.max(0, Math.round(height * 0.32)),
-    width: Math.max(1, Math.round(width * 0.4)),
-    height: Math.max(1, Math.round(height * 0.28)),
-    rotationDeg: 0,
+    sourceId: source.id,
+    templateId,
+    colorId,
+    label: source.label ?? "",
+    view: source.view,
+    sceneType: source.sceneType,
+    renderMode: source.renderMode,
+    isPrimary: source.isPrimary,
+    sortOrder: source.sortOrder,
+    compositeRegionPx: null,
+    previewUrl: source.imageUrl ?? source.outputUrl,
+    imageWidth: source.imageWidth ?? 0,
+    imageHeight: source.imageHeight ?? 0,
   };
 }
-
-function readImageDimensions(url: string): Promise<{ width: number; height: number }> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
-    image.onerror = () => reject(new Error("Không đọc được kích thước ảnh"));
-    image.src = url;
-  });
-}
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  minWidth: 0,
-  padding: "9px 11px",
-  borderRadius: 8,
-  border: "1px solid var(--border-default)",
-  background: "var(--bg-primary)",
-  color: "var(--text-primary)",
-  fontSize: "0.84rem",
-};
-
-const iconButton: React.CSSProperties = {
-  width: 32,
-  height: 32,
-  padding: 0,
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-};

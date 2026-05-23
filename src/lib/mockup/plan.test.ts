@@ -81,10 +81,10 @@ test("chooseIncludedSourceBucket: CUSTOM + no draft + template sources exist →
   );
 });
 
-test("chooseIncludedSourceBucket: CUSTOM + no sources → printify fallback", () => {
+test("chooseIncludedSourceBucket: CUSTOM + no sources → no included source", () => {
   assert.equal(
     chooseIncludedSourceBucket({ mode: "CUSTOM", hasDraftRows: false, hasTemplateRows: false }),
-    "printify",
+    "none",
   );
 });
 

@@ -77,6 +77,7 @@ interface ColorMockupCardGridProps {
   generateButtonLabel: string;
   hasRenderedMockups: boolean;
   onNextStep: () => Promise<void>;
+  onDeselectColor?: (colorId: string) => void;
 }
 
 export function ColorMockupCardGrid({
@@ -90,6 +91,7 @@ export function ColorMockupCardGrid({
   generateButtonLabel,
   hasRenderedMockups,
   onNextStep,
+  onDeselectColor,
 }: ColorMockupCardGridProps) {
   const [loading, setLoading] = useState(true);
   const [sources, setSources] = useState<SourcesResponse | null>(null);
@@ -110,6 +112,15 @@ export function ColorMockupCardGrid({
   }, [draftId]);
 
   useEffect(() => { void loadSources(); }, [loadSources]);
+
+  // Re-fetch sources when selected colors change (handles re-selection after deselect)
+  const selectedColorKey = selectedColors.map((c) => c.id).sort().join(",");
+  useEffect(() => {
+    // Skip initial render (loadSources already called above)
+    const timer = setTimeout(() => { void loadSources(); }, 600);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedColorKey]);
 
   // Map color → best source (draft preferred over template)
   const sourceByColorId = useMemo(() => {
@@ -239,6 +250,7 @@ export function ColorMockupCardGrid({
             draftId={draftId}
             onUploadClick={() => { setUploadColorId(color.id); setUploadOpen(true); }}
             onPlacementSaved={loadSources}
+            onDeselectColor={onDeselectColor ? () => onDeselectColor(color.id) : undefined}
           />
         ))}
       </div>

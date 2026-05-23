@@ -121,13 +121,31 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
 
     const storage = getStorage();
     const listingColorNames = listing.variants.map((v) => v.colorName);
-    const includedImages = await prisma.mockupImage.findMany({
+    const latestCompletedJob = await prisma.mockupJob.findFirst({
       where: {
-        mockupJob: { draftId },
-        included: true,
-        compositeUrl: { not: null },
+        draftId,
+        status: "completed",
+      },
+      orderBy: {
+        createdAt: "desc",
       },
     });
+
+    const includedImages = latestCompletedJob
+      ? await prisma.mockupImage.findMany({
+          where: {
+            mockupJobId: latestCompletedJob.id,
+            included: true,
+            compositeUrl: { not: null },
+          },
+        })
+      : await prisma.mockupImage.findMany({
+          where: {
+            mockupJob: { draftId },
+            included: true,
+            compositeUrl: { not: null },
+          },
+        });
     const isDryRun = isPublishDryRun();
     const requireRealPrintifyMockups = PRODUCT_DEFAULTS.mockup.requireRealPrintifyMockups;
     const { mockupImages, mockupPaths, missingColorNames } = resolveShopifyMockupMedia({
@@ -340,14 +358,34 @@ export async function runPrintifyStage(
       return;
     }
 
-    // Find included mockup images
-    const includedImages = await prisma.mockupImage.findMany({
+    // Find included mockup images from latest completed job
+    const latestPrintifyCompletedJob = await prisma.mockupJob.findFirst({
       where: {
-        mockupJob: { draftId: draftId },
-        included: true,
+        draftId,
+        status: "completed",
+      },
+      orderBy: {
+        createdAt: "desc",
       },
     });
-    const selectedMockupIds = includedImages.map((img: any) => img.printifyMockupId);
+
+    const includedImagesForPrintify = latestPrintifyCompletedJob
+      ? await prisma.mockupImage.findMany({
+          where: {
+            mockupJobId: latestPrintifyCompletedJob.id,
+            included: true,
+          },
+        })
+      : await prisma.mockupImage.findMany({
+          where: {
+            mockupJob: { draftId },
+            included: true,
+          },
+        });
+
+    const selectedMockupIds = includedImagesForPrintify
+      .map((img: any) => img.printifyMockupId)
+      .filter((id: string) => id && !id.startsWith("custom:") && !id.startsWith("synthetic:"));
     let template = draft.template;
     if (!template && draft.storeId) {
       template = await prisma.storeMockupTemplate.findFirst({

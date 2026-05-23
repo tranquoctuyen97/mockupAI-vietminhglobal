@@ -4,7 +4,7 @@ import test from "node:test";
 let hasFeature: (
   tenantId: string,
   role: string,
-  feature: string,
+  feature: any,
   fetchPermissions?: (tenantId: string, role: string) => Promise<Set<string>>,
 ) => Promise<boolean>;
 let FEATURES: readonly string[];

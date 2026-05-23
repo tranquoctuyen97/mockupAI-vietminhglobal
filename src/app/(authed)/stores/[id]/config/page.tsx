@@ -402,7 +402,7 @@ function OverviewTab({
                           </div>
                           {t.defaultMockupSource === "CUSTOM" && (
                             <Link
-                              href={`/stores/${store.id}/mockup-library`}
+                              href={`/stores/${store.id}/mockup-library?templateId=${t.id}`}
                               style={{ fontSize: "0.72rem", color: "var(--color-wise-green)", fontWeight: 500 }}
                             >
                               Thư viện mockup →
@@ -1048,7 +1048,7 @@ function TemplatesSection({
                               </div>
                               {t.defaultMockupSource === "CUSTOM" && (
                                 <Link
-                                  href={`/stores/${store.id}/mockup-library`}
+                                  href={`/stores/${store.id}/mockup-library?templateId=${t.id}`}
                                   onClick={(e) => e.stopPropagation()}
                                   style={{ fontSize: "0.72rem", color: "var(--color-wise-green)", fontWeight: 500 }}
                                 >
@@ -1606,6 +1606,11 @@ function MockupSourceSection({
       .finally(() => setLoadingMissing(false));
   }, [selected, value.id, store.id]);
 
+  const mockupLibraryHref =
+    value.id === "new"
+      ? `/stores/${store.id}/mockup-library`
+      : `/stores/${store.id}/mockup-library?templateId=${value.id}`;
+
   const options: Array<{ key: "PRINTIFY" | "CUSTOM"; icon: React.ReactNode; title: string; desc: string }> = [
     {
       key: "PRINTIFY",
@@ -1688,7 +1693,7 @@ function MockupSourceSection({
                 </span>
                 <div style={{ marginTop: 8 }}>
                   <Link
-                    href={`/stores/${store.id}/mockup-library`}
+                    href={mockupLibraryHref}
                     style={{
                       padding: "5px 12px",
                       borderRadius: 6,
@@ -1722,7 +1727,7 @@ function MockupSourceSection({
                 <span>Template sẽ dùng mockup tái sử dụng trong Thư viện mockup.</span>
                 <div style={{ marginTop: 8 }}>
                   <Link
-                    href={`/stores/${store.id}/mockup-library`}
+                    href={mockupLibraryHref}
                     style={{
                       padding: "5px 12px",
                       borderRadius: 6,

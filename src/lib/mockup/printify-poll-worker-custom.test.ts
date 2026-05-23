@@ -133,51 +133,51 @@ test("markPrintifyRowsExcludedForCustomColors adds 20000 offset to excluded rows
 
 // --- chooseIncludedSourceBucket ---
 
-test("chooseIncludedSourceBucket: AUTO mode prefers draft when available", () => {
+test("chooseIncludedSourceBucket: CUSTOM prefers draft when available", () => {
   assert.equal(
-    chooseIncludedSourceBucket({ mode: "AUTO", hasDraftRows: true, hasTemplateRows: true }),
+    chooseIncludedSourceBucket({ mode: "CUSTOM", hasDraftRows: true, hasTemplateRows: true }),
     "draft",
   );
 });
 
-test("chooseIncludedSourceBucket: AUTO mode falls back to template when no draft", () => {
+test("chooseIncludedSourceBucket: CUSTOM falls back to template when no draft", () => {
   assert.equal(
-    chooseIncludedSourceBucket({ mode: "AUTO", hasDraftRows: false, hasTemplateRows: true }),
+    chooseIncludedSourceBucket({ mode: "CUSTOM", hasDraftRows: false, hasTemplateRows: true }),
     "template",
   );
 });
 
-test("chooseIncludedSourceBucket: AUTO mode falls back to printify when no custom", () => {
+test("chooseIncludedSourceBucket: CUSTOM returns none when no custom", () => {
   assert.equal(
-    chooseIncludedSourceBucket({ mode: "AUTO", hasDraftRows: false, hasTemplateRows: false }),
+    chooseIncludedSourceBucket({ mode: "CUSTOM", hasDraftRows: false, hasTemplateRows: false }),
+    "none",
+  );
+});
+
+test("chooseIncludedSourceBucket: PRINTIFY uses printify even when draft rows exist", () => {
+  assert.equal(
+    chooseIncludedSourceBucket({ mode: "PRINTIFY", hasDraftRows: true, hasTemplateRows: true }),
     "printify",
   );
 });
 
-test("chooseIncludedSourceBucket: DRAFT_CUSTOM mode selects draft rows", () => {
+test("chooseIncludedSourceBucket: PRINTIFY uses printify when no draft rows exist", () => {
   assert.equal(
-    chooseIncludedSourceBucket({ mode: "DRAFT_CUSTOM", hasDraftRows: true, hasTemplateRows: true }),
-    "draft",
-  );
-});
-
-test("chooseIncludedSourceBucket: DRAFT_CUSTOM falls back to printify when no draft rows", () => {
-  assert.equal(
-    chooseIncludedSourceBucket({ mode: "DRAFT_CUSTOM", hasDraftRows: false, hasTemplateRows: true }),
+    chooseIncludedSourceBucket({ mode: "PRINTIFY", hasDraftRows: false, hasTemplateRows: true }),
     "printify",
   );
 });
 
-test("chooseIncludedSourceBucket: TEMPLATE_PRINTIFY mode selects template rows", () => {
+test("chooseIncludedSourceBucket: PRINTIFY uses printify even when only template rows exist", () => {
   assert.equal(
-    chooseIncludedSourceBucket({ mode: "TEMPLATE_PRINTIFY", hasDraftRows: true, hasTemplateRows: true }),
-    "template",
+    chooseIncludedSourceBucket({ mode: "PRINTIFY", hasDraftRows: true, hasTemplateRows: true }),
+    "printify",
   );
 });
 
-test("chooseIncludedSourceBucket: TEMPLATE_PRINTIFY falls back to printify when no template rows", () => {
+test("chooseIncludedSourceBucket: PRINTIFY falls back to printify when no template rows", () => {
   assert.equal(
-    chooseIncludedSourceBucket({ mode: "TEMPLATE_PRINTIFY", hasDraftRows: true, hasTemplateRows: false }),
+    chooseIncludedSourceBucket({ mode: "PRINTIFY", hasDraftRows: true, hasTemplateRows: false }),
     "printify",
   );
 });

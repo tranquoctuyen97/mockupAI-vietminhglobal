@@ -5,32 +5,32 @@ import { getSourceBadge, scopeSortPriority } from "./MockupGallery.js";
 
 // --- Badge tests ---
 
-test("getSourceBadge: Draft Custom Final badge", () => {
+test("getSourceBadge: draft custom final uses user-facing listing badge", () => {
   const parsed = parseMockupSourceUrl("mockup://custom/draft/final/id1");
   const badge = getSourceBadge(parsed);
   assert.ok(badge);
-  assert.equal(badge.label, "Draft Custom Final");
+  assert.equal(badge.label, "Mockup riêng");
 });
 
-test("getSourceBadge: Draft Custom Composite badge", () => {
+test("getSourceBadge: draft custom composite uses user-facing listing badge", () => {
   const parsed = parseMockupSourceUrl("mockup://custom/draft/composite/id2");
   const badge = getSourceBadge(parsed);
   assert.ok(badge);
-  assert.equal(badge.label, "Draft Custom Composite");
+  assert.equal(badge.label, "Mockup riêng");
 });
 
-test("getSourceBadge: Template Custom Final badge", () => {
+test("getSourceBadge: template custom final uses library badge", () => {
   const parsed = parseMockupSourceUrl("mockup://custom/template/final/id3");
   const badge = getSourceBadge(parsed);
   assert.ok(badge);
-  assert.equal(badge.label, "Template Custom Final");
+  assert.equal(badge.label, "Từ thư viện");
 });
 
-test("getSourceBadge: Template Custom Composite badge", () => {
+test("getSourceBadge: template custom composite uses library badge", () => {
   const parsed = parseMockupSourceUrl("mockup://custom/template/composite/id4");
   const badge = getSourceBadge(parsed);
   assert.ok(badge);
-  assert.equal(badge.label, "Template Custom Composite");
+  assert.equal(badge.label, "Từ thư viện");
 });
 
 test("getSourceBadge: Printify badge", () => {
@@ -77,16 +77,16 @@ test("scopeSortPriority: full order is draft < template < printify < synthetic",
 
 // --- Legacy badge compatibility ---
 
-test("getSourceBadge: legacy custom-final maps to Template Custom Final", () => {
+test("getSourceBadge: legacy custom-final maps to library badge", () => {
   const parsed = parseMockupSourceUrl("mockup://custom-final/legacy1");
   const badge = getSourceBadge(parsed);
   assert.ok(badge);
-  assert.equal(badge.label, "Template Custom Final");
+  assert.equal(badge.label, "Từ thư viện");
 });
 
-test("getSourceBadge: legacy custom-composite maps to Template Custom Composite", () => {
+test("getSourceBadge: legacy custom-composite maps to library badge", () => {
   const parsed = parseMockupSourceUrl("mockup://custom-composite/legacy2");
   const badge = getSourceBadge(parsed);
   assert.ok(badge);
-  assert.equal(badge.label, "Template Custom Composite");
+  assert.equal(badge.label, "Từ thư viện");
 });

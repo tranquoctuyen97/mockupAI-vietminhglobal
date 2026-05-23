@@ -63,6 +63,7 @@ export async function GET(
       name: template.name,
       blueprintTitle: template.blueprintTitle,
       printProviderTitle: template.printProviderTitle,
+      defaultMockupSource: template.defaultMockupSource,
       colors: template.colors.map((entry) => ({
         templateColorId: entry.id,
         id: entry.color.id,
@@ -133,6 +134,19 @@ export async function POST(
     return NextResponse.json({ error: "Template/color combination not found" }, { status: 400 });
   }
 
+  const hasExistingSource = Boolean(
+    await prisma.customMockupSource.findFirst({
+      where: {
+        scope: "TEMPLATE",
+        templateId,
+        colorId,
+        isActive: true,
+        deletedAt: null,
+      },
+      select: { id: true },
+    }),
+  );
+
   const sourceId = randomUUID();
   const paths = buildStoragePaths({
     scope: "TEMPLATE",
@@ -160,7 +174,7 @@ export async function POST(
   }
 
   const source = await prisma.$transaction(async (tx) => {
-    if (isPrimary) {
+    if (isPrimary || !hasExistingSource) {
       await tx.customMockupSource.updateMany({
         where: { scope: "TEMPLATE", templateId, colorId, isActive: true, deletedAt: null },
         data: { isPrimary: false },
@@ -181,7 +195,7 @@ export async function POST(
         sceneType,
         renderMode,
         compositeRegionPx: toJson(renderMode === "COMPOSITE" ? compositeRegionPx : null),
-        isPrimary,
+        isPrimary: isPrimary || !hasExistingSource,
         sortOrder,
         uploadedById: session.id,
       },

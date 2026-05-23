@@ -6,6 +6,7 @@ import { isFinalBullMqAttempt } from "./progress";
 import type { PrintifyMockupPollPayload } from "./queue";
 import { getMockupCompositeQueue } from "./queue";
 import { cacheRemoteMockupImage } from "./remote-media";
+import { resolveCustomMockupSourceSelection } from "./custom-source-selection";
 import { buildCustomMockupSourceUrl, type MockupSourceType } from "./source-url";
 
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
@@ -81,26 +82,34 @@ export async function processPrintifyMockupPollJob(
       hasTemplateRows: templateRows.length > 0,
     });
 
-    // Collect custom color keys for exclusion of Printify rows
-    const customColorKeys = new Set([
-      ...draftRows.map((row) => normalizeColorKey(row.colorName)),
-      ...templateRows.map((row) => normalizeColorKey(row.colorName)),
-    ]);
+    const draftColorKeys = new Set(draftRows.map((row) => normalizeColorKey(row.colorName)));
+    let rows: MockupImageRow[] = [];
 
-    // If custom mockups exist for colors, exclude Printify rows for those colors
-    if (bucket === "draft" || bucket === "template") {
-      markPrintifyRowsExcludedForCustomColors(printifyRows, customColorKeys);
+    if (mode === "CUSTOM") {
+      if (bucket === "none") {
+        throw new Error(
+          "Template is set to Custom but no custom mockup images exist for the selected colors",
+        );
+      }
+
+      for (const row of draftRows) row.included = true;
+      for (const row of templateRows) {
+        row.included = !draftColorKeys.has(normalizeColorKey(row.colorName));
+      }
+      rows = [...draftRows, ...templateRows.filter((row) => row.included)];
+    } else {
+      for (const row of draftRows) row.included = true;
+      rows =
+        draftRows.length > 0
+          ? [
+              ...draftRows,
+              ...printifyRows.filter(
+                (row) => !draftColorKeys.has(normalizeColorKey(row.colorName)),
+              ),
+            ]
+          : printifyRows;
     }
 
-    // Set inclusion based on bucket priority
-    if (bucket !== "draft") {
-      for (const row of draftRows) row.included = false;
-    }
-    if (bucket !== "template") {
-      for (const row of templateRows) row.included = false;
-    }
-
-    const rows = [...draftRows, ...templateRows, ...printifyRows];
     const completedImageCount = rows.filter((row) => row.compositeStatus === "completed").length;
     const hasPendingImages = completedImageCount < rows.length;
 
@@ -275,17 +284,18 @@ export function markPrintifyRowsExcludedForCustomColors<
 /**
  * Determines which bucket of rows should be "included" by default.
  * Driven by template.defaultMockupSource:
- *   CUSTOM: prefer draft > template > printify (fallback)
+ *   CUSTOM: prefer draft > template; never silently falls back to Printify
  *   PRINTIFY: always use printify
  */
 export function chooseIncludedSourceBucket(input: {
   mode: "PRINTIFY" | "CUSTOM";
   hasDraftRows: boolean;
   hasTemplateRows: boolean;
-}): "draft" | "template" | "printify" {
+}): "draft" | "template" | "printify" | "none" {
   if (input.mode === "CUSTOM") {
     if (input.hasDraftRows) return "draft";
     if (input.hasTemplateRows) return "template";
+    return "none";
   }
 
   return "printify";
@@ -340,8 +350,6 @@ async function buildCustomRowsForDraft(input: {
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
 
-  // Load TEMPLATE sources: use picks if any, otherwise all active for template
-  const pickedSourceIds = draft.mockupLibraryPicks?.map((p) => p.sourceId) ?? [];
   const templateSources = await prisma.customMockupSource.findMany({
     where: {
       scope: "TEMPLATE",
@@ -349,10 +357,20 @@ async function buildCustomRowsForDraft(input: {
       colorId: { in: colorIds },
       isActive: true,
       deletedAt: null,
-      ...(pickedSourceIds.length > 0 ? { id: { in: pickedSourceIds } } : {}),
     },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
+
+  const resolvedSelection = resolveCustomMockupSourceSelection({
+    sources: [...draftSources, ...templateSources],
+    picks: draft.mockupLibraryPicks ?? [],
+  });
+  const selectedDraftSources = resolvedSelection.selectedSources.filter(
+    (source) => source.scope === "DRAFT",
+  );
+  const selectedTemplateSources = resolvedSelection.selectedSources.filter(
+    (source) => source.scope === "TEMPLATE",
+  );
 
   const mapSource = (source: typeof draftSources[number]) => ({
     id: source.id,
@@ -367,7 +385,7 @@ async function buildCustomRowsForDraft(input: {
   });
 
   const draftRows = buildCustomMockupImageRows({
-    sources: draftSources.map(mapSource),
+    sources: selectedDraftSources.map(mapSource),
     colorsById,
     variantColorLookup: input.variantColorLookup,
     scope: "DRAFT",
@@ -375,7 +393,7 @@ async function buildCustomRowsForDraft(input: {
   });
 
   const templateRows = buildCustomMockupImageRows({
-    sources: templateSources.map(mapSource),
+    sources: selectedTemplateSources.map(mapSource),
     colorsById,
     variantColorLookup: input.variantColorLookup,
     scope: "TEMPLATE",

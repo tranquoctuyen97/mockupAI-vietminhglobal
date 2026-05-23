@@ -30,6 +30,8 @@ export interface CompositeRegionPx {
   width: number;
   height: number;
   rotationDeg: number;
+  imageWidth?: number;
+  imageHeight?: number;
 }
 
 export function isCustomMockupView(value: unknown): value is CustomMockupViewValue {
@@ -65,6 +67,8 @@ export function parseCompositeRegionPx(value: unknown): CompositeRegionPx | null
     height: Number(candidate.height),
     rotationDeg: Number(candidate.rotationDeg ?? 0),
   };
+  const imageWidth = Number(candidate.imageWidth);
+  const imageHeight = Number(candidate.imageHeight);
 
   if (
     !Number.isInteger(region.x) ||
@@ -82,6 +86,19 @@ export function parseCompositeRegionPx(value: unknown): CompositeRegionPx | null
     return null;
   }
 
+  if (candidate.imageWidth !== undefined || candidate.imageHeight !== undefined) {
+    if (
+      !Number.isInteger(imageWidth) ||
+      !Number.isInteger(imageHeight) ||
+      imageWidth < 1 ||
+      imageHeight < 1
+    ) {
+      return null;
+    }
+    region.imageWidth = imageWidth;
+    region.imageHeight = imageHeight;
+  }
+
   return region;
 }
 
@@ -96,12 +113,16 @@ export function storageUrl(key: string | null | undefined): string | null {
 export function serializeCustomMockupSource<T extends {
   storagePath: string;
   outputPath: string | null;
+  compositeRegionPx?: unknown;
 }>(source: T, dimensions?: { width: number | null; height: number | null }) {
+  const compositeRegion = source.compositeRegionPx && typeof source.compositeRegionPx === "object"
+    ? source.compositeRegionPx as Partial<CompositeRegionPx>
+    : null;
   return {
     ...source,
     imageUrl: storageUrl(source.storagePath),
     outputUrl: storageUrl(source.outputPath),
-    imageWidth: dimensions?.width ?? null,
-    imageHeight: dimensions?.height ?? null,
+    imageWidth: dimensions?.width ?? compositeRegion?.imageWidth ?? null,
+    imageHeight: dimensions?.height ?? compositeRegion?.imageHeight ?? null,
   };
 }

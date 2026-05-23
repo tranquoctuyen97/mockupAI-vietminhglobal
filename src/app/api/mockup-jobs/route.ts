@@ -4,6 +4,7 @@ import { validateSession } from "@/lib/auth/session";
 import { isMockupFallbackForcedForDev } from "@/lib/config/runtime-controls";
 import { prisma } from "@/lib/db";
 import { resolveEffectivePlacementData } from "@/lib/mockup/plan";
+import { resolveCustomMockupSourceSelection } from "@/lib/mockup/custom-source-selection";
 import { buildVariantColorLookup } from "@/lib/mockup/printify-poll-worker";
 import { getPrintifyMockupQueue } from "@/lib/mockup/queue";
 import { DEFAULT_PLACEMENT } from "@/lib/placement/types";
@@ -39,6 +40,9 @@ export async function POST(request: Request) {
         include: {
           colors: true,
         },
+      },
+      mockupLibraryPicks: {
+        select: { sourceId: true, isPrimary: true, sortOrder: true },
       },
     },
   });
@@ -101,6 +105,98 @@ export async function POST(request: Request) {
       },
       { status: 400 },
     );
+  }
+
+  if ((template.defaultMockupSource ?? "PRINTIFY") === "CUSTOM") {
+    const selectedColorIds = new Set(draft.enabledColorIds);
+    const [draftSources, templateSources] = await Promise.all([
+      prisma.customMockupSource.findMany({
+        where: {
+          scope: "DRAFT",
+          draftId,
+          colorId: { in: draft.enabledColorIds },
+          isActive: true,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          colorId: true,
+          isPrimary: true,
+          sortOrder: true,
+          renderMode: true,
+          compositeRegionPx: true,
+        },
+      }),
+      prisma.customMockupSource.findMany({
+        where: {
+          scope: "TEMPLATE",
+          templateId: template.id,
+          colorId: { in: draft.enabledColorIds },
+          isActive: true,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          colorId: true,
+          isPrimary: true,
+          sortOrder: true,
+          renderMode: true,
+          compositeRegionPx: true,
+        },
+      }),
+    ]);
+    const resolvedSelection = resolveCustomMockupSourceSelection({
+      sources: [...draftSources, ...templateSources],
+      picks: draft.mockupLibraryPicks,
+    });
+    if (resolvedSelection.selectedSources.length === 0) {
+      return NextResponse.json(
+        {
+          error: "Chưa chọn mockup nào cho listing này.",
+          code: "NO_CUSTOM_MOCKUP_SELECTED",
+        },
+        { status: 400 },
+      );
+    }
+    const coveredColorIds = new Set(resolvedSelection.selectedSources.map((source) => source.colorId));
+    const missingCustomColors = (draft.store?.colors ?? []).filter(
+      (color) => selectedColorIds.has(color.id) && !coveredColorIds.has(color.id),
+    );
+
+    if (missingCustomColors.length > 0) {
+      const missingColorNames = missingCustomColors.map((color) => color.name).join(", ");
+      return NextResponse.json(
+        {
+          error: `Template đang dùng Custom nhưng ${missingColorNames} chưa có mockup custom. Màu này sẽ chưa thể tạo mockup cho tới khi bạn upload mockup custom hoặc bỏ màu này khỏi listing.`,
+          code: "CUSTOM_MOCKUP_MISSING_COLOR",
+          missingColorIds: missingCustomColors.map((color) => color.id),
+          missingColorNames: missingCustomColors.map((color) => color.name),
+        },
+        { status: 400 },
+      );
+    }
+
+    const missingPlacementSources = resolvedSelection.selectedSources.filter(
+      (source) => source.renderMode === "COMPOSITE" && !source.compositeRegionPx,
+    );
+    if (missingPlacementSources.length > 0) {
+      const missingPlacementColorNames = [
+        ...new Set(
+          missingPlacementSources
+            .map((source) => draft.store?.colors.find((color) => color.id === source.colorId)?.name)
+            .filter((name): name is string => Boolean(name)),
+        ),
+      ];
+      return NextResponse.json(
+        {
+          error: `Có mockup chưa chỉnh vị trí: ${missingPlacementColorNames.join(", ")}. Hãy bấm \"Chỉnh vị trí design\" trước khi tạo Mockups.`,
+          code: "CUSTOM_MOCKUP_MISSING_REGION",
+          missingColorNames: missingPlacementColorNames,
+          missingSourceIds: missingPlacementSources.map((source) => source.id),
+        },
+        { status: 400 },
+      );
+    }
   }
 
   const placementData = resolveEffectivePlacementData(

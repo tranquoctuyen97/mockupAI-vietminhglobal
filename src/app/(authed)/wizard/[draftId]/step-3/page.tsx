@@ -1104,6 +1104,7 @@ export default function Step3PreviewPage() {
                   }
                   router.push(`/wizard/${draftId}/step-4`);
                 }}
+                onDeselectColor={(colorId) => toggleColor(colorId)}
               />
             ) : null
           ) : (

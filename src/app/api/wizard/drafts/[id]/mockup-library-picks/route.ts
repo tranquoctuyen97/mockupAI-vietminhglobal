@@ -6,8 +6,8 @@ import { prisma } from "@/lib/db";
 
 /**
  * PUT /api/wizard/drafts/[id]/mockup-library-picks
- * Replace all library picks in a transaction.
- * Body: { sourceIds: string[] }
+ * Replace selected mockup sources in a transaction.
+ * Body: { sourceIds: string[], primarySourceId?: string | null }
  */
 export async function PUT(
   request: Request,
@@ -25,48 +25,53 @@ export async function PUT(
 
   const body = await request.json();
   const sourceIds: string[] = body.sourceIds;
+  const primarySourceId: string | null | undefined = body.primarySourceId;
   if (!Array.isArray(sourceIds)) {
     return NextResponse.json({ error: "sourceIds must be an array" }, { status: 400 });
   }
+  if (sourceIds.length === 0) {
+    return NextResponse.json({ error: "At least one mockup must be selected" }, { status: 400 });
+  }
 
-  // Validate that all sources are TEMPLATE scope, active, and belong to this template
-  if (sourceIds.length > 0) {
-    const sources = await prisma.customMockupSource.findMany({
-      where: {
-        id: { in: sourceIds },
-        scope: "TEMPLATE",
-        isActive: true,
-        deletedAt: null,
-        ...(draft.templateId ? { templateId: draft.templateId } : {}),
-      },
-      select: { id: true, colorId: true },
-    });
+  const sources = await prisma.customMockupSource.findMany({
+    where: {
+      id: { in: sourceIds },
+      isActive: true,
+      deletedAt: null,
+      OR: [
+        { scope: "DRAFT" as const, draftId },
+        ...(draft.templateId ? [{ scope: "TEMPLATE" as const, templateId: draft.templateId }] : []),
+      ],
+    },
+    select: { id: true, colorId: true },
+  });
 
-    const foundIds = new Set(sources.map((s) => s.id));
-    const invalid = sourceIds.filter((id) => !foundIds.has(id));
-    if (invalid.length > 0) {
-      return NextResponse.json(
-        { error: `Invalid or ineligible source IDs: ${invalid.join(", ")}` },
-        { status: 400 },
-      );
-    }
+  const foundIds = new Set(sources.map((s) => s.id));
+  const invalid = sourceIds.filter((id) => !foundIds.has(id));
+  if (invalid.length > 0) {
+    return NextResponse.json(
+      { error: `Invalid or ineligible source IDs: ${invalid.join(", ")}` },
+      { status: 400 },
+    );
+  }
 
-    // Replace all picks atomically
-    await prisma.$transaction(async (tx) => {
-      await tx.wizardDraftMockupLibraryPick.deleteMany({ where: { draftId } });
-      await tx.wizardDraftMockupLibraryPick.createMany({
-        data: sources.map((source, index) => ({
+  const normalizedPrimaryId = sourceIds.includes(primarySourceId ?? "") ? primarySourceId ?? sourceIds[0] : sourceIds[0];
+
+  await prisma.$transaction(async (tx) => {
+    await tx.wizardDraftMockupLibraryPick.deleteMany({ where: { draftId } });
+    await tx.wizardDraftMockupLibraryPick.createMany({
+      data: sourceIds.map((sourceId, index) => {
+        const source = sources.find((entry) => entry.id === sourceId)!;
+        return {
           draftId,
           sourceId: source.id,
           colorId: source.colorId,
+          isPrimary: source.id === normalizedPrimaryId,
           sortOrder: index,
-        })),
-      });
+        };
+      }),
     });
-  } else {
-    // Clear all picks
-    await prisma.wizardDraftMockupLibraryPick.deleteMany({ where: { draftId } });
-  }
+  });
 
   const requestInfo = getRequestInfo(request);
   await logAudit({
@@ -75,7 +80,7 @@ export async function PUT(
     action: "custom_mockup.library_picks_updated",
     resourceType: "wizard_draft",
     resourceId: draftId,
-    metadata: { sourceIds, count: sourceIds.length } as Prisma.InputJsonValue,
+    metadata: { sourceIds, primarySourceId: normalizedPrimaryId, count: sourceIds.length } as Prisma.InputJsonValue,
     ...requestInfo,
   });
 

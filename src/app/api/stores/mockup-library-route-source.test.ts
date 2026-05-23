@@ -4,6 +4,7 @@ import test from "node:test";
 
 const listRoutePath = "src/app/api/stores/[id]/mockup-library/route.ts";
 const itemRoutePath = "src/app/api/stores/[id]/mockup-library/[sourceId]/route.ts";
+const sourceServicePath = "src/lib/mockup/custom-source-service.ts";
 
 test("mockup library routes require the mockup_library feature", () => {
   const listRoute = readFileSync(listRoutePath, "utf8");
@@ -15,8 +16,10 @@ test("mockup library routes require the mockup_library feature", () => {
 
 test("mockup library upload route normalizes uploads before saving records", () => {
   const listRoute = readFileSync(listRoutePath, "utf8");
+  const sourceService = readFileSync(sourceServicePath, "utf8");
 
-  assert.match(listRoute, /sharp\(rawBuffer\)[\s\S]*\.rotate\(\)[\s\S]*\.jpeg\(/);
+  assert.match(listRoute, /normalizeCustomMockupUpload/);
+  assert.match(sourceService, /sharp\(input\.rawBuffer\)[\s\S]*\.rotate\(\)[\s\S]*\.jpeg\(/);
   assert.match(listRoute, /storagePath/);
   assert.match(listRoute, /outputPath/);
 });

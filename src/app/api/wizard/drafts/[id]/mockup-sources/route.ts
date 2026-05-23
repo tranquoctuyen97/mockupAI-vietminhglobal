@@ -18,6 +18,8 @@ import {
   normalizeCustomMockupUpload,
   ValidationError,
 } from "@/lib/mockup/custom-source-service";
+import { resolveCustomMockupSourceSelection } from "@/lib/mockup/custom-source-selection";
+import { getEnabledViews, normalizePlacementData } from "@/lib/placement/views";
 
 export const runtime = "nodejs";
 
@@ -43,7 +45,22 @@ export async function GET(
       storeId: true,
       templateId: true,
       mockupSourceMode: true,
+      mockupsStaleReason: true,
       enabledColorIds: true,
+      template: {
+        select: {
+          id: true,
+          name: true,
+          blueprintTitle: true,
+          printProviderTitle: true,
+          defaultMockupSource: true,
+          defaultPlacement: true,
+          colors: {
+            orderBy: { sortOrder: "asc" },
+            include: { color: { select: { id: true, name: true, hex: true } } },
+          },
+        },
+      },
     },
   });
   if (!draft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
@@ -74,14 +91,40 @@ export async function GET(
   // Library picks
   const picks = await prisma.wizardDraftMockupLibraryPick.findMany({
     where: { draftId },
-    select: { sourceId: true },
+    select: { sourceId: true, isPrimary: true, sortOrder: true },
+  });
+  const resolvedSelection = resolveCustomMockupSourceSelection({
+    sources: [...draftSources, ...eligibleTemplateSources],
+    picks,
   });
 
   return NextResponse.json({
+    template: draft.template
+      ? {
+          id: draft.template.id,
+          name: draft.template.name,
+          blueprintTitle: draft.template.blueprintTitle,
+          printProviderTitle: draft.template.printProviderTitle,
+          defaultMockupSource: draft.template.defaultMockupSource,
+          selectedColors: draft.template.colors
+            .filter((entry) => draft.enabledColorIds.includes(entry.color.id))
+            .map((entry) => ({
+              id: entry.color.id,
+              name: entry.color.name,
+              hex: entry.color.hex,
+            })),
+          selectedPlacements: getEnabledViews(
+            normalizePlacementData(draft.template.defaultPlacement, false),
+          ),
+        }
+      : null,
     draftSources: draftSources.map((s) => serializeCustomMockupSource(s)),
     eligibleTemplateSources: eligibleTemplateSources.map((s) => serializeCustomMockupSource(s)),
+    selectedSourceIds: resolvedSelection.selectedSourceIds,
+    primarySourceId: resolvedSelection.primarySourceId,
     pickedTemplateSourceIds: picks.map((p) => p.sourceId),
     mode: draft.mockupSourceMode,
+    templateChangedWarning: draft.mockupsStaleReason === "template_changed",
   });
 }
 
@@ -210,6 +253,27 @@ export async function POST(
       where: { id: draftId },
       data: { mockupSourceMode: "DRAFT_CUSTOM" },
     });
+
+    const existingSelectionCount = await tx.wizardDraftMockupLibraryPick.count({
+      where: { draftId },
+    });
+    if (existingSelectionCount > 0) {
+      if (isPrimary) {
+        await tx.wizardDraftMockupLibraryPick.updateMany({
+          where: { draftId, isPrimary: true },
+          data: { isPrimary: false },
+        });
+      }
+      await tx.wizardDraftMockupLibraryPick.create({
+        data: {
+          draftId,
+          sourceId: created.id,
+          colorId,
+          isPrimary,
+          sortOrder,
+        },
+      });
+    }
 
     return created;
   });

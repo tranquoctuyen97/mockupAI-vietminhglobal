@@ -149,7 +149,21 @@ export async function createOrUpdatePrintifyProduct(input: {
     ? { ...input, variants: fullVariants }
     : input;
 
-  const payload = buildPrintifyProductPayload(payloadInput);
+  const payload = buildPrintifyProductPayload(payloadInput) as Record<string, any>;
+
+  if (input.productId) {
+    try {
+      const existingProduct = await input.client.getProduct(input.shopId, input.productId);
+      const existingMockupIds = (existingProduct.images ?? [])
+        .map((img: any) => img.mockup_id)
+        .filter(Boolean);
+      if (existingMockupIds.length > 0) {
+        payload.visible_mockups = existingMockupIds;
+      }
+    } catch (err) {
+      console.warn(`[Printify] Failed to fetch existing product ${input.productId} for visible_mockups:`, err);
+    }
+  }
 
   // Debug log — dump payload summary before sending to Printify
   const payloadVariants = (payload.variants as Array<{ id: number; is_enabled: boolean }>) ?? [];
@@ -172,6 +186,7 @@ export async function createOrUpdatePrintifyProduct(input: {
     variantIdsNotInPrintArea,
     printAreaIdsNotInVariants,
     placeholders: printAreas.map(pa => (pa as any).placeholders?.map((ph: any) => ph.position)),
+    visibleMockupCount: payload.visible_mockups?.length ?? 0,
   }, null, 2));
 
   const product = input.productId
@@ -216,7 +231,7 @@ export function parsePrintifyMockupImages(
     .map((image, index) => {
       const mockupType = inferMockupType(image, index);
       return {
-        printifyMockupId: image.id ?? `${productId}-${mockupType}-${index}`,
+        printifyMockupId: image.mockup_id ?? image.id ?? `${productId}-${mockupType}-${index}`,
         variantIds: image.variant_ids ?? [],
         viewPosition: image.position ?? mockupType,
         sourceUrl: image.src,
