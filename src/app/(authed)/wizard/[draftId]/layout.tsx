@@ -168,7 +168,7 @@ export default function WizardLayout({
           ← {currentStep > 1 ? "Quay lại" : "Danh sách"}
         </button>
 
-        {currentStep < STEPS.length && (
+        {currentStep < STEPS.length && currentStep !== 3 && (
           <button
             className="btn btn-primary"
             onClick={async () => {

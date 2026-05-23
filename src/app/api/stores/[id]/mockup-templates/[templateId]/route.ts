@@ -47,6 +47,7 @@ export async function PATCH(
     printAreasByView: body.printAreasByView as Prisma.InputJsonValue,
     blueprintImageUrl: body.blueprintImageUrl,
     blueprintBrand: body.blueprintBrand,
+    defaultMockupSource: body.defaultMockupSource,
     colorIds: body.colorIds,
   });
 

@@ -4,10 +4,15 @@ import { type Job, Worker } from "bullmq";
 import { prisma } from "../db";
 import { DEFAULT_PLACEMENT, type Placement } from "../placement/types";
 import { getStorage } from "../storage/local-disk";
-import { compositeImage } from "./composite";
+import {
+  type CustomCompositeRegion,
+  compositeImage,
+  compositeImageOnCustomMockup,
+} from "./composite";
 import { isFinalBullMqAttempt, shouldSkipMockupImageProcessing } from "./progress";
 import { MOCKUP_QUEUE_NAME, type MockupJobPayload } from "./queue";
 import { resolveMockupSourceBuffer } from "./source";
+import { parseMockupSourceUrl } from "./source-url";
 
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
 const concurrency = parseInt(process.env.MOCKUP_WORKER_CONCURRENCY || "5", 10);
@@ -42,8 +47,40 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
           data: { compositeStatus: "processing", compositeError: null },
         });
 
-        // 2. Resolve storage path
         const storage = getStorage();
+        const parsed = parseMockupSourceUrl(sourceUrl);
+
+        if (parsed.kind === "custom" && parsed.renderMode === "COMPOSITE") {
+          const source = await prisma.customMockupSource.findUniqueOrThrow({
+            where: { id: parsed.sourceId },
+            select: {
+              compositeRegionPx: true,
+            },
+          });
+          const region = coerceCustomCompositeRegion(source.compositeRegionPx);
+
+          // Per-image render path: COMPOSITE output goes to MockupImage.compositeUrl, not CustomMockupSource.outputPath
+          const image = await prisma.mockupImage.findUniqueOrThrow({
+            where: { id: mockupImageId },
+            select: { mockupJobId: true },
+          });
+          const outputKey = `custom-mockups/renders/${image.mockupJobId}/${mockupImageId}-output.jpg`;
+          const outputPath = storage.resolvePath(outputKey);
+          await mkdir(dirname(outputPath), { recursive: true });
+
+          const sourceBuffer = await resolveMockupSourceBuffer(sourceUrl);
+          const designBuffer = await readFile(storage.resolvePath(designStoragePath));
+
+          await compositeImageOnCustomMockup(sourceBuffer, designBuffer, region, outputPath);
+
+          // Write to MockupImage.compositeUrl only — no write to CustomMockupSource.outputPath
+          await markImageCompleted(mockupImageId, outputKey);
+
+          console.log(`[MockupWorker] Successfully processed custom composite image ${mockupImageId}`);
+          return { success: true, relativePath: outputKey };
+        }
+
+        // 2. Resolve storage path
         const ext = ".png"; // Composite engine outputs PNG
         const relativePath = `mockups/composite_${mockupImageId}${ext}`;
         const absolutePath = storage.resolvePath(relativePath);
@@ -123,6 +160,31 @@ function coercePlacement(value: unknown): Placement {
     ...DEFAULT_PLACEMENT,
     ...placement,
   };
+}
+
+function coerceCustomCompositeRegion(value: unknown): CustomCompositeRegion {
+  if (!value || typeof value !== "object") {
+    throw new Error("Custom mockup source is missing compositeRegionPx");
+  }
+  const region = value as Partial<CustomCompositeRegion>;
+  const x = Number(region.x);
+  const y = Number(region.y);
+  const width = Number(region.width);
+  const height = Number(region.height);
+  const rotationDeg = Number(region.rotationDeg ?? 0);
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    !Number.isFinite(rotationDeg)
+  ) {
+    throw new Error("Invalid custom mockup compositeRegionPx");
+  }
+
+  return { x, y, width, height, rotationDeg };
 }
 
 async function markImageCompleted(mockupImageId: string, relativePath: string): Promise<void> {

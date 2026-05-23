@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildChecklist } from "./route";
+import { buildChecklist } from "./checklist";
 
 const placement = {
   version: "2.1",

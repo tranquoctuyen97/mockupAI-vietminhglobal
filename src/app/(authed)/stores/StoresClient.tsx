@@ -1,19 +1,20 @@
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
-import { toast } from "sonner";
 import {
-  Store,
-  Plus,
-  CheckCircle2,
   AlertTriangle,
-  XCircle,
-  RefreshCw,
+  CheckCircle2,
   ExternalLink,
+  Images,
   Palette,
+  Plus,
+  RefreshCw,
   Settings,
+  Store,
+  XCircle,
 } from "lucide-react";
+import Link from "next/link";
+import { useState } from "react";
+import { toast } from "sonner";
 
 interface StoreData {
   id: string;
@@ -30,11 +31,15 @@ interface StoreData {
 
 interface Props {
   initialStores: StoreData[];
-  userRole: string;
   canManageStores: boolean;
+  canManageMockupLibrary: boolean;
 }
 
-export default function StoresClient({ initialStores, userRole, canManageStores }: Props) {
+export default function StoresClient({
+  initialStores,
+  canManageStores,
+  canManageMockupLibrary,
+}: Props) {
   const [stores, setStores] = useState<StoreData[]>(initialStores);
   const isAdmin = canManageStores;
 
@@ -84,21 +89,6 @@ export default function StoresClient({ initialStores, userRole, canManageStores 
     }
   }
 
-  function StatusBadge({ status }: { status: StoreData["status"] }) {
-    const configs = {
-      ACTIVE: { icon: <CheckCircle2 size={14} />, label: "Hoạt động", className: "badge-success" },
-      TOKEN_EXPIRED: { icon: <AlertTriangle size={14} />, label: "Token hết hạn", className: "badge-warning" },
-      ERROR: { icon: <XCircle size={14} />, label: "Lỗi", className: "badge-danger" },
-    };
-    const config = configs[status];
-    return (
-      <span className={`badge ${config.className}`} style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-        {config.icon}
-        {config.label}
-      </span>
-    );
-  }
-
   return (
     <div>
       {/* Header */}
@@ -106,7 +96,9 @@ export default function StoresClient({ initialStores, userRole, canManageStores 
         <div>
           <h1 className="page-title">Stores</h1>
           <p className="page-subtitle">
-            {isAdmin ? "Quản lý kết nối Shopify + Printify" : "Xem store đã sẵn sàng để tạo listing"}
+            {isAdmin
+              ? "Quản lý kết nối Shopify + Printify"
+              : "Xem store đã sẵn sàng để tạo listing"}
           </p>
         </div>
         {isAdmin && (
@@ -123,7 +115,7 @@ export default function StoresClient({ initialStores, userRole, canManageStores 
           <Store size={48} style={{ margin: "0 auto", opacity: 0.3, marginBottom: "16px" }} />
           <h3 style={{ marginBottom: "8px", fontWeight: 700 }}>Chưa có Store nào</h3>
           <p style={{ opacity: 0.6, marginBottom: "24px" }}>
-            {isAdmin 
+            {isAdmin
               ? "Kết nối Shopify store đầu tiên để bắt đầu tạo sản phẩm"
               : "Vui lòng liên hệ Admin để kết nối Store"}
           </p>
@@ -180,14 +172,22 @@ export default function StoresClient({ initialStores, userRole, canManageStores 
                   <div className="flex items-center gap-6" style={{ fontSize: "0.875rem" }}>
                     <div className="flex items-center gap-2" style={{ opacity: 0.6 }}>
                       <Palette size={14} />
-                      <span>{store.colors.filter(c => c.enabled !== false).length} màu</span>
+                      <span>{store.colors.filter((c) => c.enabled !== false).length} màu</span>
                     </div>
                     <div style={{ opacity: 0.6 }}>
                       {store.printifyShopId ? "✅ Printify" : "❌ Chưa kết nối Printify"}
                     </div>
                     {store.presetStatus && (
                       <div style={{ minWidth: 110 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem", marginBottom: 2 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            fontSize: "0.72rem",
+                            marginBottom: 2,
+                          }}
+                        >
                           <span style={{ opacity: 0.6, fontWeight: 600 }}>Preset</span>
                           <span
                             style={{
@@ -224,12 +224,23 @@ export default function StoresClient({ initialStores, userRole, canManageStores 
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {canManageMockupLibrary && (
+                    <Link
+                      href={`/stores/${store.id}/mockup-library`}
+                      className="btn btn-secondary"
+                      style={{ padding: "8px 12px" }}
+                    >
+                      <Images size={14} />
+                      Mockup Library
+                    </Link>
+                  )}
                   {isAdmin && (
                     <button
                       onClick={() => handleTestConnection(store.id)}
                       className="btn btn-secondary"
                       title="Test kết nối"
                       style={{ padding: "8px 12px" }}
+                      type="button"
                     >
                       <RefreshCw size={14} />
                       Test
@@ -249,6 +260,7 @@ export default function StoresClient({ initialStores, userRole, canManageStores 
                         onClick={() => handleDelete(store.id, store.name)}
                         className="btn btn-danger"
                         style={{ padding: "8px 12px" }}
+                        type="button"
                       >
                         Xóa
                       </button>
@@ -261,5 +273,27 @@ export default function StoresClient({ initialStores, userRole, canManageStores 
         </div>
       )}
     </div>
+  );
+}
+
+function StatusBadge({ status }: { status: StoreData["status"] }) {
+  const configs = {
+    ACTIVE: { icon: <CheckCircle2 size={14} />, label: "Hoạt động", className: "badge-success" },
+    TOKEN_EXPIRED: {
+      icon: <AlertTriangle size={14} />,
+      label: "Token hết hạn",
+      className: "badge-warning",
+    },
+    ERROR: { icon: <XCircle size={14} />, label: "Lỗi", className: "badge-danger" },
+  };
+  const config = configs[status];
+  return (
+    <span
+      className={`badge ${config.className}`}
+      style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}
+    >
+      {config.icon}
+      {config.label}
+    </span>
   );
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DEFAULT_PLACEMENT } from "../placement/types";
 import { buildMockupImagePlan } from "./plan";
+import { chooseIncludedSourceBucket } from "./printify-poll-worker";
 
 const placementData = {
   version: "2.1" as const,
@@ -63,3 +64,33 @@ function variant(id: number, color: string, size: string) {
     placeholders: [],
   };
 }
+
+// chooseIncludedSourceBucket: template.defaultMockupSource-driven inclusion logic
+
+test("chooseIncludedSourceBucket: CUSTOM + draft sources exist → draft selected", () => {
+  assert.equal(
+    chooseIncludedSourceBucket({ mode: "CUSTOM", hasDraftRows: true, hasTemplateRows: true }),
+    "draft",
+  );
+});
+
+test("chooseIncludedSourceBucket: CUSTOM + no draft + template sources exist → template selected", () => {
+  assert.equal(
+    chooseIncludedSourceBucket({ mode: "CUSTOM", hasDraftRows: false, hasTemplateRows: true }),
+    "template",
+  );
+});
+
+test("chooseIncludedSourceBucket: CUSTOM + no sources → no included source", () => {
+  assert.equal(
+    chooseIncludedSourceBucket({ mode: "CUSTOM", hasDraftRows: false, hasTemplateRows: false }),
+    "none",
+  );
+});
+
+test("chooseIncludedSourceBucket: PRINTIFY → printify regardless of custom sources", () => {
+  assert.equal(
+    chooseIncludedSourceBucket({ mode: "PRINTIFY", hasDraftRows: true, hasTemplateRows: true }),
+    "printify",
+  );
+});

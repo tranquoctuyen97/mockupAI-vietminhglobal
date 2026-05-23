@@ -21,6 +21,9 @@ module.exports = {
       instances: 1,
       autorestart: true,
       max_memory_restart: "1G",
+      env: {
+        NODE_ENV: "production",
+      },
       error_file: "/var/log/pm2/mockupai-worker-error.log",
       out_file: "/var/log/pm2/mockupai-worker-out.log",
     },

@@ -9,11 +9,11 @@ const prisma = new PrismaClient({ adapter });
 
 const ADMIN_DEFAULTS = [
   "stores", "designs", "wizard", "listings", "auto_fulfill",
-  "users", "pricing", "integrations", "ai_settings",
+  "mockup_library", "users", "pricing", "integrations", "ai_settings",
 ];
 
 const OPERATOR_DEFAULTS = [
-  "stores", "designs", "wizard", "listings", "auto_fulfill",
+  "designs", "wizard", "listings", "auto_fulfill", "mockup_library",
 ];
 
 async function main() {

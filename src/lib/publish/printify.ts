@@ -92,8 +92,12 @@ export async function publishToPrintify(
       },
     ],
     // Tell Printify which mockups to generate/publish
-    ...(input.selectedMockupIds && input.selectedMockupIds.length > 0 
-      ? { visible_mockups: input.selectedMockupIds } 
+    ...(input.selectedMockupIds && input.selectedMockupIds.length > 0
+      ? {
+          visible_mockups: input.selectedMockupIds.filter(
+            (id) => id && !id.startsWith("custom:") && !id.startsWith("synthetic:"),
+          ),
+        }
       : {}),
   };
 
@@ -112,9 +116,115 @@ export async function publishToPrintify(
   }
 
   const productData = (await createRes.json()) as { id: string };
+  const productId = productData.id;
+
+  // visible_mockups behaves like a write-only mockup selection field in our runtime tests, but it is not documented in public Printify API docs.
+  try {
+    console.log(`[Printify] Product created: ${productId}. Polling for generated mockups...`);
+    let mockupIds: string[] = [];
+    const maxPollAttempts = 15;
+    let latestProductDetails: any = null;
+
+    for (let attempt = 1; attempt <= maxPollAttempts; attempt++) {
+      // Wait 2s between attempts
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      
+      try {
+        const getRes = await fetch(
+          `${PRINTIFY_BASE_URL}/shops/${input.shopId}/products/${productId}.json`,
+          { headers }
+        );
+        if (getRes.ok) {
+          const productDetails = await getRes.json();
+          latestProductDetails = productDetails;
+          const images = productDetails.images ?? [];
+          
+          // Get mockup_id from images
+          const ids = images
+            // Filter is_selected_for_publishing !== false
+            .filter((img: any) => img.is_selected_for_publishing !== false)
+            .map((img: any) => ({
+              id: img.mockup_id || img.id,
+              order: typeof img.order === "number" ? img.order : Infinity,
+            }))
+            .filter((item: any) => Boolean(item.id));
+
+          if (ids.length > 0) {
+            // Sort by order if available
+            ids.sort((a: any, b: any) => a.order - b.order);
+            mockupIds = ids.map((item: any) => item.id);
+            console.log(`[Printify] Mockup IDs collected after ${attempt} attempts: ${mockupIds.length} images found.`);
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn(`[Printify] Error polling mockups on attempt ${attempt}:`, err);
+      }
+    }
+
+    if (mockupIds.length === 0) {
+      console.warn(`[Printify] Warning: No mockup IDs found for product ${productId}. Skipping PUT visible_mockups update.`);
+    } else if (latestProductDetails) {
+      console.log(`[Printify] Performing PUT update for visible_mockups on product ${productId}...`);
+      
+      // Build full valid payload using latest product details from GET as base
+      const putVariants = (latestProductDetails.variants ?? []).map((v: any) => ({
+        id: v.id,
+        price: v.price,
+        is_enabled: v.is_enabled,
+        is_default: v.is_default,
+        sku: v.sku,
+      }));
+
+      // Build print_areas, filtering out placeholders that don't have images (empty images array)
+      const putPrintAreas = (latestProductDetails.print_areas ?? []).map((pa: any) => ({
+        variant_ids: pa.variant_ids,
+        placeholders: (pa.placeholders ?? [])
+          .filter((ph: any) => ph.images && ph.images.length > 0)
+          .map((ph: any) => ({
+            position: ph.position,
+            images: ph.images.map((img: any) => ({
+              id: img.id,
+              x: img.x,
+              y: img.y,
+              scale: img.scale,
+              angle: img.angle,
+            })),
+          })),
+      }));
+
+      const putPayload = {
+        title: latestProductDetails.title,
+        description: latestProductDetails.description,
+        blueprint_id: latestProductDetails.blueprint_id,
+        print_provider_id: latestProductDetails.print_provider_id,
+        variants: putVariants,
+        print_areas: putPrintAreas,
+        visible_mockups: mockupIds,
+      };
+
+      const updateRes = await fetch(
+        `${PRINTIFY_BASE_URL}/shops/${input.shopId}/products/${productId}.json`,
+        {
+          method: "PUT",
+          headers,
+          body: JSON.stringify(putPayload),
+        }
+      );
+
+      if (!updateRes.ok) {
+        const errorText = await updateRes.text();
+        console.warn(`[Printify] Warning: PUT update for visible_mockups failed (${updateRes.status}): ${errorText}`);
+      } else {
+        console.log(`[Printify] PUT update succeeded for product ${productId}. Mockups selected count: ${mockupIds.length}`);
+      }
+    }
+  } catch (error) {
+    console.warn(`[Printify] Empirical visible_mockups workaround failed for product ${productId}:`, error);
+  }
 
   return {
-    printifyProductId: productData.id,
+    printifyProductId: productId,
   };
 }
 

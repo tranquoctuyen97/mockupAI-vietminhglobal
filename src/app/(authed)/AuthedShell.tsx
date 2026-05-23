@@ -152,6 +152,7 @@ export default function AuthedShell({
   function canSee(item: NavItemConfig): boolean {
     if (item.superAdminOnly && !isSuperAdmin) return false;
     if (item.adminOnly && !isAdminOrAbove) return false;
+    if (item.href === "/stores" && permissions.includes("mockup_library")) return true;
     if (item.feature && !isSuperAdmin && !permissions.includes(item.feature)) return false;
     return true;
   }

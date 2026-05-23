@@ -1,5 +1,8 @@
 import sharp from "sharp";
-import { generateShirtSvg, ShirtView } from "./svg-utils";
+import { prisma } from "@/lib/db";
+import { getStorage } from "@/lib/storage/local-disk";
+import { parseMockupSourceUrl } from "./source-url";
+import { generateShirtSvg, type ShirtView } from "./svg-utils";
 
 export interface ResolveMockupSourceOptions {
   colorHex?: string | null;
@@ -7,7 +10,7 @@ export interface ResolveMockupSourceOptions {
 }
 
 export function isSyntheticMockupSource(sourceUrl: string): boolean {
-  return sourceUrl.startsWith("mockup://solid/");
+  return parseMockupSourceUrl(sourceUrl).kind === "synthetic";
 }
 
 export function isLegacyPlaceholderSource(sourceUrl: string): boolean {
@@ -22,12 +25,19 @@ export async function resolveMockupSourceBuffer(
   sourceUrl: string,
   options: ResolveMockupSourceOptions = {},
 ): Promise<Buffer> {
-  if (isSyntheticMockupSource(sourceUrl) || isLegacyPlaceholderSource(sourceUrl)) {
+  const parsed = parseMockupSourceUrl(sourceUrl);
+
+  if (parsed.kind === "custom") {
+    const src = await prisma.customMockupSource.findUniqueOrThrow({
+      where: { id: parsed.sourceId },
+      select: { storagePath: true },
+    });
+    return getStorage().getBuffer(src.storagePath);
+  }
+
+  if (parsed.kind === "synthetic" || isLegacyPlaceholderSource(sourceUrl)) {
     // Extract view from sourceUrl (e.g. mockup://solid/front -> front)
-    let view = "front";
-    if (sourceUrl.startsWith("mockup://solid/")) {
-      view = sourceUrl.split("/").pop() || "front";
-    }
+    const view = parsed.kind === "synthetic" ? parsed.view : "front";
     return createSvgMockupBuffer(options.colorHex, view as ShirtView);
   }
 
@@ -45,7 +55,7 @@ export async function resolveMockupSourceBuffer(
 
 export async function createSvgMockupBuffer(
   colorHex?: string | null,
-  view: ShirtView = "front"
+  view: ShirtView = "front",
 ): Promise<Buffer> {
   const hex = colorHex || "#F5F5F5";
   const svgString = generateShirtSvg(view, hex);

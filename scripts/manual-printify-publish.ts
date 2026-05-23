@@ -1,7 +1,7 @@
 /**
  * Test Printify API directly — isolate whether the 500 error is from our payload or Printify's server
  *
- * Usage: npx tsx scripts/test-printify-publish.ts
+ * Usage: npx tsx scripts/manual-printify-publish.ts
  */
 
 import { PrismaPg } from "@prisma/adapter-pg";

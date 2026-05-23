@@ -8,27 +8,25 @@
 
 import { createHash } from "node:crypto";
 import { isPublishDryRun, PRODUCT_DEFAULTS } from "@/lib/config/runtime-controls";
-import { prisma } from "@/lib/db";
 import { decrypt } from "@/lib/crypto/envelope";
-import { ShopifyClient } from "@/lib/shopify/client";
-import { publishToShopify, type ShopifyMockupImage } from "./shopify";
-import { publishToPrintify } from "./printify";
-import { ensureVariantCostCache, buildVariantPayload } from "@/lib/printify/variant-catalog";
-import { getClientForStore } from "@/lib/printify/account";
-import { sseChannels } from "@/lib/sse/channel";
-import { getStorage } from "@/lib/storage/local-disk";
+import { prisma } from "@/lib/db";
 import { resolveEffectivePlacementData } from "@/lib/mockup/plan";
 import {
   isAllowedRemoteMockupUrl,
   isRemoteUrl,
   isSyntheticMockupSource,
 } from "@/lib/mockup/real-printify-media";
+import { parseMockupSourceUrl } from "@/lib/mockup/source-url";
 import { DEFAULT_PLACEMENT, type PlacementData } from "@/lib/placement/types";
-import {
-  createOrUpdatePrintifyProduct,
-  ensurePrintifyImage,
-} from "@/lib/printify/product";
-import { PrintifyNotFoundError } from "@/lib/printify/client";
+import { getClientForStore } from "@/lib/printify/account";
+import { PrintifyApiError, PrintifyNotFoundError } from "@/lib/printify/client";
+import { createOrUpdatePrintifyProduct, ensurePrintifyImage } from "@/lib/printify/product";
+import { buildVariantPayload, ensureVariantCostCache } from "@/lib/printify/variant-catalog";
+import { ShopifyClient } from "@/lib/shopify/client";
+import { sseChannels } from "@/lib/sse/channel";
+import { getStorage } from "@/lib/storage/local-disk";
+import { publishToPrintify } from "./printify";
+import { publishToShopify, type ShopifyMockupImage } from "./shopify";
 
 const MAX_RETRIES = 5;
 const BACKOFF_BASE_MS = 2000;
@@ -87,7 +85,9 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
         where: { id: listingId },
         data: { status: "FAILED" },
       });
-      emitEvent("publish.failed", { error: "Store đã bị xóa. Vui lòng chọn lại store và thử publish lại." });
+      emitEvent("publish.failed", {
+        error: "Store đã bị xóa. Vui lòng chọn lại store và thử publish lại.",
+      });
       return;
     }
 
@@ -95,14 +95,15 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
     const creds = await prisma.storeCredentials.findUnique({
       where: { storeId: store.id },
     });
-    if (!creds || !creds.shopifyTokenEncrypted) throw new Error("Store credentials not found or Shopify not connected");
+    if (!creds || !creds.shopifyTokenEncrypted)
+      throw new Error("Store credentials not found or Shopify not connected");
 
     let shopifyAccessToken: string;
     try {
       shopifyAccessToken = decrypt(creds.shopifyTokenEncrypted);
     } catch {
       throw new Error(
-        "Shopify token hết hạn hoặc bị lỗi mã hóa. Vui lòng kết nối lại Shopify ở Store Settings → Shopify tab."
+        "Shopify token hết hạn hoặc bị lỗi mã hóa. Vui lòng kết nối lại Shopify ở Store Settings → Shopify tab.",
       );
     }
 
@@ -120,13 +121,31 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
 
     const storage = getStorage();
     const listingColorNames = listing.variants.map((v) => v.colorName);
-    const includedImages = await prisma.mockupImage.findMany({
+    const latestCompletedJob = await prisma.mockupJob.findFirst({
       where: {
-        mockupJob: { draftId },
-        included: true,
-        compositeUrl: { not: null }
-      }
+        draftId,
+        status: "completed",
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
     });
+
+    const includedImages = latestCompletedJob
+      ? await prisma.mockupImage.findMany({
+          where: {
+            mockupJobId: latestCompletedJob.id,
+            included: true,
+            compositeUrl: { not: null },
+          },
+        })
+      : await prisma.mockupImage.findMany({
+          where: {
+            mockupJob: { draftId },
+            included: true,
+            compositeUrl: { not: null },
+          },
+        });
     const isDryRun = isPublishDryRun();
     const requireRealPrintifyMockups = PRODUCT_DEFAULTS.mockup.requireRealPrintifyMockups;
     const { mockupImages, mockupPaths, missingColorNames } = resolveShopifyMockupMedia({
@@ -181,7 +200,10 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
             existingProductId: createdProductId, // reuse if created in previous attempt
           });
           createdProductId = result.shopifyProductId; // save for next retry
-          return { shopifyProductId: result.shopifyProductId, shopifyVariantIds: result.shopifyVariantIds };
+          return {
+            shopifyProductId: result.shopifyProductId,
+            shopifyVariantIds: result.shopifyVariantIds,
+          };
         },
         shopifyJob.id,
         "SHOPIFY",
@@ -193,7 +215,10 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
         where: { id: listingId },
         data: { status: "FAILED" },
       });
-      emitEvent("publish.failed", { stage: "SHOPIFY", error: "Shopify publish failed after retries" });
+      emitEvent("publish.failed", {
+        stage: "SHOPIFY",
+        error: "Shopify publish failed after retries",
+      });
       return;
     }
 
@@ -203,7 +228,11 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
       data: { shopifyProductId: shopifyResult.shopifyProductId },
     });
 
-    for (let i = 0; i < listing.variants.length && i < shopifyResult.shopifyVariantIds.length; i++) {
+    for (
+      let i = 0;
+      i < listing.variants.length && i < shopifyResult.shopifyVariantIds.length;
+      i++
+    ) {
       await prisma.listingVariant.update({
         where: { id: listing.variants[i].id },
         data: { shopifyVariantId: shopifyResult.shopifyVariantIds[i] },
@@ -236,19 +265,34 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
         where: { id: listingId },
         data: { status: "PARTIAL_FAILURE" },
       });
-      emitEvent("publish.complete", { status: "PARTIAL_FAILURE", reason: "No Printify shop linked" });
+      emitEvent("publish.complete", {
+        status: "PARTIAL_FAILURE",
+        reason: "No Printify shop linked",
+      });
       return;
     }
 
-    await runPrintifyStage(listingId, listing, draft, store, printifyApiKey, externalShopId, storage, isDryRun, publishChannelId, draftChannelId);
+    await runPrintifyStage(
+      listingId,
+      listing,
+      draft,
+      store,
+      printifyApiKey,
+      externalShopId,
+      storage,
+      isDryRun,
+      publishChannelId,
+      draftChannelId,
+    );
   } catch (error) {
     console.error("[PublishWorker] Unexpected error:", error);
     await prisma.listing.update({
       where: { id: listingId },
       data: { status: "FAILED" },
     });
-    emitEvent("publish.failed", { error: error instanceof Error ? error.message : "Unknown error" });
-
+    emitEvent("publish.failed", {
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
   }
 }
 
@@ -314,14 +358,34 @@ export async function runPrintifyStage(
       return;
     }
 
-    // Find included mockup images
-    const includedImages = await prisma.mockupImage.findMany({
+    // Find included mockup images from latest completed job
+    const latestPrintifyCompletedJob = await prisma.mockupJob.findFirst({
       where: {
-        mockupJob: { draftId: draftId },
-        included: true
-      }
+        draftId,
+        status: "completed",
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
     });
-    const selectedMockupIds = includedImages.map((img: any) => img.printifyMockupId);
+
+    const includedImagesForPrintify = latestPrintifyCompletedJob
+      ? await prisma.mockupImage.findMany({
+          where: {
+            mockupJobId: latestPrintifyCompletedJob.id,
+            included: true,
+          },
+        })
+      : await prisma.mockupImage.findMany({
+          where: {
+            mockupJob: { draftId },
+            included: true,
+          },
+        });
+
+    const selectedMockupIds = includedImagesForPrintify
+      .map((img: any) => img.printifyMockupId)
+      .filter((id: string) => id && !id.startsWith("custom:") && !id.startsWith("synthetic:"));
     let template = draft.template;
     if (!template && draft.storeId) {
       template = await prisma.storeMockupTemplate.findFirst({
@@ -330,13 +394,12 @@ export async function runPrintifyStage(
     }
 
     const variantIds = resolvePublishVariantIds(listing, draft, template);
-    const placementData = resolveEffectivePlacementData(
-      draft.placementOverride,
-      template?.defaultPlacement,
-    ) ?? defaultPlacementData();
+    const placementData =
+      resolveEffectivePlacementData(draft.placementOverride, template?.defaultPlacement) ??
+      defaultPlacementData();
 
     // -- Calculate Variants Payload (Price & SKU) --
-    let printifyVariantsPayload: any[] | undefined = undefined;
+    let printifyVariantsPayload: any[] | undefined;
     try {
       const blueprintId = template?.printifyBlueprintId ?? 0;
       const printProviderId = template?.printifyPrintProviderId ?? 0;
@@ -367,37 +430,42 @@ export async function runPrintifyStage(
         const selectedSizes = draft.enabledSizes || [];
 
         // 4. Build payload — if no sizes selected, use all available sizes from cache
-        const effectiveSizes = selectedSizes.length > 0
-          ? selectedSizes
-          : [...new Set(cachedVariants.filter(v => v.isAvailable).map(v => v.size))];
+        const effectiveSizes =
+          selectedSizes.length > 0
+            ? selectedSizes
+            : [...new Set(cachedVariants.filter((v) => v.isAvailable).map((v) => v.size))];
 
         printifyVariantsPayload = buildVariantPayload(
           cachedVariants,
           selectedColorNames,
           effectiveSizes,
-          baseRetailPriceUSD
+          baseRetailPriceUSD,
         );
       }
     } catch (err) {
-      console.warn("[PublishWorker] Failed to build dynamic variant payload, falling back to dummy prices:", err);
+      console.warn(
+        "[PublishWorker] Failed to build dynamic variant payload, falling back to dummy prices:",
+        err,
+      );
     }
 
     if (draft.printifyDraftProductId) {
       printifyResult = await retryWithBackoff(
-        async () => publishExistingPrintifyDraftProduct({
-          storeId: store.id,
-          draftId: draft.id,
-          productId: draft.printifyDraftProductId!,
-          designStoragePath: draft.design!.storagePath,
-          cachedImageId: draft.printifyImageId,
-          title: listing.title,
-          description: listing.descriptionHtml,
-          blueprintId: template?.printifyBlueprintId ?? 0,
-          printProviderId: template?.printifyPrintProviderId ?? 0,
-          variantIds,
-          variants: printifyVariantsPayload,
-          placementData,
-        }),
+        async () =>
+          publishExistingPrintifyDraftProduct({
+            storeId: store.id,
+            draftId: draft.id,
+            productId: draft.printifyDraftProductId!,
+            designStoragePath: draft.design!.storagePath,
+            cachedImageId: draft.printifyImageId,
+            title: listing.title,
+            description: listing.descriptionHtml,
+            blueprintId: template?.printifyBlueprintId ?? 0,
+            printProviderId: template?.printifyPrintProviderId ?? 0,
+            variantIds,
+            variants: printifyVariantsPayload,
+            placementData,
+          }),
         printifyJob.id,
         "PRINTIFY",
       );
@@ -438,8 +506,14 @@ export async function runPrintifyStage(
       data: { status: "SUCCEEDED", completedAt: new Date() },
     });
     // Emit printify done before final complete
-    sseChannels.emit(channelId, { type: "publish.printify.done", data: { printifyProductId: printifyResult.printifyProductId } });
-    sseChannels.emit(draftId, { type: "publish.printify.done", data: { printifyProductId: printifyResult.printifyProductId } });
+    sseChannels.emit(channelId, {
+      type: "publish.printify.done",
+      data: { printifyProductId: printifyResult.printifyProductId },
+    });
+    sseChannels.emit(draftId, {
+      type: "publish.printify.done",
+      data: { printifyProductId: printifyResult.printifyProductId },
+    });
 
     sseChannels.emit(channelId, {
       type: "publish.complete",
@@ -456,11 +530,19 @@ export async function runPrintifyStage(
     });
     sseChannels.emit(channelId, {
       type: "publish.complete",
-      data: { status: "PARTIAL_FAILURE", reason: "Printify publish failed after retries", listingId },
+      data: {
+        status: "PARTIAL_FAILURE",
+        reason: "Printify publish failed after retries",
+        listingId,
+      },
     });
     sseChannels.emit(draftId, {
       type: "publish.complete",
-      data: { status: "PARTIAL_FAILURE", reason: "Printify publish failed after retries", listingId },
+      data: {
+        status: "PARTIAL_FAILURE",
+        reason: "Printify publish failed after retries",
+        listingId,
+      },
     });
   }
 }
@@ -490,7 +572,7 @@ async function retryWithBackoff<T>(
       });
 
       if (attempt < MAX_RETRIES) {
-        const delay = BACKOFF_BASE_MS * Math.pow(2, attempt - 1);
+        const delay = BACKOFF_BASE_MS * 2 ** (attempt - 1);
         await sleep(delay);
       } else {
         await prisma.publishJob.update({
@@ -519,7 +601,11 @@ export function resolvePublishVariantIds(
 
   if (listingVariantIds.length > 0) return Array.from(new Set(listingVariantIds));
 
-  const templateVariantIds = template?.enabledVariantIds ?? draft.template?.enabledVariantIds ?? [];
+  const templateVariantIds =
+    template?.enabledVariantIds ??
+    draft.template?.enabledVariantIds ??
+    draft.store?.template?.enabledVariantIds ??
+    [];
   return templateVariantIds.length > 0 ? templateVariantIds : [1];
 }
 
@@ -534,7 +620,13 @@ async function publishExistingPrintifyDraftProduct(input: {
   blueprintId: number;
   printProviderId: number;
   variantIds: number[];
-  variants?: Array<{ id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean }>;
+  variants?: Array<{
+    id: number;
+    price: number;
+    is_enabled: boolean;
+    sku?: string;
+    is_default?: boolean;
+  }>;
   placementData: PlacementData;
 }): Promise<{ printifyProductId: string }> {
   const { getClientForStore } = await import("@/lib/printify/account");
@@ -558,7 +650,9 @@ async function publishExistingPrintifyDraftProduct(input: {
     description: input.description,
   };
 
-  console.log(`[PublishWorker] PRINTIFY sending PUT update — product: ${input.productId}, shopId: ${externalShopId}, imageId: ${imageId}, variants: ${input.variants?.length ?? "fallback"}, blueprint: ${input.blueprintId}/${input.printProviderId}`);
+  console.log(
+    `[PublishWorker] PRINTIFY sending PUT update — product: ${input.productId}, shopId: ${externalShopId}, imageId: ${imageId}, variants: ${input.variants?.length ?? "fallback"}, blueprint: ${input.blueprintId}/${input.printProviderId}`,
+  );
 
   try {
     const product = await createOrUpdatePrintifyProduct({
@@ -567,9 +661,13 @@ async function publishExistingPrintifyDraftProduct(input: {
     });
     return { printifyProductId: product.productId };
   } catch (err) {
-    if (err instanceof PrintifyNotFoundError) {
-      // Draft product was deleted from Printify — clear stale ref and CREATE new
-      console.warn(`[PublishWorker] Draft product ${input.productId} not found (404). Clearing stale ref and creating new product.`);
+    // Draft product was deleted or corrupted on Printify — clear stale ref and CREATE new
+    const isNotFound = err instanceof PrintifyNotFoundError;
+    const isServerError = err instanceof PrintifyApiError && /\(5\d{2}\)/.test(err.message);
+    if (isNotFound || isServerError) {
+      console.warn(
+        `[PublishWorker] Draft product ${input.productId} ${isNotFound ? "not found (404)" : "server error (5xx)"}. Clearing stale ref and creating new product.`,
+      );
       await prisma.wizardDraft.update({
         where: { id: input.draftId },
         data: { printifyDraftProductId: null },
@@ -633,7 +731,12 @@ export function resolveShopifyMockupMedia(input: {
     }
 
     if (isSyntheticMockupSource(source)) continue;
-    const hasRealPrintifySource = isAllowedRemoteMockupUrl(image.sourceUrl);
+    const parsedSource = image.sourceUrl
+      ? parseMockupSourceUrl(image.sourceUrl)
+      : { kind: "printify" as const };
+    const hasRealPrintifySource =
+      isAllowedRemoteMockupUrl(image.sourceUrl) ||
+      parsedSource.kind === "custom";
     if (input.requireRealPrintifyMockups && !hasRealPrintifySource) continue;
 
     const path = input.storage.resolvePath(source);
@@ -648,7 +751,9 @@ export function resolveShopifyMockupMedia(input: {
   return {
     mockupImages,
     mockupPaths: mockupImages
-      .filter((image): image is Extract<ShopifyMockupImage, { kind: "local" }> => image.kind === "local")
+      .filter(
+        (image): image is Extract<ShopifyMockupImage, { kind: "local" }> => image.kind === "local",
+      )
       .map((image) => image.path),
     missingColorNames: selectedColors
       .filter((color) => !coveredColorKeys.has(color.key))

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback, Suspense } from "react";
+import React, { useEffect, useState, useMemo, useCallback, Suspense } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -21,6 +21,8 @@ import {
   Plus,
   Search,
   Edit,
+  Truck,
+  Image,
 } from "lucide-react";
 import Link from "next/link";
 import { MultiViewPlacementEditor } from "@/components/placement/MultiViewPlacementEditor";
@@ -49,6 +51,7 @@ interface TemplateDetail {
   storePresetSnapshot: unknown;
   isDefault: boolean;
   sortOrder: number;
+  defaultMockupSource: "PRINTIFY" | "CUSTOM";
   blueprintImageUrl?: string | null;
   blueprintBrand?: string | null;
   colors: Array<{
@@ -388,8 +391,23 @@ function OverviewTab({
                           {t.name[0] || "T"}
                         </div>
                         <div>
-                          <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>{t.name}</span>
-                          {t.isDefault && <span className="badge badge-success" style={{ fontSize: "0.6rem", marginLeft: 6 }}>DEFAULT</span>}
+                          <div className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
+                            <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>{t.name}</span>
+                            {t.isDefault && <span className="badge badge-success" style={{ fontSize: "0.6rem", marginLeft: 6 }}>DEFAULT</span>}
+                            {t.defaultMockupSource === "CUSTOM" ? (
+                              <span style={{ padding: "1px 8px", borderRadius: 9999, background: "rgba(159,232,112,0.18)", color: "#054d28", fontSize: 11, fontWeight: 700 }}>Custom</span>
+                            ) : (
+                              <span style={{ padding: "1px 8px", borderRadius: 9999, background: "var(--bg-inset)", color: "var(--text-secondary)", fontSize: 11, fontWeight: 700 }}>Printify</span>
+                            )}
+                          </div>
+                          {t.defaultMockupSource === "CUSTOM" && (
+                            <Link
+                              href={`/stores/${store.id}/mockup-library?templateId=${t.id}`}
+                              style={{ fontSize: "0.72rem", color: "var(--color-wise-green)", fontWeight: 500 }}
+                            >
+                              Thư viện mockup →
+                            </Link>
+                          )}
                         </div>
                       </div>
                       {/* Decorative toggle */}
@@ -597,6 +615,7 @@ function TemplatesSection({
       "defaultAspectRatio",
       "blueprintImageUrl",
       "blueprintBrand",
+      "defaultMockupSource",
     ];
 
     for (const k of keysToCompare) {
@@ -767,6 +786,7 @@ function TemplatesSection({
         position: tempTemplateData.position,
         defaultAspectRatio: tempTemplateData.defaultAspectRatio,
         storePresetSnapshot: tempTemplateData.storePresetSnapshot,
+        defaultMockupSource: tempTemplateData.defaultMockupSource,
       };
 
       const res = await fetch(url, {
@@ -852,6 +872,7 @@ function TemplatesSection({
                   storePresetSnapshot: null,
                   isDefault: false,
                   sortOrder: store.templates.length,
+                  defaultMockupSource: "PRINTIFY",
                   colors: [],
                 };
                 startEditing(newTpl);
@@ -899,6 +920,7 @@ function TemplatesSection({
                       storePresetSnapshot: null,
                       isDefault: true,
                       sortOrder: 0,
+                      defaultMockupSource: "PRINTIFY",
                       colors: [],
                     };
                     startEditing(newTpl);
@@ -1015,10 +1037,24 @@ function TemplatesSection({
                                 >
                                   {statusLabel}
                                 </span>
+                                {t.defaultMockupSource === "CUSTOM" ? (
+                                  <span style={{ padding: "1px 8px", borderRadius: 9999, background: "rgba(159,232,112,0.18)", color: "#054d28", fontSize: 11, fontWeight: 700 }}>Custom</span>
+                                ) : (
+                                  <span style={{ padding: "1px 8px", borderRadius: 9999, background: "var(--bg-inset)", color: "var(--text-secondary)", fontSize: 11, fontWeight: 700 }}>Printify</span>
+                                )}
                               </div>
                               <div style={{ fontSize: "0.72rem", opacity: 0.4, fontWeight: 400 }}>
                                 {t.blueprintTitle ? `${t.printProviderTitle || "Provider"}` : "Chưa cấu hình"}
                               </div>
+                              {t.defaultMockupSource === "CUSTOM" && (
+                                <Link
+                                  href={`/stores/${store.id}/mockup-library?templateId=${t.id}`}
+                                  onClick={(e) => e.stopPropagation()}
+                                  style={{ fontSize: "0.72rem", color: "var(--color-wise-green)", fontWeight: 500 }}
+                                >
+                                  Thư viện mockup →
+                                </Link>
+                              )}
                             </div>
                           </div>
                         </td>
@@ -1523,6 +1559,191 @@ function EditorBlueprintStep({
                 </>
               )}
             </>
+          )}
+        </div>
+      )}
+
+      {/* Nguồn mockup mặc định */}
+      <MockupSourceSection store={store} value={value} onChange={onChange} />
+    </div>
+  );
+}
+
+/* ========== MockupSourceSection ========== */
+function MockupSourceSection({
+  store,
+  value,
+  onChange,
+}: {
+  store: StoreDetail;
+  value: TemplateDetail;
+  onChange: (data: Partial<TemplateDetail>) => void;
+}) {
+  const [missingCount, setMissingCount] = useState<number | null>(null);
+  const [loadingMissing, setLoadingMissing] = useState(false);
+
+  const selected = value.defaultMockupSource ?? "PRINTIFY";
+
+  useEffect(() => {
+    if (selected !== "CUSTOM" || value.id === "new") {
+      setMissingCount(null);
+      return;
+    }
+    setLoadingMissing(true);
+    fetch(`/api/stores/${store.id}/mockup-library`)
+      .then((r) => r.json())
+      .then((d) => {
+        const templates: Array<{ id: string; colors: Array<{ colorId: string; sources: unknown[] }> }> = d.templates ?? [];
+        const tpl = templates.find((t) => t.id === value.id);
+        if (!tpl) {
+          setMissingCount(0);
+          return;
+        }
+        const missing = tpl.colors.filter((c) => (c.sources as unknown[]).length === 0).length;
+        setMissingCount(missing);
+      })
+      .catch(() => setMissingCount(null))
+      .finally(() => setLoadingMissing(false));
+  }, [selected, value.id, store.id]);
+
+  const mockupLibraryHref =
+    value.id === "new"
+      ? `/stores/${store.id}/mockup-library`
+      : `/stores/${store.id}/mockup-library?templateId=${value.id}`;
+
+  const options: Array<{ key: "PRINTIFY" | "CUSTOM"; icon: React.ReactNode; title: string; desc: string }> = [
+    {
+      key: "PRINTIFY",
+      icon: <Truck size={20} />,
+      title: "Printify",
+      desc: "Tự tạo mockup từ Printify theo blueprint, màu và vị trí in của template.",
+    },
+    {
+      key: "CUSTOM",
+      icon: <Image size={20} />,
+      title: "Custom",
+      desc: "Dùng mockup tái sử dụng đã upload trong Thư viện mockup cho template này.",
+    },
+  ];
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <h4 style={{ fontWeight: 700, marginBottom: 12 }}>Nguồn mockup mặc định</h4>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        {options.map((opt) => {
+          const isActive = selected === opt.key;
+          return (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => onChange({ defaultMockupSource: opt.key })}
+              style={{
+                padding: 16,
+                borderRadius: 10,
+                border: isActive ? "1.5px solid #9fe870" : "1px solid var(--border-default)",
+                boxShadow: isActive ? "0 0 0 4px rgba(159,232,112,0.16)" : "none",
+                background: isActive ? "rgba(159,232,112,0.06)" : "transparent",
+                cursor: "pointer",
+                textAlign: "left",
+                transition: "all 0.12s",
+              }}
+            >
+              <div className="flex items-center gap-3" style={{ marginBottom: 8 }}>
+                <div
+                  style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: "50%",
+                    border: isActive ? "5px solid #9fe870" : "2px solid var(--border-default)",
+                    flexShrink: 0,
+                    transition: "border 0.12s",
+                  }}
+                />
+                <span style={{ opacity: 0.6 }}>{opt.icon}</span>
+                <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>{opt.title}</span>
+              </div>
+              <p style={{ fontSize: "0.8rem", opacity: 0.6, margin: 0, lineHeight: 1.4 }}>{opt.desc}</p>
+            </button>
+          );
+        })}
+      </div>
+
+      {selected === "CUSTOM" && (
+        <div style={{ marginTop: 12 }}>
+          {loadingMissing ? (
+            <div className="flex items-center gap-2" style={{ fontSize: "0.82rem", opacity: 0.5 }}>
+              <Loader2 size={13} className="animate-spin" /> Đang kiểm tra mockup...
+            </div>
+          ) : missingCount === null ? null : missingCount > 0 ? (
+            <div
+              style={{
+                padding: "12px 16px",
+                borderRadius: 8,
+                background: "rgba(255,209,26,0.10)",
+                border: "1px solid rgba(255,209,26,0.3)",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 10,
+              }}
+            >
+              <AlertTriangle size={16} style={{ color: "#d97706", flexShrink: 0, marginTop: 1 }} />
+              <div style={{ flex: 1, fontSize: "0.82rem" }}>
+                <span>
+                  Template đang dùng Custom nhưng còn <strong>{missingCount} màu</strong> chưa có mockup tái sử dụng.
+                </span>
+                <div style={{ marginTop: 8 }}>
+                  <Link
+                    href={mockupLibraryHref}
+                    style={{
+                      padding: "5px 12px",
+                      borderRadius: 6,
+                      background: "rgba(255,209,26,0.25)",
+                      color: "#92400e",
+                      fontWeight: 600,
+                      fontSize: "0.8rem",
+                      textDecoration: "none",
+                      display: "inline-block",
+                    }}
+                  >
+                    Mở Thư viện mockup →
+                  </Link>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div
+              style={{
+                padding: "12px 16px",
+                borderRadius: 8,
+                background: "rgba(56,200,255,0.08)",
+                border: "1px solid rgba(56,200,255,0.2)",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 10,
+              }}
+            >
+              <CheckCircle2 size={16} style={{ color: "#0ea5e9", flexShrink: 0, marginTop: 1 }} />
+              <div style={{ flex: 1, fontSize: "0.82rem" }}>
+                <span>Template sẽ dùng mockup tái sử dụng trong Thư viện mockup.</span>
+                <div style={{ marginTop: 8 }}>
+                  <Link
+                    href={mockupLibraryHref}
+                    style={{
+                      padding: "5px 12px",
+                      borderRadius: 6,
+                      background: "rgba(56,200,255,0.15)",
+                      color: "#0369a1",
+                      fontWeight: 600,
+                      fontSize: "0.8rem",
+                      textDecoration: "none",
+                      display: "inline-block",
+                    }}
+                  >
+                    Lưu template rồi mở Thư viện mockup →
+                  </Link>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}

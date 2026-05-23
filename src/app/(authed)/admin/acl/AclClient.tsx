@@ -1,8 +1,8 @@
 "use client";
 
+import { Shield } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Shield } from "lucide-react";
 
 const WORKSPACE_FEATURES = [
   { key: "stores", label: "Stores" },
@@ -10,6 +10,7 @@ const WORKSPACE_FEATURES = [
   { key: "wizard", label: "Wizard" },
   { key: "listings", label: "Listings" },
   { key: "auto_fulfill", label: "Auto Fulfill" },
+  { key: "mockup_library", label: "Mockup Library" },
 ] as const;
 
 const ADMIN_FEATURES = [
@@ -20,7 +21,7 @@ const ADMIN_FEATURES = [
   { key: "inkhub_config", label: "InkHub Config" },
 ] as const;
 
-const OPERATOR_DEFAULTS = ["stores", "designs", "wizard", "listings", "auto_fulfill"];
+const OPERATOR_DEFAULTS = ["designs", "wizard", "listings", "auto_fulfill", "mockup_library"];
 
 interface Props {
   initialAdminFeatures: string[];
@@ -28,12 +29,8 @@ interface Props {
 
 export default function AclClient({ initialAdminFeatures }: Props) {
   const [activeTab, setActiveTab] = useState<"ADMIN" | "OPERATOR">("ADMIN");
-  const [adminFeatures, setAdminFeatures] = useState<Set<string>>(
-    new Set(initialAdminFeatures),
-  );
-  const [operatorFeatures, setOperatorFeatures] = useState<Set<string>>(
-    new Set(OPERATOR_DEFAULTS),
-  );
+  const [adminFeatures, setAdminFeatures] = useState<Set<string>>(new Set(initialAdminFeatures));
+  const [operatorFeatures, setOperatorFeatures] = useState<Set<string>>(new Set(OPERATOR_DEFAULTS));
   const [saving, setSaving] = useState(false);
   const [loadingOp, setLoadingOp] = useState(false);
 
@@ -63,16 +60,13 @@ export default function AclClient({ initialAdminFeatures }: Props) {
   }
 
   function isEnabled(key: string) {
-    return activeTab === "ADMIN"
-      ? adminFeatures.has(key)
-      : operatorFeatures.has(key);
+    return activeTab === "ADMIN" ? adminFeatures.has(key) : operatorFeatures.has(key);
   }
 
   async function handleSave() {
     setSaving(true);
-    const features = activeTab === "ADMIN"
-      ? Array.from(adminFeatures)
-      : Array.from(operatorFeatures);
+    const features =
+      activeTab === "ADMIN" ? Array.from(adminFeatures) : Array.from(operatorFeatures);
     try {
       const res = await fetch("/api/admin/acl", {
         method: "PATCH",
@@ -97,7 +91,10 @@ export default function AclClient({ initialAdminFeatures }: Props) {
     <div>
       <div className="mb-8">
         <h1 className="text-section-heading" style={{ color: "var(--text-primary)" }}>
-          <Shield size={22} style={{ display: "inline", marginRight: 8, verticalAlign: "text-bottom" }} />
+          <Shield
+            size={22}
+            style={{ display: "inline", marginRight: 8, verticalAlign: "text-bottom" }}
+          />
           Permissions
         </h1>
         <p className="text-body mt-2" style={{ color: "var(--text-secondary)" }}>
@@ -112,6 +109,7 @@ export default function AclClient({ initialAdminFeatures }: Props) {
             key={tab}
             onClick={() => handleTabChange(tab)}
             className={activeTab === tab ? "btn-primary btn-sm" : "btn-secondary btn-sm"}
+            type="button"
           >
             {tab}
           </button>
@@ -123,10 +121,15 @@ export default function AclClient({ initialAdminFeatures }: Props) {
         {groups.map((group) => (
           <div key={group.label} className="mb-6 last:mb-0">
             <div className="mb-3">
-              <span className="text-caption" style={{
-                color: "rgba(255,255,255,0.4)", fontWeight: 600,
-                textTransform: "uppercase", letterSpacing: "0.08em",
-              }}>
+              <span
+                className="text-caption"
+                style={{
+                  color: "rgba(255,255,255,0.4)",
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                }}
+              >
                 {group.label}
               </span>
             </div>
@@ -141,13 +144,12 @@ export default function AclClient({ initialAdminFeatures }: Props) {
                     backgroundColor: "var(--bg-tertiary)",
                   }}
                 >
-                  <span style={{ fontSize: "0.9rem", fontWeight: 500 }}>
-                    {item.label}
-                  </span>
+                  <span style={{ fontSize: "0.9rem", fontWeight: 500 }}>{item.label}</span>
                   <button
                     role="switch"
                     aria-checked={isEnabled(item.key)}
                     onClick={() => toggle(item.key)}
+                    type="button"
                     style={{
                       width: 44,
                       height: 24,
@@ -162,16 +164,18 @@ export default function AclClient({ initialAdminFeatures }: Props) {
                       flexShrink: 0,
                     }}
                   >
-                    <span style={{
-                      position: "absolute",
-                      top: 3,
-                      left: isEnabled(item.key) ? 23 : 3,
-                      width: 18,
-                      height: 18,
-                      borderRadius: "50%",
-                      backgroundColor: "white",
-                      transition: "left 0.15s",
-                    }} />
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: 3,
+                        left: isEnabled(item.key) ? 23 : 3,
+                        width: 18,
+                        height: 18,
+                        borderRadius: "50%",
+                        backgroundColor: "white",
+                        transition: "left 0.15s",
+                      }}
+                    />
                   </button>
                 </div>
               ))}
@@ -180,7 +184,7 @@ export default function AclClient({ initialAdminFeatures }: Props) {
         ))}
 
         <div className="flex justify-end mt-6">
-          <button className="btn-primary" onClick={handleSave} disabled={saving}>
+          <button className="btn-primary" onClick={handleSave} disabled={saving} type="button">
             {saving ? "Đang lưu..." : "Lưu"}
           </button>
         </div>

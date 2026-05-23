@@ -114,20 +114,31 @@ export async function createOrUpdatePrintifyProduct(input: {
   // Fetch full catalog variants for this blueprint+provider.
   // Printify requires ALL variants to be present in the payload (especially for PUT).
   // Selected variants → is_enabled: true, rest → is_enabled: false.
-  let fullVariants: Array<{ id: number; price: number; is_enabled: boolean }> | undefined;
+  // For PUT updates, ALWAYS fetch full catalog even if input.variants is provided,
+  // because the local cost cache may be stale/incomplete vs the live Printify catalog.
+  let fullVariants: Array<{ id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean }> | undefined;
 
-  if (!input.variants) {
+  if (!input.variants || input.productId) {
     try {
       const { variants: catalogVariants } = await input.client.getBlueprintVariants(
         input.blueprintId,
         input.printProviderId,
       );
       const enabledSet = new Set(input.variantIds);
-      fullVariants = catalogVariants.map((v) => ({
-        id: v.id,
-        price: 2000,
-        is_enabled: enabledSet.has(v.id),
-      }));
+      // Merge provided variant prices/SKUs with the full catalog
+      const providedMap = new Map(
+        (input.variants ?? []).map(v => [v.id, v]),
+      );
+      fullVariants = catalogVariants.map((v) => {
+        const provided = providedMap.get(v.id);
+        return {
+          id: v.id,
+          price: provided?.price ?? 2000,
+          is_enabled: provided?.is_enabled ?? enabledSet.has(v.id),
+          ...(provided?.sku ? { sku: provided.sku } : {}),
+          ...(provided?.is_default ? { is_default: true } : {}),
+        };
+      });
     } catch (err) {
       console.warn("[Printify] Failed to fetch catalog variants for full payload, falling back to subset:", err);
       // Fallback: use only the selected variant IDs (may fail on PUT)
@@ -138,7 +149,21 @@ export async function createOrUpdatePrintifyProduct(input: {
     ? { ...input, variants: fullVariants }
     : input;
 
-  const payload = buildPrintifyProductPayload(payloadInput);
+  const payload = buildPrintifyProductPayload(payloadInput) as Record<string, any>;
+
+  if (input.productId) {
+    try {
+      const existingProduct = await input.client.getProduct(input.shopId, input.productId);
+      const existingMockupIds = (existingProduct.images ?? [])
+        .map((img: any) => img.mockup_id)
+        .filter(Boolean);
+      if (existingMockupIds.length > 0) {
+        payload.visible_mockups = existingMockupIds;
+      }
+    } catch (err) {
+      console.warn(`[Printify] Failed to fetch existing product ${input.productId} for visible_mockups:`, err);
+    }
+  }
 
   // Debug log — dump payload summary before sending to Printify
   const payloadVariants = (payload.variants as Array<{ id: number; is_enabled: boolean }>) ?? [];
@@ -161,6 +186,7 @@ export async function createOrUpdatePrintifyProduct(input: {
     variantIdsNotInPrintArea,
     printAreaIdsNotInVariants,
     placeholders: printAreas.map(pa => (pa as any).placeholders?.map((ph: any) => ph.position)),
+    visibleMockupCount: payload.visible_mockups?.length ?? 0,
   }, null, 2));
 
   const product = input.productId
@@ -205,7 +231,7 @@ export function parsePrintifyMockupImages(
     .map((image, index) => {
       const mockupType = inferMockupType(image, index);
       return {
-        printifyMockupId: image.id ?? `${productId}-${mockupType}-${index}`,
+        printifyMockupId: image.mockup_id ?? image.id ?? `${productId}-${mockupType}-${index}`,
         variantIds: image.variant_ids ?? [],
         viewPosition: image.position ?? mockupType,
         sourceUrl: image.src,

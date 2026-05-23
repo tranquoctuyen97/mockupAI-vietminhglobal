@@ -37,6 +37,14 @@ export async function GET(
             orderBy: { sortOrder: "asc" },
             include: { color: true },
           },
+          customMockupSources: {
+            where: {
+              scope: "TEMPLATE",
+              isActive: true,
+              deletedAt: null,
+            },
+            select: { colorId: true },
+          },
         },
       },
     },
@@ -66,6 +74,13 @@ export async function GET(
 
   const templates = store.templates.map((template) => {
     const readiness = getTemplateReadiness(template);
+    const customSourceCountByColorId = new Map<string, number>();
+    for (const source of template.customMockupSources) {
+      customSourceCountByColorId.set(
+        source.colorId,
+        (customSourceCountByColorId.get(source.colorId) ?? 0) + 1,
+      );
+    }
 
     return {
       id: template.id,
@@ -76,6 +91,7 @@ export async function GET(
       printifyPrintProviderId: template.printifyPrintProviderId,
       blueprintTitle: template.blueprintTitle,
       printProviderTitle: template.printProviderTitle,
+      defaultMockupSource: template.defaultMockupSource,
       enabledVariantIds: template.enabledVariantIds,
       enabledSizes: template.enabledSizes,
       defaultPlacement: template.defaultPlacement,
@@ -90,6 +106,8 @@ export async function GET(
         hex: cacheHexMap.get(entry.color.name) || enrichColorHex(entry.color.name, entry.color.hex),
         enabled: entry.color.enabled,
         sortOrder: entry.sortOrder,
+        customMockupCount: customSourceCountByColorId.get(entry.color.id) ?? 0,
+        hasCustomMockup: (customSourceCountByColorId.get(entry.color.id) ?? 0) > 0,
       })),
     };
   });

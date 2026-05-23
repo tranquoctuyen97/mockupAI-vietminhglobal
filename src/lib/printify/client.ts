@@ -17,6 +17,7 @@ export interface PrintifyUploadImageResponse {
 
 export interface PrintifyProductImage {
   id?: string;
+  mockup_id?: string;
   src: string;
   variant_ids?: number[];
   position?: string;

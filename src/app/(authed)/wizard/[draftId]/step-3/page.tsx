@@ -8,9 +8,14 @@ import { useWizardStore } from "@/lib/wizard/use-wizard-store";
 import { pickLatestMockupJobId } from "@/lib/mockup/latest-job";
 import { isTerminalMockupJobStatus, shouldSyncFinishedMockupJob } from "@/lib/mockup/job-sync";
 import { MOCKUP_JOB_SOFT_WAIT_MS } from "@/lib/mockup/job-timeout";
-import { isRealPrintifyMockupMedia } from "@/lib/mockup/real-printify-media";
+import { shouldShowInOfficialGallery } from "@/lib/mockup/official-gallery";
 import { MockupGallery } from "@/components/mockup/MockupGallery";
-import { MultiViewPlacementEditor } from "@/components/placement/MultiViewPlacementEditor";
+import { WizardMockupSourcePanel } from "@/components/mockup/WizardMockupSourcePanel";
+import { ColorMockupCardGrid } from "@/components/mockup/ColorMockupCardGrid";
+import {
+  CanvasPlacementEditor,
+  type CanvasRegionPx,
+} from "@/components/placement/CanvasPlacementEditor";
 import { LivePreview } from "@/components/mockup/LivePreview";
 import {
   Loader2,
@@ -24,14 +29,24 @@ import {
   X,
   Ruler,
 } from "lucide-react";
-import type { PlacementData, ViewKey } from "@/lib/placement/types";
+import type { Placement, PlacementData, ViewKey } from "@/lib/placement/types";
+import { DEFAULT_PRINT_AREA } from "@/lib/placement/types";
 import {
   formatPlacementViewCount,
   formatPlacementViewDetails,
   getEnabledViews,
   getPlacementForView,
   normalizePlacementData,
+  setPlacementForView,
 } from "@/lib/placement/views";
+import {
+  generateShirtSvg,
+  PRINT_AREA_CENTER_X,
+  PRINT_AREA_CENTER_Y,
+  PRINT_AREA_SVG_HEIGHT,
+  SVG_VIEWBOX_H,
+  SVG_VIEWBOX_W,
+} from "@/lib/mockup/svg-utils";
 
 type TemplateReadinessLabel = "DEFAULT" | "DEFAULT INCOMPLETE" | "READY" | "INCOMPLETE";
 
@@ -42,6 +57,7 @@ type WizardTemplateOption = {
   sortOrder: number;
   blueprintTitle: string;
   printProviderTitle: string;
+  defaultMockupSource: "PRINTIFY" | "CUSTOM";
   enabledVariantIds: number[];
   enabledSizes: string[];
   defaultPlacement: unknown | null;
@@ -56,8 +72,12 @@ type WizardTemplateOption = {
     hex: string;
     enabled: boolean;
     sortOrder: number;
+    customMockupCount?: number;
+    hasCustomMockup?: boolean;
   }>;
 };
+
+const WIZARD_PRINT_AREA = { ...DEFAULT_PRINT_AREA, safeMarginMm: 12.7 };
 
 export default function Step3PreviewPage() {
   const { draftId } = useParams<{ draftId: string }>();
@@ -87,6 +107,7 @@ export default function Step3PreviewPage() {
   const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
   const [showSlowMockupWarning, setShowSlowMockupWarning] = useState(false);
+  const [hasTriggeredMockupRender, setHasTriggeredMockupRender] = useState(false);
 
   // Size selection state
   const [storeSizes, setStoreSizes] = useState<Array<{ size: string; costDeltaCents: number; isAvailable: boolean }>>([]);
@@ -103,6 +124,29 @@ export default function Step3PreviewPage() {
     (jobStatus ? !isTerminalMockupJobStatus(jobStatus) && !progressFinished : false);
   const selectedTemplate = template;
   const selectedTemplateReady = Boolean(selectedTemplate?.readiness.ready);
+  const isCustomTemplateDefault = selectedTemplate?.defaultMockupSource === "CUSTOM";
+  const showFullLivePreview = !isCustomTemplateDefault;
+  const livePreviewTitle = isCustomTemplateDefault ? "Vị trí design trên template" : "Live Preview";
+  const livePreviewDescription = isCustomTemplateDefault
+    ? "Vị trí design trên template — dùng để kiểm tra vị trí in. Ảnh listing cuối sẽ dùng mockup custom bên dưới."
+    : "Mockup tham khảo từ Printify. Bạn có thể chỉnh vị trí design trước khi tạo mockup.";
+  const resultsSectionTitle = "Kết quả mockup";
+  const resultsEmptyState =
+    'Khi sẵn sàng, nhấn "Tạo Mockups" để render ảnh listing.';
+  const customAvailabilityByColorId = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const color of selectedTemplate?.colors ?? []) {
+      map.set(color.id, Boolean(color.hasCustomMockup || (color.customMockupCount ?? 0) > 0));
+    }
+    return map;
+  }, [selectedTemplate]);
+  const selectedMissingCustomColors = useMemo(() => {
+    if (!isCustomTemplateDefault) return [];
+    return storeColors.filter(
+      (color) => selectedColorIds.has(color.id) && !customAvailabilityByColorId.get(color.id),
+    );
+  }, [customAvailabilityByColorId, isCustomTemplateDefault, selectedColorIds, storeColors]);
+  const hasSelectedMissingCustomColors = selectedMissingCustomColors.length > 0;
   const generateButtonLabel = isGenerating
     ? progressFinished
       ? "Đang đồng bộ kết quả..."
@@ -288,6 +332,9 @@ export default function Step3PreviewPage() {
             (latestJob.totalImages ?? latestJob.images.length);
         if (isTerminalMockupJobStatus(latestJob.status) || latestJobFinished) {
           setGenerating(false);
+          setHasTriggeredMockupRender(false);
+        } else {
+          setHasTriggeredMockupRender(true);
         }
       }
       if (latestJobId) setMockupJobId(latestJobId);
@@ -376,6 +423,10 @@ export default function Step3PreviewPage() {
   }, [mockupJobId, draftId]);
 
   const toggleColor = (id: string) => {
+    if (isCustomTemplateDefault && !customAvailabilityByColorId.get(id)) {
+      toast.info("Màu này chưa có mockup custom.");
+      return;
+    }
     const next = new Set(selectedColorIds);
     if (next.has(id)) next.delete(id);
     else next.add(id);
@@ -385,7 +436,11 @@ export default function Step3PreviewPage() {
 
   const selectAllColors = () => {
     const next = new Set<string>();
-    storeColors.forEach(c => next.add(c.id));
+    storeColors.forEach((color) => {
+      if (!isCustomTemplateDefault || customAvailabilityByColorId.get(color.id)) {
+        next.add(color.id);
+      }
+    });
     setSelectedColorIds(next);
     updateDraft({ enabledColorIds: Array.from(next) });
   };
@@ -412,7 +467,11 @@ export default function Step3PreviewPage() {
     }
 
     const nextColorIds = nextTemplate.colors
-      .filter((color) => color.enabled !== false)
+      .filter((color) => {
+        if (color.enabled === false) return false;
+        if (nextTemplate.defaultMockupSource !== "CUSTOM") return true;
+        return Boolean(color.hasCustomMockup || (color.customMockupCount ?? 0) > 0);
+      })
       .map((color) => color.id);
     const nextSizes = nextTemplate.enabledSizes ?? [];
 
@@ -431,6 +490,7 @@ export default function Step3PreviewPage() {
     setGenerating(false);
     setGenerationStartedAt(null);
     setShowSlowMockupWarning(false);
+    setHasTriggeredMockupRender(false);
     setError("");
 
     await updateDraft({
@@ -453,6 +513,13 @@ export default function Step3PreviewPage() {
       setError("Template đang chọn chưa sẵn sàng. Vui lòng chọn template READY hoặc hoàn tất preset.");
       return;
     }
+    if (selectedMissingCustomColors.length > 0) {
+      const missingColorNames = selectedMissingCustomColors.map((color) => color.name).join(", ");
+      setError(
+        `Template đang dùng Custom nhưng ${missingColorNames} chưa có mockup custom. Màu này sẽ chưa thể tạo mockup cho tới khi bạn upload mockup custom hoặc bỏ màu này khỏi listing.`,
+      );
+      return;
+    }
 
     setGenerating(true);
     setJobStatus("pending");
@@ -460,6 +527,7 @@ export default function Step3PreviewPage() {
     setMockupImages([]);
     setGenerationStartedAt(Date.now());
     setShowSlowMockupWarning(false);
+    setHasTriggeredMockupRender(true);
     setError("");
 
     // 1. Save state to draft
@@ -498,6 +566,40 @@ export default function Step3PreviewPage() {
       setGenerating(false);
       setGenerationStartedAt(null);
       setShowSlowMockupWarning(false);
+    }
+  };
+
+  const removeColorFromListing = async (colorId: string) => {
+    const next = new Set(selectedColorIds);
+    next.delete(colorId);
+    setSelectedColorIds(next);
+    await updateDraft({ enabledColorIds: Array.from(next) });
+  };
+
+  const switchSelectedTemplateToPrintify = async () => {
+    if (!draft?.storeId || !selectedTemplate) return;
+    try {
+      const res = await fetch(`/api/stores/${draft.storeId}/mockup-templates/${selectedTemplate.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ defaultMockupSource: "PRINTIFY" }),
+      });
+      if (!res.ok) throw new Error("Failed to switch template source");
+      setTemplate((current) =>
+        current?.id === selectedTemplate.id
+          ? { ...current, defaultMockupSource: "PRINTIFY" }
+          : current,
+      );
+      setTemplates((current) =>
+        current.map((candidate) =>
+          candidate.id === selectedTemplate.id
+            ? { ...candidate, defaultMockupSource: "PRINTIFY" }
+            : candidate,
+        ),
+      );
+      toast.success("Đã đổi nguồn ảnh mặc định sang Printify");
+    } catch {
+      toast.error("Không thể đổi nguồn ảnh mặc định sang Printify");
     }
   };
 
@@ -546,6 +648,27 @@ export default function Step3PreviewPage() {
     : enabledPlacementViews[0] ?? "front";
   const placementSourceLabel = placementOverride ? "Đã override cho design này" : "Dùng preset của store";
   const bgColor = storeColors.find((color) => color.enabled !== false)?.hex ?? "#EEEEEE";
+  const selectedPreviewColors = storeColors.filter((color) => selectedColorIds.has(color.id));
+  const previewColors = selectedPreviewColors;
+  const previewColor = previewColors[Math.min(previewColorIdx, Math.max(0, previewColors.length - 1))];
+  const livePreviewViews = enabledPlacementViews.filter(
+    (view): view is Exclude<ViewKey, "hem"> => view !== "hem",
+  );
+  const selectedLivePreviewView = livePreviewViews.includes(previewPlacementView as Exclude<ViewKey, "hem">)
+    ? (previewPlacementView as Exclude<ViewKey, "hem">)
+    : livePreviewViews[0] ?? "front";
+  const placementsByView = Object.fromEntries(
+    livePreviewViews.map((view) => [view, getPlacementForView(activePlacement, view)]),
+  ) as Partial<Record<Exclude<ViewKey, "hem">, ReturnType<typeof getPlacementForView>>>;
+  const currentPreviewPlacement = getPlacementForView(activePlacement, selectedLivePreviewView)
+    ?? getPlacementForView(activePlacement, "front");
+  const canvasEditorMode =
+    selectedTemplate?.defaultMockupSource === "CUSTOM"
+      ? "CUSTOM_COMPOSITE"
+      : "PRINTIFY_PLACEMENT";
+  const canvasBackgroundImageUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+    generateShirtSvg(selectedLivePreviewView, previewColor?.hex ?? bgColor),
+  )}`;
 
   const updatePlacementOverride = (next: PlacementData | null) => {
     const normalized = next ? normalizePlacementData(next, false) : null;
@@ -608,6 +731,47 @@ export default function Step3PreviewPage() {
         </div>
       )}
 
+      {isCustomTemplateDefault && selectedMissingCustomColors.length > 0 && (
+        <div
+          className="alert"
+          style={{
+            marginBottom: 16,
+            backgroundColor: "rgba(245,158,11,0.08)",
+            border: "1px solid rgba(245,158,11,0.28)",
+            alignItems: "flex-start",
+          }}
+        >
+          <AlertTriangle size={16} style={{ color: "#b45309", marginTop: 2 }} />
+          <div className="flex-1">
+            <p style={{ margin: 0, fontWeight: 800 }}>
+              Template đang dùng Custom nhưng {selectedMissingCustomColors.map((color) => color.name).join(", ")} chưa có mockup custom.
+            </p>
+            <p style={{ margin: "4px 0 10px", fontSize: "0.82rem", opacity: 0.72, lineHeight: 1.45 }}>
+              Màu này sẽ chưa thể tạo mockup cho tới khi bạn upload mockup custom hoặc bỏ màu này khỏi listing.
+            </p>
+            <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => router.push(`/stores/${draft?.storeId}/mockup-library?templateId=${selectedTemplate?.id}`)}
+              >
+                Mở Thư viện mockup
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => void removeColorFromListing(selectedMissingCustomColors[0].id)}
+              >
+                Bỏ màu {selectedMissingCustomColors[0].name}
+              </button>
+              <button type="button" className="btn btn-secondary" onClick={switchSelectedTemplateToPrintify}>
+                Đổi nguồn ảnh mặc định sang Printify
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {!draft?.designId && (
         <div className="alert" style={{ marginBottom: 16, backgroundColor: "var(--bg-tertiary)", border: "1px solid var(--border-default)" }}>
           <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
@@ -629,7 +793,7 @@ export default function Step3PreviewPage() {
 
         {/* LEFT PANEL: COLORS & PLACEMENT */}
         <div className="space-y-6">
-          <div className="card" style={{ padding: 16 }}>
+          <div id="mockup-template-selector" className="card" style={{ padding: 16 }}>
             <div className="flex items-center justify-between gap-3" style={{ marginBottom: 12 }}>
               <div style={{ minWidth: 0 }}>
                 <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Mockup template</h3>
@@ -716,30 +880,42 @@ export default function Step3PreviewPage() {
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 400, overflowY: "auto" }}>
-              {storeColors.map(color => (
-                <div
-                  key={color.id}
-                  onClick={() => toggleColor(color.id)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    padding: "8px 12px",
-                    borderRadius: "var(--radius-md)",
-                    border: selectedColorIds.has(color.id) ? "1px solid var(--color-wise-green)" : "1px solid var(--border-default)",
-                    backgroundColor: selectedColorIds.has(color.id) ? "rgba(146, 198, 72, 0.05)" : "transparent",
-                    cursor: "pointer"
-                  }}
-                >
-                  {selectedColorIds.has(color.id) ? (
-                    <CheckSquare size={18} color="var(--color-wise-green)" />
-                  ) : (
-                    <Square size={18} opacity={0.3} />
-                  )}
-                  <div style={{ width: 16, height: 16, borderRadius: "50%", backgroundColor: color.hex, border: "1px solid rgba(0,0,0,0.1)" }} />
-                  <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>{color.name}</span>
-                </div>
-              ))}
+              {storeColors.map(color => {
+                const selected = selectedColorIds.has(color.id);
+                const missingCustomMockup =
+                  isCustomTemplateDefault && !customAvailabilityByColorId.get(color.id);
+                return (
+                  <div
+                    key={color.id}
+                    onClick={() => toggleColor(color.id)}
+                    title={missingCustomMockup ? "Màu này chưa có mockup custom." : color.name}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "8px 12px",
+                      borderRadius: "var(--radius-md)",
+                      border: selected ? "1px solid var(--color-wise-green)" : "1px solid var(--border-default)",
+                      backgroundColor: selected ? "rgba(146, 198, 72, 0.05)" : "transparent",
+                      cursor: missingCustomMockup ? "not-allowed" : "pointer",
+                      opacity: missingCustomMockup ? 0.48 : 1,
+                    }}
+                  >
+                    {selected ? (
+                      <CheckSquare size={18} color="var(--color-wise-green)" />
+                    ) : (
+                      <Square size={18} opacity={0.3} />
+                    )}
+                    <div style={{ width: 16, height: 16, borderRadius: "50%", backgroundColor: color.hex, border: "1px solid rgba(0,0,0,0.1)" }} />
+                    <span style={{ fontSize: "0.85rem", fontWeight: 500, flex: 1 }}>{color.name}</span>
+                    {missingCustomMockup && (
+                      <span style={{ fontSize: "0.68rem", fontWeight: 800, color: "#92400e" }}>
+                        Thiếu mockup
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -785,6 +961,7 @@ export default function Step3PreviewPage() {
             </div>
           )}
 
+          {!isCustomTemplateDefault && (
           <div className="card" style={{ padding: 16 }}>
             <div className="flex justify-between items-start gap-3" style={{ marginBottom: 12 }}>
               <div style={{ minWidth: 0 }}>
@@ -846,7 +1023,7 @@ export default function Step3PreviewPage() {
                   lineHeight: 1.2,
                 }}
               >
-                <SlidersHorizontal size={14} /> Điều chỉnh vị trí
+                <SlidersHorizontal size={14} /> Chỉnh vị trí design
               </button>
 
               {isAdmin ? (
@@ -900,100 +1077,196 @@ export default function Step3PreviewPage() {
               )}
             </div>
           </div>
+          )}
         </div>
 
         {/* RIGHT PANEL: LIVE PREVIEW + MOCKUP GALLERY */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Live Preview — Printify-style realistic shirt mockup */}
-          {(() => {
-            const selectedColors = storeColors.filter(c => selectedColorIds.has(c.id));
-            const previewColors = selectedColors; // Don't fallback — require explicit selection
-            const previewColor = previewColors[Math.min(previewColorIdx, previewColors.length - 1)];
-
-            // Build per-view placements for LivePreview
-            const livePreviewViews = enabledPlacementViews.filter(
-              (v): v is Exclude<ViewKey, "hem"> => v !== "hem",
-            );
-            const placementsByView = Object.fromEntries(
-              livePreviewViews.map((v) => [v, getPlacementForView(activePlacement, v)]),
-            ) as Partial<Record<Exclude<ViewKey, "hem">, ReturnType<typeof getPlacementForView>>>;
-            const selectedLivePreviewView = livePreviewViews.includes(previewPlacementView as Exclude<ViewKey, "hem">)
-              ? (previewPlacementView as Exclude<ViewKey, "hem">)
-              : livePreviewViews[0] ?? "front";
-            const currentPreviewPlacement = getPlacementForView(activePlacement, selectedLivePreviewView)
-              ?? getPlacementForView(activePlacement, "front");
-
-            return (
-              <div className="card" style={{ padding: 20 }}>
-                <div className="flex justify-between items-center" style={{ marginBottom: 12 }}>
-                  <div>
-                    <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>Live Preview</h3>
-                    <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55 }}>
-                      Mockup tham khảo — chất lượng cuối cùng từ Printify
-                    </p>
-                  </div>
-                  {previewColors.length > 1 && (
-                    <div className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
-                      {previewColors.map((c, idx) => (
-                        <button
-                          key={c.id}
-                          onClick={() => setPreviewColorIdx(idx)}
-                          aria-label={`Xem màu ${c.name}`}
-                          title={c.name}
-                          style={{
-                            width: 24, height: 24, borderRadius: "50%",
-                            backgroundColor: c.hex,
-                            border: idx === Math.min(previewColorIdx, previewColors.length - 1)
-                              ? "2px solid var(--text-primary, #2a2a2a)"
-                              : "1px solid var(--border-default)",
-                            cursor: "pointer",
-                            padding: 0,
-                          }}
-                        />
-                      ))}
-                    </div>
-                  )}
+          {isCustomTemplateDefault ? (
+            draft?.storeId && selectedTemplate ? (
+              <ColorMockupCardGrid
+                draftId={draftId as string}
+                templateId={selectedTemplate.id}
+                selectedColors={storeColors.filter((c) => selectedColorIds.has(c.id))}
+                designImageUrl={designPreviewUrl}
+                mockupImages={mockupImages}
+                onGenerate={handleGenerate}
+                isGenerating={isGenerating}
+                generateButtonLabel={generateButtonLabel}
+                hasRenderedMockups={mockupImages.length > 0}
+                onNextStep={async () => {
+                  if (draft) {
+                    const store = useWizardStore.getState();
+                    store.updateDraft({
+                      currentStep: Math.max(draft.currentStep, 4),
+                    });
+                    await store.saveDraftImmediately();
+                  }
+                  router.push(`/wizard/${draftId}/step-4`);
+                }}
+                onDeselectColor={(colorId) => toggleColor(colorId)}
+              />
+            ) : null
+          ) : (
+            <>
+          {/* Live preview / placement editor */}
+          {showFullLivePreview ? (
+            <div className="card" style={{ padding: 20 }}>
+              <div className="flex justify-between items-center" style={{ marginBottom: 12 }}>
+                <div>
+                  <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>{livePreviewTitle}</h3>
+                  <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55 }}>
+                    {livePreviewDescription}
+                  </p>
                 </div>
-
-                {previewColor && currentPreviewPlacement ? (
-                  <LivePreview
-                    colorHex={previewColor.hex}
-                    designUrl={designPreviewUrl}
-                    placement={currentPreviewPlacement}
-                    placementsByView={placementsByView}
-                    availableViews={livePreviewViews}
-                    selectedView={selectedLivePreviewView}
-                    onViewChange={(view) => setLivePreviewView(view)}
-                    printArea={{ widthMm: 355.6, heightMm: 406.4, safeMarginMm: 12.7 }}
-                    height={420}
-                  />
-                ) : (
-                  <div style={{ padding: 40, textAlign: "center", opacity: 0.5 }}>
-                    {!draft?.designId ? (
-                      <>
-                        <ArrowUpCircle size={32} style={{ marginBottom: 8 }} />
-                        <p style={{ fontSize: "0.85rem", margin: 0 }}>Chọn design ở bước trước.</p>
-                      </>
-                    ) : selectedColorIds.size === 0 && storeColors.length === 0 ? (
-                      <p style={{ fontSize: "0.85rem", margin: 0 }}>Cấu hình màu ở Store Settings trước.</p>
-                    ) : (
-                      <p style={{ fontSize: "0.85rem", margin: 0 }}>Chọn màu và bật ít nhất 1 vị trí in để xem preview.</p>
-                    )}
+                {previewColors.length > 1 && (
+                  <div className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
+                    {previewColors.map((c, idx) => (
+                      <button
+                        key={c.id}
+                        onClick={() => setPreviewColorIdx(idx)}
+                        aria-label={`Xem màu ${c.name}`}
+                        title={c.name}
+                        style={{
+                          width: 24, height: 24, borderRadius: "50%",
+                          backgroundColor: c.hex,
+                          border: idx === Math.min(previewColorIdx, previewColors.length - 1)
+                            ? "2px solid var(--text-primary, #2a2a2a)"
+                            : "1px solid var(--border-default)",
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      />
+                    ))}
                   </div>
                 )}
               </div>
-            );
-          })()}
+
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setIsPlacementEditorOpen(true)}
+                disabled={!previewColor || !currentPreviewPlacement}
+                style={{
+                  marginBottom: 12,
+                  minHeight: 40,
+                  opacity: !previewColor || !currentPreviewPlacement ? 0.5 : 1,
+                  cursor: !previewColor || !currentPreviewPlacement ? "not-allowed" : "pointer",
+                }}
+              >
+                <SlidersHorizontal size={14} />
+                Chỉnh vị trí design
+              </button>
+
+              {previewColor && currentPreviewPlacement ? (
+                <LivePreview
+                  colorHex={previewColor.hex}
+                  designUrl={designPreviewUrl}
+                  placement={currentPreviewPlacement}
+                  placementsByView={placementsByView}
+                  availableViews={livePreviewViews}
+                  selectedView={selectedLivePreviewView}
+                  onViewChange={(view) => setLivePreviewView(view)}
+                  printArea={WIZARD_PRINT_AREA}
+                  height={420}
+                />
+              ) : (
+                <div style={{ padding: 40, textAlign: "center", opacity: 0.5 }}>
+                  {!draft?.designId ? (
+                    <>
+                      <ArrowUpCircle size={32} style={{ marginBottom: 8 }} />
+                      <p style={{ fontSize: "0.85rem", margin: 0 }}>Chọn design ở bước trước.</p>
+                    </>
+                  ) : selectedColorIds.size === 0 && storeColors.length === 0 ? (
+                    <p style={{ fontSize: "0.85rem", margin: 0 }}>Cấu hình màu ở Store Settings trước.</p>
+                  ) : (
+                    <p style={{ fontSize: "0.85rem", margin: 0 }}>Chọn màu và bật ít nhất 1 vị trí in để xem preview.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div
+              className="card"
+              style={{
+                padding: 14,
+                display: "grid",
+                gap: 10,
+                border: "1px solid var(--border-default)",
+                background: "var(--bg-primary)",
+              }}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div style={{ minWidth: 0 }}>
+                  <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>{livePreviewTitle}</h3>
+                  <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                    {livePreviewDescription}
+                  </p>
+                </div>
+                {previewColors.length > 1 && (
+                  <div className="flex items-center gap-1" style={{ flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    {previewColors.map((c, idx) => (
+                      <button
+                        key={c.id}
+                        onClick={() => setPreviewColorIdx(idx)}
+                        aria-label={`Xem màu ${c.name}`}
+                        title={c.name}
+                        style={{
+                          width: 20,
+                          height: 20,
+                          borderRadius: "50%",
+                          backgroundColor: c.hex,
+                          border: idx === Math.min(previewColorIdx, previewColors.length - 1)
+                            ? "2px solid var(--text-primary, #2a2a2a)"
+                            : "1px solid var(--border-default)",
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  background: "var(--bg-inset, #f7f7f4)",
+                  border: "1px solid var(--border-default)",
+                  fontSize: "0.78rem",
+                  lineHeight: 1.45,
+                  color: "var(--text-muted)",
+                }}
+              >
+                Preview lớn và nút <strong>Chỉnh vị trí</strong> nằm ở khối mockup bên dưới, bám theo mockup đang chọn.
+              </div>
+            </div>
+          )}
 
           {/* Generate button + Real Mockup Gallery */}
+          {/* MOCKUP SOURCE PANEL */}
+          {draft?.storeId && (
+            <WizardMockupSourcePanel
+              draftId={draftId as string}
+              storeId={draft.storeId}
+              templateId={selectedTemplate?.id ?? null}
+              enabledColorIds={Array.from(selectedColorIds)}
+              storeColors={storeColors}
+              designImageUrl={designPreviewUrl}
+              onRegenerate={handleGenerate}
+              onRemoveColor={removeColorFromListing}
+            />
+          )}
+
           <div className="card" style={{ padding: 20, minHeight: 200 }}>
             <div className="flex justify-between items-center" style={{ marginBottom: 16 }}>
-              <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>Mockup chính thức</h3>
+              <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>{resultsSectionTitle}</h3>
               <button
-                className={`btn flex items-center gap-2 px-4 py-2 rounded font-medium ${draft?.designId && !isGenerating && selectedTemplateReady ? 'btn-primary' : ''}`}
+                data-generate-mockups
+                className={`btn flex items-center gap-2 px-4 py-2 rounded font-medium ${draft?.designId && !isGenerating && selectedTemplateReady && !hasSelectedMissingCustomColors ? 'btn-primary' : ''}`}
                 onClick={handleGenerate}
-                disabled={isGenerating || !draft?.designId || selectedColorIds.size === 0 || !selectedTemplateReady}
-                style={(!draft?.designId || isGenerating || selectedColorIds.size === 0 || !selectedTemplateReady) ? { backgroundColor: "var(--bg-tertiary)", color: "var(--color-text)", opacity: 0.5, cursor: "not-allowed" } : {}}
+                disabled={isGenerating || !draft?.designId || selectedColorIds.size === 0 || !selectedTemplateReady || hasSelectedMissingCustomColors}
+                style={(!draft?.designId || isGenerating || selectedColorIds.size === 0 || !selectedTemplateReady || hasSelectedMissingCustomColors) ? { backgroundColor: "var(--bg-tertiary)", color: "var(--color-text)", opacity: 0.5, cursor: "not-allowed" } : {}}
               >
                 {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
                 {generateButtonLabel}
@@ -1011,7 +1284,9 @@ export default function Step3PreviewPage() {
               >
                 <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
                 <span style={{ fontSize: "0.82rem" }}>
-                  Printify đang render lâu hơn bình thường. Hệ thống vẫn đang kiểm tra và sẽ hiện lỗi nếu job bị kẹt.
+                  {isCustomTemplateDefault
+                    ? "Custom đang chuẩn bị mockup từ thư viện hoặc mockup riêng. Hệ thống vẫn đang kiểm tra và sẽ hiện lỗi nếu job bị kẹt."
+                    : "Printify đang render lâu hơn bình thường. Hệ thống vẫn đang kiểm tra và sẽ hiện lỗi nếu job bị kẹt."}
                 </span>
               </div>
             )}
@@ -1044,11 +1319,11 @@ export default function Step3PreviewPage() {
               </div>
             )}
 
-            {!mockupJobId && !isGenerating ? (
+            {!(hasTriggeredMockupRender || isGenerating || mockupImages.length > 0) ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", opacity: 0.5, padding: 24 }}>
                 <ImageIcon size={32} style={{ marginBottom: 8 }} />
                 <p style={{ fontSize: "0.85rem", margin: 0, textAlign: "center" }}>
-                  Khi sẵn sàng, nhấn "Tạo Mockups" để render ảnh chất lượng cao từ Printify.
+                  {resultsEmptyState}
                 </p>
               </div>
             ) : (
@@ -1056,7 +1331,10 @@ export default function Step3PreviewPage() {
                 draftId={draftId as string}
                 images={mockupImages.filter((img) => {
                   const normalizedColorName = img.colorName.trim().toLowerCase();
-                  return isRealPrintifyMockupMedia(img) && storeColors.some(
+                  return shouldShowInOfficialGallery(
+                    img,
+                    selectedTemplate?.defaultMockupSource ?? "PRINTIFY",
+                  ) && storeColors.some(
                     (c) =>
                       selectedColorIds.has(c.id) &&
                       c.name.trim().toLowerCase() === normalizedColorName
@@ -1084,6 +1362,8 @@ export default function Step3PreviewPage() {
               />
             )}
           </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -1113,7 +1393,7 @@ export default function Step3PreviewPage() {
           >
             <div className="flex items-center justify-between" style={{ marginBottom: 14 }}>
               <div>
-                <h3 style={{ margin: 0, fontWeight: 800 }}>Điều chỉnh vị trí in</h3>
+                <h3 style={{ margin: 0, fontWeight: 800 }}>Chỉnh vị trí design</h3>
                 <p style={{ margin: "3px 0 0", opacity: 0.55, fontSize: "0.85rem" }}>
                   Thay đổi tại đây chỉ áp dụng cho listing hiện tại.
                 </p>
@@ -1126,14 +1406,53 @@ export default function Step3PreviewPage() {
                 <X size={16} /> Đóng
               </button>
             </div>
-            <MultiViewPlacementEditor
-              value={activePlacement}
-              onChange={updatePlacementOverride}
-              bgColor={bgColor}
-              title="Placement của listing"
-              description={placementOverride ? "Listing đang dùng override riêng." : "Đang kế thừa preset store. Chỉnh sửa sẽ tạo override cho listing này."}
-              compact
-            />
+            <div className="flex items-center gap-2" style={{ marginBottom: 12, flexWrap: "wrap" }}>
+              {livePreviewViews.map((view) => (
+                <button
+                  key={view}
+                  type="button"
+                  className={selectedLivePreviewView === view ? "btn btn-primary" : "btn btn-secondary"}
+                  onClick={() => setLivePreviewView(view)}
+                  style={{ minHeight: 36 }}
+                >
+                  {view === "front" ? "Mặt trước" : view === "back" ? "Mặt sau" : view}
+                </button>
+              ))}
+            </div>
+            {currentPreviewPlacement ? (
+              <CanvasPlacementEditor
+                backgroundImageUrl={canvasBackgroundImageUrl}
+                designImageUrl={designPreviewUrl}
+                imageWidth={SVG_VIEWBOX_W}
+                imageHeight={SVG_VIEWBOX_H}
+                mode={canvasEditorMode}
+                initialRegionPx={placementToCanvasRegionPx(
+                  currentPreviewPlacement,
+                  WIZARD_PRINT_AREA,
+                )}
+                onSave={(regionPx) => {
+                  const nextPlacement = canvasRegionPxToPlacement(
+                    regionPx,
+                    currentPreviewPlacement,
+                    WIZARD_PRINT_AREA,
+                  );
+                  updatePlacementOverride(
+                    setPlacementForView(activePlacement, selectedLivePreviewView, nextPlacement),
+                  );
+                  toast.success(
+                    canvasEditorMode === "CUSTOM_COMPOSITE"
+                      ? "Đã lưu vùng ghép cho listing hiện tại"
+                      : "Đã lưu vị trí design cho listing hiện tại",
+                  );
+                  setIsPlacementEditorOpen(false);
+                }}
+              />
+            ) : (
+              <div className="alert" style={{ marginBottom: 12 }}>
+                <AlertTriangle size={16} />
+                <span>Chưa có vị trí in để chỉnh. Hãy bật ít nhất một placement cho template.</span>
+              </div>
+            )}
             {placementOverride && (
               <button
                 className="btn btn-secondary"
@@ -1148,4 +1467,50 @@ export default function Step3PreviewPage() {
       )}
     </div>
   );
+}
+
+function placementToCanvasRegionPx(
+  placement: Placement,
+  printArea: typeof WIZARD_PRINT_AREA,
+): CanvasRegionPx {
+  const { paSvgX, paSvgY, mmToSvg } = getPrintAreaSvgMetrics(printArea);
+  return {
+    x: roundOne(paSvgX + placement.xMm * mmToSvg),
+    y: roundOne(paSvgY + placement.yMm * mmToSvg),
+    width: roundOne(placement.widthMm * mmToSvg),
+    height: roundOne(placement.heightMm * mmToSvg),
+    rotationDeg: roundOne(placement.rotationDeg ?? 0),
+    imageWidth: SVG_VIEWBOX_W,
+    imageHeight: SVG_VIEWBOX_H,
+  };
+}
+
+function canvasRegionPxToPlacement(
+  regionPx: CanvasRegionPx,
+  basePlacement: Placement,
+  printArea: typeof WIZARD_PRINT_AREA,
+): Placement {
+  const { paSvgX, paSvgY, mmToSvg } = getPrintAreaSvgMetrics(printArea);
+  return {
+    ...basePlacement,
+    xMm: roundOne((regionPx.x - paSvgX) / mmToSvg),
+    yMm: roundOne((regionPx.y - paSvgY) / mmToSvg),
+    widthMm: roundOne(regionPx.width / mmToSvg),
+    heightMm: roundOne(regionPx.height / mmToSvg),
+    rotationDeg: roundOne(regionPx.rotationDeg),
+  };
+}
+
+function getPrintAreaSvgMetrics(printArea: typeof WIZARD_PRINT_AREA) {
+  const printAreaAspect = printArea.widthMm / printArea.heightMm;
+  const paSvgH = PRINT_AREA_SVG_HEIGHT;
+  const paSvgW = paSvgH * printAreaAspect;
+  const paSvgX = PRINT_AREA_CENTER_X - paSvgW / 2;
+  const paSvgY = PRINT_AREA_CENTER_Y - paSvgH / 2;
+  const mmToSvg = paSvgH / printArea.heightMm;
+  return { paSvgX, paSvgY, mmToSvg };
+}
+
+function roundOne(value: number) {
+  return Math.round(value * 10) / 10;
 }

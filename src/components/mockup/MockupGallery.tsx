@@ -1,6 +1,9 @@
-import { useState, useMemo, useEffect } from "react";
-import { AlertTriangle, Check, Loader2 } from "lucide-react";
-import { isAllowedRemoteMockupUrl } from "@/lib/mockup/real-printify-media";
+"use client";
+
+import { AlertTriangle, Check, Loader2, RotateCcw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
+import { parseMockupSourceUrl } from "@/lib/mockup/source-url";
 import { viewLabel } from "@/lib/placement/views";
 
 interface MockupImage {
@@ -11,10 +14,12 @@ interface MockupImage {
   sourceUrl: string;
   compositeUrl: string | null;
   compositeStatus: string;
+  compositeError?: string | null;
   included: boolean;
   mockupType?: string | null;
   isDefault?: boolean;
   cameraLabel?: string | null;
+  sortOrder?: number;
 }
 
 interface MockupGalleryProps {
@@ -53,19 +58,21 @@ function viewSortKey(pos: string): number {
   return VIEW_ORDER[pos] ?? 99;
 }
 
-export function MockupGallery({ draftId, images: propImages, isPolling, progress, onSelectionChange }: MockupGalleryProps) {
+export function MockupGallery({
+  draftId,
+  images: propImages,
+  isPolling,
+  progress,
+  onSelectionChange,
+}: MockupGalleryProps) {
   // Local images state for optimistic updates
   const [localImages, setLocalImages] = useState<MockupImage[]>(propImages);
-  const [fallbackImageIds, setFallbackImageIds] = useState<Set<string>>(new Set());
   const [brokenImageIds, setBrokenImageIds] = useState<Set<string>>(new Set());
+  const [activeColor, setActiveColor] = useState<string | null>(null);
 
   // Sync from parent when prop changes (e.g. polling brings new images)
   useEffect(() => {
     setLocalImages(propImages);
-    setFallbackImageIds((current) => {
-      const validIds = new Set(propImages.map((image) => image.id));
-      return new Set([...current].filter((id) => validIds.has(id)));
-    });
     setBrokenImageIds((current) => {
       const validIds = new Set(propImages.map((image) => image.id));
       return new Set([...current].filter((id) => validIds.has(id)));
@@ -74,69 +81,130 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
   // Group images by color, then sub-group by viewPosition
   const groupedByColor = useMemo(() => {
     const groups: Record<string, { images: MockupImage[]; hex?: string }> = {};
-    localImages.forEach(img => {
+    localImages.forEach((img) => {
       if (!groups[img.colorName]) {
         groups[img.colorName] = { images: [], hex: img.colorHex ?? undefined };
       }
       groups[img.colorName].images.push(img);
     });
-    // Sort each group's images by view order
+    // Sort each group's images by scope priority → sort order → view
     for (const group of Object.values(groups)) {
-      group.images.sort((a, b) => viewSortKey(a.viewPosition) - viewSortKey(b.viewPosition));
+      group.images.sort((a, b) => {
+        const priorityA = scopeSortPriority(parseMockupSourceUrl(a.sourceUrl));
+        const priorityB = scopeSortPriority(parseMockupSourceUrl(b.sourceUrl));
+        if (priorityA !== priorityB) return priorityA - priorityB;
+        const sortOrderDiff = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+        if (sortOrderDiff !== 0) return sortOrderDiff;
+        return viewSortKey(a.viewPosition) - viewSortKey(b.viewPosition);
+      });
     }
     return groups;
   }, [localImages]);
   const hasBrokenImages = brokenImageIds.size > 0;
+  const colorTabs = useMemo(
+    () =>
+      Object.entries(groupedByColor).map(([color, group]) => ({
+        color,
+        hex: group.hex,
+        count: group.images.length,
+      })),
+    [groupedByColor],
+  );
+  const visibleGroupedByColor = useMemo(() => {
+    if (!activeColor) return groupedByColor;
+    return Object.fromEntries(
+      Object.entries(groupedByColor).filter(([color]) => color === activeColor),
+    );
+  }, [activeColor, groupedByColor]);
+  const sourceSummary = useMemo(() => {
+    let draft = 0;
+    let template = 0;
+    let printify = 0;
+    for (const image of localImages) {
+      const parsed = parseMockupSourceUrl(image.sourceUrl);
+      if (parsed.kind === "custom" && parsed.scope === "draft") draft += 1;
+      else if (parsed.kind === "custom" && parsed.scope === "template") template += 1;
+      else if (parsed.kind === "printify") printify += 1;
+    }
+    return { draft, template, printify };
+  }, [localImages]);
+
+  useEffect(() => {
+    if (activeColor && !groupedByColor[activeColor]) {
+      setActiveColor(null);
+    }
+  }, [activeColor, groupedByColor]);
 
   const toggleImage = async (imgId: string, currentIncluded: boolean) => {
     // Optimistic update
-    setLocalImages(prev => prev.map(img =>
-      img.id === imgId ? { ...img, included: !currentIncluded } : img
-    ));
+    setLocalImages((prev) =>
+      prev.map((img) => (img.id === imgId ? { ...img, included: !currentIncluded } : img)),
+    );
     try {
       await fetch(`/api/wizard/drafts/${draftId}/mockup-images`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageIds: [imgId], included: !currentIncluded })
+        body: JSON.stringify({ imageIds: [imgId], included: !currentIncluded }),
       });
       if (onSelectionChange) onSelectionChange();
     } catch (e) {
       // Revert on error
-      setLocalImages(prev => prev.map(img =>
-        img.id === imgId ? { ...img, included: currentIncluded } : img
-      ));
+      setLocalImages((prev) =>
+        prev.map((img) => (img.id === imgId ? { ...img, included: currentIncluded } : img)),
+      );
       console.error(e);
     }
   };
 
   const setGroupSelection = async (colorName: string, included: boolean) => {
     const groupImages = groupedByColor[colorName]?.images || [];
-    const imageIds = groupImages.map(img => img.id);
+    const imageIds = groupImages.map((img) => img.id);
     const idSet = new Set(imageIds);
     // Optimistic update
-    setLocalImages(prev => prev.map(img =>
-      idSet.has(img.id) ? { ...img, included } : img
-    ));
+    setLocalImages((prev) => prev.map((img) => (idSet.has(img.id) ? { ...img, included } : img)));
     try {
       await fetch(`/api/wizard/drafts/${draftId}/mockup-images`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageIds, included })
+        body: JSON.stringify({ imageIds, included }),
       });
       if (onSelectionChange) onSelectionChange();
     } catch (e) {
       // Revert on error
-      setLocalImages(prev => prev.map(img =>
-        idSet.has(img.id) ? { ...img, included: !included } : img
-      ));
+      setLocalImages((prev) =>
+        prev.map((img) => (idSet.has(img.id) ? { ...img, included: !included } : img)),
+      );
+      console.error(e);
+    }
+  };
+
+  const retryCompositeImage = async (imgId: string) => {
+    setLocalImages((prev) =>
+      prev.map((img) =>
+        img.id === imgId ? { ...img, compositeStatus: "pending", compositeError: null } : img,
+      ),
+    );
+    try {
+      await fetch(`/api/wizard/drafts/${draftId}/mockup-images`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ retryImageId: imgId }),
+      });
+      if (onSelectionChange) onSelectionChange();
+    } catch (e) {
       console.error(e);
     }
   };
 
   if (localImages.length === 0 && !isPolling) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 border border-dashed rounded-lg" style={{ borderColor: 'var(--border-default)' }}>
-        <p style={{ opacity: 0.6 }}>Chưa có mockup nào được tạo. Vui lòng chọn màu và bấm "Tạo Mockup".</p>
+      <div
+        className="flex flex-col items-center justify-center p-12 border border-dashed rounded-lg"
+        style={{ borderColor: "var(--border-default)" }}
+      >
+        <p style={{ opacity: 0.6 }}>
+          Chưa có kết quả mockup. Khi sẵn sàng, nhấn "Tạo Mockups" để render ảnh listing.
+        </p>
       </div>
     );
   }
@@ -159,7 +227,7 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
           }}
         >
           <AlertTriangle size={16} />
-          <span>Mockup cũ không còn tải được ảnh. Hãy tạo lại mockup từ Printify.</span>
+          <span>Mockup cũ không còn tải được ảnh. Hãy tạo lại mockup.</span>
         </div>
       )}
 
@@ -177,13 +245,19 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Loader2 className="animate-spin" size={18} style={{ color: "var(--color-wise-green)" }} />
+            <Loader2
+              className="animate-spin"
+              size={18}
+              style={{ color: "var(--color-wise-green)" }}
+            />
             <div>
               <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>
-                {progress.total === 0 ? "Printify đang render mockups..." : "Đang tạo Mockup..."}
+                {progress.total === 0 ? "Đang render mockups..." : "Đang tạo mockups..."}
               </div>
               {progress.total === 0 && (
-                <div style={{ fontSize: "0.75rem", opacity: 0.6 }}>Ảnh thật có thể mất vài phút để xuất hiện.</div>
+                <div style={{ fontSize: "0.75rem", opacity: 0.6 }}>
+                  Kết quả có thể mất vài phút để xuất hiện.
+                </div>
               )}
             </div>
           </div>
@@ -191,15 +265,71 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
             {progress.total > 0
               ? `${progress.completed} / ${progress.total} hoàn thành`
               : "Đang xử lý"}
-            {progress.failed > 0 && <span style={{ color: "var(--color-danger, #ef4444)" }}> ({progress.failed} lỗi)</span>}
+            {progress.failed > 0 && (
+              <span style={{ color: "var(--color-danger, #ef4444)" }}>
+                {" "}
+                ({progress.failed} lỗi)
+              </span>
+            )}
           </div>
         </div>
       )}
 
-      {/* Color groups */}
-      {Object.entries(groupedByColor).map(([color, { images: groupImages, hex }]) => {
-        const allSelected = groupImages.every(img => img.included);
+      {colorTabs.length > 1 && (
+        <div
+          className="flex items-center justify-between gap-3"
+          style={{
+            padding: "8px 0 2px",
+            flexWrap: "wrap",
+          }}
+        >
+          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+            <span style={{ fontSize: "0.78rem", fontWeight: 900 }}>Màu:</span>
+            <button
+              type="button"
+              onClick={() => setActiveColor(null)}
+              style={{
+                ...colorTabStyle,
+                background: !activeColor ? "white" : "var(--bg-inset, #f6f6f4)",
+                borderColor: !activeColor ? "var(--border-default)" : "transparent",
+              }}
+            >
+              Tất cả
+              <span style={countBadgeStyle}>{localImages.length}</span>
+            </button>
+            {colorTabs.map((tab) => (
+              <button
+                key={tab.color}
+                type="button"
+                onClick={() => setActiveColor(tab.color)}
+                style={{
+                  ...colorTabStyle,
+                  background: activeColor === tab.color ? "white" : "var(--bg-inset, #f6f6f4)",
+                  borderColor: activeColor === tab.color ? "var(--border-default)" : "transparent",
+                }}
+              >
+                <span
+                  style={{
+                    width: 14,
+                    height: 14,
+                    borderRadius: 999,
+                    background: tab.hex ?? "#d1d5db",
+                    border: "1px solid rgba(0,0,0,0.14)",
+                  }}
+                />
+                {tab.color}
+                <span style={countBadgeStyle}>{tab.count}</span>
+              </button>
+            ))}
+          </div>
+          <span style={{ fontSize: "0.74rem", fontWeight: 850, color: "var(--text-muted)" }}>
+            {sourceSummary.draft} Mockup riêng · {sourceSummary.template} Tái sử dụng · {sourceSummary.printify} Printify
+          </span>
+        </div>
+      )}
 
+      {/* Color groups */}
+      {Object.entries(visibleGroupedByColor).map(([color, { images: groupImages, hex }]) => {
         return (
           <div key={color} style={{ display: "grid", gap: 8 }}>
             {/* Color header */}
@@ -227,15 +357,14 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
                   />
                 )}
                 <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>{color}</span>
-                <span style={{ fontSize: "0.75rem", opacity: 0.5 }}>
-                  {groupImages.length} ảnh
-                </span>
+                <span style={{ fontSize: "0.75rem", opacity: 0.5 }}>{groupImages.length} ảnh</span>
               </div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button
                   className="btn btn-secondary"
                   style={{ padding: "3px 8px", fontSize: "0.7rem" }}
                   onClick={() => setGroupSelection(color, true)}
+                  type="button"
                 >
                   Chọn hết
                 </button>
@@ -243,6 +372,7 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
                   className="btn btn-secondary"
                   style={{ padding: "3px 8px", fontSize: "0.7rem" }}
                   onClick={() => setGroupSelection(color, false)}
+                  type="button"
                 >
                   Bỏ chọn
                 </button>
@@ -257,20 +387,10 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
                 gap: 6,
               }}
             >
-              {groupImages.map(img => {
-                const primaryImageUrl = normalizeImageUrl(img.compositeUrl);
-                const fallbackImageUrl = normalizeImageUrl(img.sourceUrl);
-                const usingFallbackImage = fallbackImageIds.has(img.id);
-                const imageUrl = usingFallbackImage
-                  ? fallbackImageUrl
-                  : primaryImageUrl ?? fallbackImageUrl;
-                const canUseFallbackImage =
-                  !usingFallbackImage &&
-                  !!fallbackImageUrl &&
-                  fallbackImageUrl !== primaryImageUrl;
-                const isPrintifyImage =
-                  isAllowedRemoteMockupUrl(img.sourceUrl) ||
-                  isAllowedRemoteMockupUrl(img.compositeUrl);
+              {groupImages.map((img) => {
+                const imageUrl = normalizeImageUrl(img.compositeUrl);
+                const sourceType = parseMockupSourceUrl(img.sourceUrl);
+                const sourceBadge = getSourceBadge(sourceType);
                 const label = img.cameraLabel || viewLabel(img.mockupType ?? img.viewPosition);
                 const imageBroken = brokenImageIds.has(img.id);
 
@@ -278,6 +398,14 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
                   <div
                     key={img.id}
                     onClick={() => toggleImage(img.id, img.included)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        void toggleImage(img.id, img.included);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
                     style={{
                       position: "relative",
                       aspectRatio: "1 / 1",
@@ -289,6 +417,8 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
                         : "1px solid var(--border-default)",
                       backgroundColor: "var(--bg-tertiary)",
                       transition: "transform 0.15s, box-shadow 0.15s, border-color 0.15s",
+                      padding: 0,
+                      textAlign: "left",
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.transform = "scale(1.02)";
@@ -301,23 +431,69 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
                   >
                     {/* Image content */}
                     {img.compositeStatus === "processing" || img.compositeStatus === "pending" ? (
-                      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", opacity: 0.5 }}>
+                      <div
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          opacity: 0.5,
+                        }}
+                      >
                         <Loader2 className="animate-spin" size={20} style={{ marginBottom: 4 }} />
                         <span style={{ fontSize: "0.68rem" }}>Đang xử lý...</span>
                       </div>
                     ) : img.compositeStatus === "failed" ? (
-                      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-danger, #ef4444)", backgroundColor: "rgba(239,68,68,0.04)" }}>
-                        <span style={{ fontSize: "0.68rem" }}>Lỗi</span>
+                      <div
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          display: "grid",
+                          alignContent: "center",
+                          gap: 7,
+                          padding: 10,
+                          textAlign: "center",
+                          color: "var(--color-danger, #ef4444)",
+                          backgroundColor: "rgba(239,68,68,0.08)",
+                        }}
+                      >
+                        <AlertTriangle size={20} style={{ margin: "0 auto" }} />
+                        <strong style={{ fontSize: "0.68rem", lineHeight: 1.25 }}>
+                          Tạo ảnh ghép thất bại · vùng vượt ngoài ảnh · kiểm tra pixel
+                        </strong>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ padding: "3px 6px", fontSize: "0.62rem" }}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void retryCompositeImage(img.id);
+                            }}
+                          >
+                            <RotateCcw size={11} />
+                            Thử lại
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ padding: "3px 6px", fontSize: "0.62rem" }}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              alert(img.compositeError || "Không có log chi tiết.");
+                            }}
+                          >
+                            Xem log
+                          </button>
+                        </div>
                       </div>
                     ) : imageUrl && !imageBroken ? (
                       <img
                         src={imageUrl}
                         alt=""
                         onError={() => {
-                          if (canUseFallbackImage) {
-                            setFallbackImageIds((current) => new Set(current).add(img.id));
-                            return;
-                          }
                           setBrokenImageIds((current) => new Set(current).add(img.id));
                         }}
                         style={{ width: "100%", height: "100%", objectFit: "cover" }}
@@ -340,14 +516,29 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
                       >
                         <AlertTriangle size={20} />
                         <span style={{ fontSize: "0.68rem", fontWeight: 800, lineHeight: 1.25 }}>
-                          Ảnh Printify không còn truy cập được
+                          Ảnh listing không còn truy cập được
                         </span>
-                        <span style={{ fontSize: "0.62rem", fontWeight: 800, color: "var(--text-muted)" }}>
+                        <span
+                          style={{
+                            fontSize: "0.62rem",
+                            fontWeight: 800,
+                            color: "var(--text-muted)",
+                          }}
+                        >
                           Cần tạo lại
                         </span>
                       </div>
                     ) : (
-                      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.45 }}>
+                      <div
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          opacity: 0.45,
+                        }}
+                      >
                         <span style={{ fontSize: "0.68rem" }}>Không có ảnh</span>
                       </div>
                     )}
@@ -364,7 +555,9 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        backgroundColor: img.included ? "var(--color-wise-green)" : "rgba(255,255,255,0.85)",
+                        backgroundColor: img.included
+                          ? "var(--color-wise-green)"
+                          : "rgba(255,255,255,0.85)",
                         border: img.included ? "none" : "1px solid rgba(0,0,0,0.15)",
                         boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
                         transition: "all 0.15s",
@@ -374,21 +567,23 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
                     </div>
 
                     {/* Source/default badges — top left */}
-                    {(isPrintifyImage || img.isDefault) && (
-                      <div style={{ position: "absolute", top: 5, left: 5, display: "grid", gap: 3 }}>
-                        {isPrintifyImage && (
+                    {(sourceBadge || img.isDefault) && (
+                      <div
+                        style={{ position: "absolute", top: 5, left: 5, display: "grid", gap: 3 }}
+                      >
+                        {sourceBadge && (
                           <div
                             style={{
                               borderRadius: 999,
                               padding: "1px 6px",
                               fontSize: "0.6rem",
                               fontWeight: 700,
-                              backgroundColor: "rgba(255,255,255,0.92)",
-                              color: "var(--text-primary)",
+                              backgroundColor: sourceBadge.bg,
+                              color: sourceBadge.color,
                               boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
                             }}
                           >
-                            Printify
+                            {sourceBadge.label}
                           </div>
                         )}
                         {img.isDefault && (
@@ -443,3 +638,56 @@ export function MockupGallery({ draftId, images: propImages, isPolling, progress
     </div>
   );
 }
+
+export function getSourceBadge(parsed: ReturnType<typeof parseMockupSourceUrl>): {
+  label: string;
+  bg: string;
+  color: string;
+} | null {
+  if (parsed.kind === "custom") {
+    if (parsed.scope === "draft") {
+      return { label: "Mockup riêng", bg: "#ede9fe", color: "#6d28d9" };
+    }
+    if (parsed.scope === "template") {
+      return { label: "Từ thư viện", bg: "#dbeafe", color: "#1d4ed8" };
+    }
+  }
+  if (parsed.kind === "printify") {
+    return { label: "Printify", bg: "rgba(255,255,255,0.92)", color: "var(--text-primary)" };
+  }
+  return null;
+}
+
+export function scopeSortPriority(parsed: ReturnType<typeof parseMockupSourceUrl>): number {
+  if (parsed.kind === "custom" && parsed.scope === "draft") return 0;
+  if (parsed.kind === "custom" && parsed.scope === "template") return 1;
+  if (parsed.kind === "printify") return 2;
+  return 3; // synthetic
+}
+
+const colorTabStyle: CSSProperties = {
+  minHeight: 34,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "6px 10px",
+  borderRadius: 999,
+  border: "1px solid",
+  color: "var(--text-primary)",
+  fontSize: "0.76rem",
+  fontWeight: 850,
+  cursor: "pointer",
+};
+
+const countBadgeStyle: CSSProperties = {
+  minWidth: 20,
+  height: 20,
+  borderRadius: 999,
+  display: "inline-grid",
+  placeItems: "center",
+  padding: "0 6px",
+  background: "rgba(159,232,112,0.22)",
+  color: "var(--color-wise-dark-green)",
+  fontSize: "0.66rem",
+  fontWeight: 950,
+};
