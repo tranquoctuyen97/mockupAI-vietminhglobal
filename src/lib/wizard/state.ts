@@ -5,9 +5,15 @@
 import { prisma } from "@/lib/db";
 import { Prisma, type DraftStatus } from "@prisma/client";
 import { deleteDraftWithPrintifyCleanup } from "./cleanup";
+import {
+  getDraftDesignIds,
+  normalizeDesignIds,
+  sameDesignSelection,
+} from "./design-selection";
 
 export interface DraftPatch {
   designId?: string | null;
+  designIds?: string[];
   storeId?: string | null;
   templateId?: string | null;
   enabledColorIds?: string[];
@@ -21,6 +27,7 @@ export interface DraftPatch {
 
 const draftPatchKeys = [
   "designId",
+  "designIds",
   "storeId",
   "templateId",
   "enabledColorIds",
@@ -67,6 +74,20 @@ export async function getDraft(id: string, tenantId: string) {
         },
       },
       template: true,
+      draftDesigns: {
+        orderBy: { sortOrder: "asc" },
+        include: {
+          design: true,
+          jobs: {
+            orderBy: { createdAt: "asc" },
+            include: {
+              images: {
+                orderBy: { sortOrder: "asc" },
+              },
+            },
+          },
+        },
+      },
       mockupJobs: {
         orderBy: { createdAt: "asc" },
         include: {
@@ -83,10 +104,22 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
   // Verify ownership
   const draft = await prisma.wizardDraft.findFirst({
     where: { id, tenantId },
+    include: {
+      draftDesigns: {
+        orderBy: { sortOrder: "asc" },
+        select: { designId: true, sortOrder: true },
+      },
+    },
   });
   if (!draft) throw new Error("Draft not found");
 
   const sanitized = sanitizeDraftPatch(patch);
+  const { designIds: sanitizedDesignIds, ...draftDataPatch } = sanitized;
+  const nextDesignIds =
+    sanitizedDesignIds !== undefined ? normalizeDesignIds(sanitizedDesignIds) : undefined;
+  const currentDesignIds = getDraftDesignIds(draft);
+  const designsChanged =
+    nextDesignIds !== undefined && !sameDesignSelection(currentDesignIds, nextDesignIds);
   const templateChanged =
     sanitized.templateId !== undefined && sanitized.templateId !== draft.templateId;
   const enabledSizesChanged =
@@ -97,6 +130,11 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
         mockupsStale: true,
         mockupsStaleReason: "template_changed",
       }
+    : designsChanged
+      ? {
+          mockupsStale: true,
+          mockupsStaleReason: "design_changed",
+        }
     : enabledSizesChanged
       ? {
           mockupsStale: true,
@@ -120,22 +158,78 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
     }
   }
 
-  return prisma.wizardDraft.update({
-    where: { id },
-    data: {
-      ...sanitized,
-      ...staleDraftPatch,
-      placementOverride: sanitized.placementOverride !== undefined
-        ? sanitized.placementOverride === null
-          ? Prisma.JsonNull
-          : (sanitized.placementOverride as Prisma.InputJsonValue)
-        : undefined,
-      aiContent: sanitized.aiContent !== undefined
-        ? sanitized.aiContent === null
-          ? Prisma.JsonNull
-          : (sanitized.aiContent as Prisma.InputJsonValue)
-        : undefined,
-    },
+  if (nextDesignIds !== undefined && nextDesignIds.length > 0) {
+    const selectedDesigns = await prisma.design.findMany({
+      where: {
+        id: { in: nextDesignIds },
+        tenantId,
+        status: "ACTIVE",
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+
+    if (selectedDesigns.length !== nextDesignIds.length) {
+      throw new Error("Selected designs not found");
+    }
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const legacyDesignId =
+      nextDesignIds !== undefined ? nextDesignIds[0] ?? null : draftDataPatch.designId;
+
+    const updatedDraft = await tx.wizardDraft.update({
+      where: { id },
+      data: {
+        ...draftDataPatch,
+        ...staleDraftPatch,
+        designId: legacyDesignId,
+        placementOverride: sanitized.placementOverride !== undefined
+          ? sanitized.placementOverride === null
+            ? Prisma.JsonNull
+            : (sanitized.placementOverride as Prisma.InputJsonValue)
+          : undefined,
+        aiContent: sanitized.aiContent !== undefined
+          ? sanitized.aiContent === null
+            ? Prisma.JsonNull
+            : (sanitized.aiContent as Prisma.InputJsonValue)
+          : undefined,
+      },
+    });
+
+    if (nextDesignIds !== undefined) {
+      if (nextDesignIds.length > 0) {
+        await tx.wizardDraftDesign.deleteMany({
+          where: {
+            draftId: id,
+            designId: { notIn: nextDesignIds },
+          },
+        });
+      } else {
+        await tx.wizardDraftDesign.deleteMany({
+          where: { draftId: id },
+        });
+      }
+
+      for (const [sortOrder, designId] of nextDesignIds.entries()) {
+        await tx.wizardDraftDesign.upsert({
+          where: {
+            draftId_designId: {
+              draftId: id,
+              designId,
+            },
+          },
+          update: { sortOrder },
+          create: {
+            draftId: id,
+            designId,
+            sortOrder,
+          },
+        });
+      }
+    }
+
+    return updatedDraft;
   });
 }
 

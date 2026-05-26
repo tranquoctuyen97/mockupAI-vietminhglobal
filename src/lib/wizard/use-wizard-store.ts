@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import { getDraftDesignIds } from "./design-selection";
 
 interface SelectedColor {
   id: string | number;
@@ -10,6 +11,8 @@ interface SelectedColor {
 
 interface MockupJob {
   id: string;
+  draftDesignId?: string | null;
+  designId?: string | null;
   status: string;
   errorMessage: string | null;
   totalImages?: number;
@@ -30,6 +33,19 @@ interface MockupImage {
   mockupType?: string | null;
   isDefault?: boolean;
   cameraLabel?: string | null;
+}
+
+interface DraftDesign {
+  id: string;
+  designId: string;
+  sortOrder: number;
+  design?: {
+    id: string;
+    name: string;
+    previewPath?: string | null;
+    [key: string]: unknown;
+  } | null;
+  jobs?: MockupJob[];
 }
 
 interface StoreColor {
@@ -73,9 +89,18 @@ interface DraftData {
   aiContent: unknown | null;
   currentStep: number;
   status: string;
+  draftDesigns?: DraftDesign[];
   mockupJobs: MockupJob[];
   mockupsStale?: boolean;
   mockupsStaleReason?: string | null;
+}
+
+export function getDraftDesignIdsFromDraft(
+  draft: Pick<DraftData, "designId" | "draftDesigns"> | null | undefined,
+): string[] {
+  if (!draft) return [];
+
+  return getDraftDesignIds(draft);
 }
 
 // Phase 6.10 Bug #7: Checklist type shared with layout for Tiếp theo gate

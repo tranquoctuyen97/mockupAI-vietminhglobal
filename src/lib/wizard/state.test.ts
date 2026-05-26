@@ -69,6 +69,28 @@ test("wizard draft state accepts templateId patches", () => {
   });
 });
 
+test("wizard draft state accepts designIds patches", () => {
+  const sanitized = sanitizeDraftPatch({
+    designIds: ["design_1", "design_2"],
+    unknownDesignField: "drop",
+  });
+
+  assert.deepEqual(sanitized, {
+    designIds: ["design_1", "design_2"],
+  });
+});
+
+test("getDraft includes ordered draftDesigns with design and job images", () => {
+  const source = readFileSync(
+    join(process.cwd(), "src/lib/wizard/state.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /draftDesigns:\s*{\s*orderBy:\s*{\s*sortOrder:\s*"asc"/);
+  assert.match(source, /draftDesigns:\s*{[\s\S]*include:\s*{[\s\S]*design:\s*true/);
+  assert.match(source, /draftDesigns:\s*{[\s\S]*jobs:\s*{[\s\S]*include:\s*{[\s\S]*images:\s*{[\s\S]*orderBy:\s*{\s*sortOrder:\s*"asc"/);
+});
+
 test("updateDraft marks mockups stale when template changes", () => {
   const source = readFileSync(
     join(process.cwd(), "src/lib/wizard/state.ts"),
