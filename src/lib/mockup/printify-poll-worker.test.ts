@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 import type { ParsedPrintifyMockupImage } from "../printify/product";
 import { buildMockupImageRows } from "./printify-poll-worker";
@@ -106,4 +108,16 @@ test("buildMockupImageRows stores cached local composite url when available", as
 
   assert.equal(rows[0].sourceUrl, "https://img/front.png");
   assert.equal(rows[0].compositeUrl, "mockups/printify_front-default_101_front.png");
+});
+
+test("printify poll worker resolves design from mockup job draftDesign first", () => {
+  const source = readFileSync(
+    join(process.cwd(), "src/lib/mockup/printify-poll-worker.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /draftDesign:\s*{\s*include:\s*{\s*design:/);
+  assert.match(source, /jobRecord\.draftDesign\?\.design\?\.storagePath/);
+  assert.match(source, /jobRecord\.design\?\.storagePath/);
+  assert.match(source, /jobRecord\.draft\.design\?\.storagePath/);
 });

@@ -267,6 +267,8 @@ export async function createMockupJobForDraftDesign(
   await getPrintifyMockupQueue().add("poll-printify-mockups", {
     mockupJobId: mockupJob.id,
     draftId: draft.id,
+    draftDesignId: draftDesign.id,
+    designId: draftDesign.designId,
     storeId: draft.storeId!,
     productId: product.productId,
   });

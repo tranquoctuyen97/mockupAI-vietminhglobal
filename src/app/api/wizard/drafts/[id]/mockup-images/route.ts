@@ -26,6 +26,12 @@ export async function PATCH(
       include: {
         mockupJob: {
           include: {
+            design: { select: { storagePath: true } },
+            draftDesign: {
+              include: {
+                design: { select: { storagePath: true } },
+              },
+            },
             draft: {
               include: {
                 design: { select: { storagePath: true } },
@@ -36,7 +42,13 @@ export async function PATCH(
       },
     });
     if (!image) return NextResponse.json({ error: "Image not found" }, { status: 404 });
-    if (!image.mockupJob.draft.design?.storagePath) {
+    const designStoragePath =
+      image.mockupJob.draftDesign?.design?.storagePath ??
+      image.mockupJob.design?.storagePath ??
+      image.mockupJob.draft.design?.storagePath ??
+      null;
+
+    if (!designStoragePath) {
       return NextResponse.json({ error: "Draft design not found" }, { status: 400 });
     }
 
@@ -65,7 +77,7 @@ export async function PATCH(
     await getMockupCompositeQueue().add("retry-composite-image", {
       mockupImageId: image.id,
       sourceUrl: image.sourceUrl,
-      designStoragePath: image.mockupJob.draft.design.storagePath,
+      designStoragePath,
       placementData: image.mockupJob.placementSnapshot,
     });
 

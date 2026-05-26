@@ -159,21 +159,36 @@ export async function processPrintifyMockupPollJob(
       },
       select: { id: true, sourceUrl: true },
     });
-    const design = await prisma.design.findFirst({
-      where: {
-        wizardDrafts: {
-          some: { id: draftId },
+    const jobRecord = await prisma.mockupJob.findUnique({
+      where: { id: mockupJobId },
+      include: {
+        design: { select: { storagePath: true } },
+        draftDesign: {
+          include: {
+            design: { select: { storagePath: true } },
+          },
+        },
+        draft: {
+          include: {
+            design: { select: { storagePath: true } },
+          },
         },
       },
-      select: { storagePath: true },
     });
-    if (design && pendingCustomImages.length > 0) {
+    const designStoragePath = jobRecord
+      ? jobRecord.draftDesign?.design?.storagePath ??
+        jobRecord.design?.storagePath ??
+        jobRecord.draft.design?.storagePath ??
+        null
+      : null;
+
+    if (designStoragePath && pendingCustomImages.length > 0) {
       const queue = getMockupCompositeQueue();
       for (const image of pendingCustomImages) {
         await queue.add("composite-custom-mockup", {
           mockupImageId: image.id,
           sourceUrl: image.sourceUrl,
-          designStoragePath: design.storagePath,
+          designStoragePath,
           placementData: {},
         });
       }

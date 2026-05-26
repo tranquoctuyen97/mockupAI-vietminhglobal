@@ -12,6 +12,8 @@ const connection = {
 export interface PrintifyMockupPollPayload {
   mockupJobId: string;
   draftId: string;
+  draftDesignId?: string | null;
+  designId?: string | null;
   storeId: string;
   productId: string;
 }
