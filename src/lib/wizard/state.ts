@@ -39,6 +39,21 @@ const draftPatchKeys = [
   "status",
 ] as const;
 
+const draftDesignsWithRelationsInclude = {
+  orderBy: { sortOrder: "asc" },
+  include: {
+    design: true,
+    jobs: {
+      orderBy: { createdAt: "asc" },
+      include: {
+        images: {
+          orderBy: { sortOrder: "asc" },
+        },
+      },
+    },
+  },
+} satisfies Prisma.WizardDraft$draftDesignsArgs;
+
 export function sanitizeDraftPatch(patch: DraftPatch | Record<string, unknown>): DraftPatch {
   const sanitized: Record<string, unknown> = {};
   const source = patch as Record<string, unknown>;
@@ -74,20 +89,7 @@ export async function getDraft(id: string, tenantId: string) {
         },
       },
       template: true,
-      draftDesigns: {
-        orderBy: { sortOrder: "asc" },
-        include: {
-          design: true,
-          jobs: {
-            orderBy: { createdAt: "asc" },
-            include: {
-              images: {
-                orderBy: { sortOrder: "asc" },
-              },
-            },
-          },
-        },
-      },
+      draftDesigns: draftDesignsWithRelationsInclude,
       mockupJobs: {
         orderBy: { createdAt: "asc" },
         include: {
@@ -114,9 +116,17 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
   if (!draft) throw new Error("Draft not found");
 
   const sanitized = sanitizeDraftPatch(patch);
-  const { designIds: sanitizedDesignIds, ...draftDataPatch } = sanitized;
+  const {
+    designId: sanitizedDesignId,
+    designIds: sanitizedDesignIds,
+    ...draftDataPatch
+  } = sanitized;
   const nextDesignIds =
-    sanitizedDesignIds !== undefined ? normalizeDesignIds(sanitizedDesignIds) : undefined;
+    sanitizedDesignIds !== undefined
+      ? normalizeDesignIds(sanitizedDesignIds)
+      : sanitizedDesignId !== undefined
+        ? normalizeDesignIds(sanitizedDesignId === null ? [] : [sanitizedDesignId])
+        : undefined;
   const currentDesignIds = getDraftDesignIds(draft);
   const designsChanged =
     nextDesignIds !== undefined && !sameDesignSelection(currentDesignIds, nextDesignIds);
@@ -176,9 +186,9 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
 
   return prisma.$transaction(async (tx) => {
     const legacyDesignId =
-      nextDesignIds !== undefined ? nextDesignIds[0] ?? null : draftDataPatch.designId;
+      nextDesignIds !== undefined ? nextDesignIds[0] ?? null : undefined;
 
-    const updatedDraft = await tx.wizardDraft.update({
+    await tx.wizardDraft.update({
       where: { id },
       data: {
         ...draftDataPatch,
@@ -229,7 +239,12 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
       }
     }
 
-    return updatedDraft;
+    return tx.wizardDraft.findUniqueOrThrow({
+      where: { id },
+      include: {
+        draftDesigns: draftDesignsWithRelationsInclude,
+      },
+    });
   });
 }
 

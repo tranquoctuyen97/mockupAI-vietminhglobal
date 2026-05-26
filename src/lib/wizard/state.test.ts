@@ -80,15 +80,32 @@ test("wizard draft state accepts designIds patches", () => {
   });
 });
 
-test("getDraft includes ordered draftDesigns with design and job images", () => {
+test("getDraft and updateDraft include ordered draftDesigns with design and job images", () => {
   const source = readFileSync(
     join(process.cwd(), "src/lib/wizard/state.ts"),
     "utf8",
   );
 
-  assert.match(source, /draftDesigns:\s*{\s*orderBy:\s*{\s*sortOrder:\s*"asc"/);
-  assert.match(source, /draftDesigns:\s*{[\s\S]*include:\s*{[\s\S]*design:\s*true/);
-  assert.match(source, /draftDesigns:\s*{[\s\S]*jobs:\s*{[\s\S]*include:\s*{[\s\S]*images:\s*{[\s\S]*orderBy:\s*{\s*sortOrder:\s*"asc"/);
+  assert.match(source, /const draftDesignsWithRelationsInclude = {\s*orderBy:\s*{\s*sortOrder:\s*"asc"/);
+  assert.match(source, /draftDesignsWithRelationsInclude[\s\S]*include:\s*{[\s\S]*design:\s*true/);
+  assert.match(source, /draftDesignsWithRelationsInclude[\s\S]*jobs:\s*{[\s\S]*include:\s*{[\s\S]*images:\s*{[\s\S]*orderBy:\s*{\s*sortOrder:\s*"asc"/);
+  assert.equal(
+    source.match(/draftDesigns:\s*draftDesignsWithRelationsInclude/g)?.length,
+    2,
+  );
+  assert.match(source, /findUniqueOrThrow\(\{[\s\S]*include:\s*{\s*draftDesigns:\s*draftDesignsWithRelationsInclude/);
+});
+
+test("updateDraft normalizes legacy designId patches before validation and child sync", () => {
+  const source = readFileSync(
+    join(process.cwd(), "src/lib/wizard/state.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /designId:\s*sanitizedDesignId/);
+  assert.match(source, /sanitizedDesignId\s*!==\s*undefined[\s\S]*normalizeDesignIds\(sanitizedDesignId\s*===\s*null\s*\?\s*\[\]\s*:\s*\[sanitizedDesignId\]\)/);
+  assert.match(source, /id:\s*{\s*in:\s*nextDesignIds\s*}[\s\S]*tenantId[\s\S]*status:\s*"ACTIVE"[\s\S]*deletedAt:\s*null/);
+  assert.match(source, /if \(nextDesignIds !== undefined\)[\s\S]*wizardDraftDesign\.deleteMany[\s\S]*wizardDraftDesign\.upsert/);
 });
 
 test("updateDraft marks mockups stale when template changes", () => {
