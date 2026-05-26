@@ -71,6 +71,15 @@ CREATE INDEX "mockup_jobs_design_id_idx" ON "mockup_jobs"("design_id");
 CREATE INDEX "listings_wizard_draft_id_idx" ON "listings"("wizard_draft_id");
 CREATE INDEX "listings_design_id_idx" ON "listings"("design_id");
 
+UPDATE "listings" l
+SET "wizard_draft_id" = NULL
+WHERE l."wizard_draft_id" IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM "wizard_drafts" wd
+    WHERE wd."id" = l."wizard_draft_id"
+  );
+
 ALTER TABLE "wizard_draft_designs"
   ADD CONSTRAINT "wizard_draft_designs_wizard_draft_id_fkey"
   FOREIGN KEY ("wizard_draft_id") REFERENCES "wizard_drafts"("id")
@@ -94,8 +103,7 @@ ALTER TABLE "mockup_jobs"
 ALTER TABLE "listings"
   ADD CONSTRAINT "listings_wizard_draft_id_fkey"
   FOREIGN KEY ("wizard_draft_id") REFERENCES "wizard_drafts"("id")
-  ON DELETE SET NULL ON UPDATE CASCADE
-  NOT VALID;
+  ON DELETE SET NULL ON UPDATE CASCADE;
 
 ALTER TABLE "listings"
   ADD CONSTRAINT "listings_wizard_draft_design_id_fkey"

@@ -62,7 +62,7 @@ export async function POST(
 
   // Check idempotency — prevent duplicate publish
   const idempotencyKey = generateIdempotencyKey(draftId, session.tenantId);
-  const existingListing = await prisma.listing.findUnique({
+  const existingListing = await prisma.listing.findFirst({
     where: { wizardDraftId: draftId },
   });
 

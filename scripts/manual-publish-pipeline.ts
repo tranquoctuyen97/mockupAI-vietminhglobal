@@ -69,7 +69,7 @@ async function main() {
 
   // Step 7: Check idempotency — no stale listing
   console.log("Step 7: Check idempotency...");
-  const existing = await prisma.listing.findUnique({ where: { wizardDraftId: DRAFT_ID } });
+  const existing = await prisma.listing.findFirst({ where: { wizardDraftId: DRAFT_ID } });
   console.log(`  ${existing ? "⚠️  Existing listing: " + existing.id + " (status: " + existing.status + ")" : "✅ No existing listing — fresh publish OK"}`);
 
   // Step 8: Check variant IDs

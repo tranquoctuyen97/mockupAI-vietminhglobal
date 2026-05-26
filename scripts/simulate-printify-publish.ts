@@ -153,7 +153,7 @@ async function main() {
   const allVariantIds = variantsPayload.map(v => v.id);
 
   // Get listing for title/description
-  const listing = await prisma.listing.findUnique({
+  const listing = await prisma.listing.findFirst({
     where: { wizardDraftId: draft.id },
   });
 

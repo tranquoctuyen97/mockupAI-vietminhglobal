@@ -105,6 +105,11 @@ test("multi-design wizard migration backfills child design rows and removes sing
   assert.match(migration, /INSERT INTO\s+"wizard_draft_designs"/);
   assert.match(migration, /FROM\s+"wizard_drafts"/);
   assert.match(migration, /ALTER TABLE\s+"mockup_jobs"\s+ADD COLUMN\s+"wizard_draft_design_id"/);
+  assert.match(migration, /ALTER TABLE\s+"mockup_jobs"\s+ADD COLUMN\s+"design_id"/);
+  assert.match(migration, /UPDATE\s+"mockup_jobs"[\s\S]*"design_id"\s*=\s*wdd\."design_id"/);
   assert.match(migration, /ALTER TABLE\s+"listings"\s+ADD COLUMN\s+"wizard_draft_design_id"/);
   assert.match(migration, /DROP CONSTRAINT IF EXISTS\s+"listings_wizard_draft_id_key"/);
+  assert.match(migration, /CREATE UNIQUE INDEX\s+"listings_wizard_draft_design_id_key"/);
+  assert.match(migration, /UPDATE\s+"listings"[\s\S]*SET\s+"wizard_draft_id"\s*=\s*NULL/);
+  assert.doesNotMatch(migration, /NOT VALID\b/);
 });

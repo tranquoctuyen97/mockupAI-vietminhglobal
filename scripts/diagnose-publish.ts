@@ -80,7 +80,7 @@ async function main() {
   });
 
   for (const d of publishedDrafts) {
-    const linkedListing = await prisma.listing.findUnique({
+    const linkedListing = await prisma.listing.findFirst({
       where: { wizardDraftId: d.id },
       select: { id: true, status: true, shopifyProductId: true, printifyProductId: true },
     });
