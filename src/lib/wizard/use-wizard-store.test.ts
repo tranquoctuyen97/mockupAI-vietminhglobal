@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { filterChangedDraftPatch } from "./use-wizard-store";
+import {
+  filterChangedDraftPatch,
+  getDraftDesignIdsFromDraft,
+} from "./use-wizard-store";
 
 test("filterChangedDraftPatch drops structurally unchanged values", () => {
   const draft = {
@@ -34,5 +37,40 @@ test("filterChangedDraftPatch keeps changed values", () => {
       enabledColorIds: ["color_1", "color_2"],
       currentStep: 4,
     },
+  );
+});
+
+test("getDraftDesignIdsFromDraft prefers ordered child rows", () => {
+  assert.deepEqual(
+    getDraftDesignIdsFromDraft({
+      designId: "legacy",
+      draftDesigns: [
+        {
+          id: "wdd_2",
+          designId: "design_2",
+          sortOrder: 1,
+          design: {
+            id: "design_2",
+            name: "Two",
+            storagePath: "two.png",
+            width: 100,
+            height: 100,
+          },
+        },
+        {
+          id: "wdd_1",
+          designId: "design_1",
+          sortOrder: 0,
+          design: {
+            id: "design_1",
+            name: "One",
+            storagePath: "one.png",
+            width: 100,
+            height: 100,
+          },
+        },
+      ],
+    }),
+    ["design_1", "design_2"],
   );
 });

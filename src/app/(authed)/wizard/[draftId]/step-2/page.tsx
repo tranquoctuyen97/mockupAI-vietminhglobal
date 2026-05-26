@@ -1,8 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useWizardStore } from "@/lib/wizard/use-wizard-store";
-import { Image as ImageIcon, Check, Loader2, Search } from "lucide-react";
+import {
+  getDraftDesignIdsFromDraft,
+  useWizardStore,
+} from "@/lib/wizard/use-wizard-store";
+import { Image as ImageIcon, Check, Loader2, Search, X } from "lucide-react";
 
 interface Design {
   id: string;
@@ -12,11 +15,16 @@ interface Design {
   height: number;
 }
 
-export default function Step3DesignPage() {
+export default function Step2DesignPage() {
   const { draft, updateDraft } = useWizardStore();
   const [designs, setDesigns] = useState<Design[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const selectedDesignIds = getDraftDesignIdsFromDraft(draft);
+  const selectedDesignIdSet = new Set(selectedDesignIds);
+  const selectedDesigns = selectedDesignIds
+    .map((id) => designs.find((design) => design.id === id))
+    .filter((design): design is Design => Boolean(design));
 
   const fetchDesigns = useCallback(async () => {
     setLoading(true);
@@ -37,27 +45,125 @@ export default function Step3DesignPage() {
     fetchDesigns();
   }, [fetchDesigns]);
 
-  function handleSelect(designId: string) {
-    updateDraft({ designId });
+  function handleToggleDesign(designId: string) {
+    const selected = getDraftDesignIdsFromDraft(useWizardStore.getState().draft);
+    const isSelected = selected.includes(designId);
+    const next = isSelected
+      ? selected.filter((id) => id !== designId)
+      : selected.length >= 5
+        ? selected
+        : [...selected, designId];
+
+    updateDraft({
+      designId: next[0] ?? null,
+      designIds: next,
+    });
+  }
+
+  function handleRemoveDesign(designId: string) {
+    const next = getDraftDesignIdsFromDraft(useWizardStore.getState().draft).filter(
+      (id) => id !== designId,
+    );
+    updateDraft({
+      designId: next[0] ?? null,
+      designIds: next,
+    });
   }
 
   return (
     <div>
       <h2 style={{ fontWeight: 700, fontSize: "1.1rem", margin: "0 0 4px" }}>
-        Chọn Design
+        Chọn Design ({selectedDesignIds.length}/5 đã chọn)
       </h2>
       <p style={{ opacity: 0.5, fontSize: "0.85rem", margin: "0 0 20px" }}>
-        Chọn 1 design từ thư viện để sử dụng
+        Chọn 1-5 designs để tạo listing
       </p>
 
-      {/* Search */}
+      {selectedDesigns.length > 0 && (
+        <div
+          className="card"
+          style={{
+            padding: 10,
+            marginBottom: 16,
+            display: "flex",
+            gap: 8,
+            overflowX: "auto",
+            alignItems: "center",
+          }}
+        >
+          {selectedDesigns.map((design) => (
+            <div
+              key={design.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                border: "1px solid var(--border-default)",
+                borderRadius: "var(--radius-sm)",
+                padding: "6px 8px",
+                flexShrink: 0,
+                maxWidth: 220,
+              }}
+            >
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: "var(--radius-sm)",
+                  backgroundColor: "var(--bg-tertiary)",
+                  overflow: "hidden",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                {design.previewUrl ? (
+                  <img
+                    src={design.previewUrl}
+                    alt=""
+                    style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                  />
+                ) : (
+                  <ImageIcon size={16} style={{ opacity: 0.35 }} />
+                )}
+              </div>
+              <span
+                style={{
+                  fontSize: "0.78rem",
+                  fontWeight: 700,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {design.name}
+              </span>
+              <button
+                type="button"
+                aria-label={`Remove ${design.name}`}
+                onClick={() => handleRemoveDesign(design.id)}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  display: "flex",
+                  padding: 2,
+                  color: "inherit",
+                }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={{ position: "relative", marginBottom: 16 }}>
         <Search
           size={16}
           style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", opacity: 0.4 }}
         />
         <input
-          type="text"
           className="input"
           placeholder="Tìm design..."
           value={search}
@@ -88,17 +194,20 @@ export default function Step3DesignPage() {
             gap: 12,
           }}
         >
-          {designs.map((d) => {
-            const isSelected = draft?.designId === d.id;
+          {designs.map((design) => {
+            const isSelected = selectedDesignIdSet.has(design.id);
+            const isDisabled = !isSelected && selectedDesignIds.length >= 5;
             return (
               <div
-                key={d.id}
-                onClick={() => handleSelect(d.id)}
-                className="card"
+                key={design.id}
+                onClick={() => {
+                  if (!isDisabled) handleToggleDesign(design.id);
+                }}
                 style={{
                   padding: 0,
                   overflow: "hidden",
-                  cursor: "pointer",
+                  cursor: isDisabled ? "not-allowed" : "pointer",
+                  opacity: isDisabled ? 0.45 : 1,
                   border: isSelected
                     ? "2px solid var(--color-wise-green)"
                     : "1px solid var(--border-default)",
@@ -135,10 +244,10 @@ export default function Step3DesignPage() {
                     justifyContent: "center",
                   }}
                 >
-                  {d.previewUrl ? (
+                  {design.previewUrl ? (
                     <img
-                      src={d.previewUrl}
-                      alt={d.name}
+                      src={design.previewUrl}
+                      alt={design.name}
                       style={{ width: "100%", height: "100%", objectFit: "contain", padding: 8 }}
                     />
                   ) : (
@@ -157,10 +266,10 @@ export default function Step3DesignPage() {
                       textOverflow: "ellipsis",
                     }}
                   >
-                    {d.name}
+                    {design.name}
                   </p>
                   <p style={{ fontSize: "0.7rem", opacity: 0.4, margin: "2px 0 0" }}>
-                    {d.width}×{d.height}
+                    {design.width}×{design.height}
                   </p>
                 </div>
               </div>

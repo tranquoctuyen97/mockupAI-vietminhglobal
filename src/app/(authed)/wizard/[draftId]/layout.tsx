@@ -2,7 +2,10 @@
 
 import { useEffect } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import { useWizardStore } from "@/lib/wizard/use-wizard-store";
+import {
+  getDraftDesignIdsFromDraft,
+  useWizardStore,
+} from "@/lib/wizard/use-wizard-store";
 import {
   Store,
   Image as ImageIcon,
@@ -45,6 +48,7 @@ export default function WizardLayout({
   // Determine current step from URL
   const currentStepMatch = pathname.match(/step-(\d)/);
   const currentStep = currentStepMatch ? parseInt(currentStepMatch[1], 10) : 1;
+  const selectedDesignCount = getDraftDesignIdsFromDraft(draft).length;
 
   if (shouldShowWizardBlockingLoader({ loading, hasDraft: Boolean(draft) })) {
     return (
@@ -97,7 +101,10 @@ export default function WizardLayout({
         {STEPS.map((step) => {
           const isActive = currentStep === step.num;
           const isCompleted = draft ? draft.currentStep > step.num : false;
-          const isAccessible = draft ? step.num <= draft.currentStep + 1 : step.num === 1;
+          const hasDesignSelection = selectedDesignCount > 0;
+          const isAccessible = draft
+            ? step.num <= draft.currentStep + 1 && (step.num <= 2 || hasDesignSelection)
+            : step.num === 1;
           const Icon = step.icon;
 
           return (
@@ -172,6 +179,9 @@ export default function WizardLayout({
           <button
             className="btn btn-primary"
             onClick={async () => {
+              if (currentStep === 2 && getDraftDesignIdsFromDraft(useWizardStore.getState().draft).length === 0) {
+                return;
+              }
               if (draft) {
                 const store = useWizardStore.getState();
                 store.updateDraft({

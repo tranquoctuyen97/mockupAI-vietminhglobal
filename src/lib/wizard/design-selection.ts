@@ -2,6 +2,7 @@ export const MAX_WIZARD_DESIGNS = 5;
 
 export interface DraftDesignLike {
   designId?: string | null;
+  sortOrder?: number | null;
 }
 
 export interface DraftWithDesignSelection {
@@ -44,7 +45,11 @@ export function normalizeDesignIds(value: unknown): string[] {
 
 export function getDraftDesignIds(draft: DraftWithDesignSelection): string[] {
   if (draft.draftDesigns && draft.draftDesigns.length > 0) {
-    return normalizeDesignIds(draft.draftDesigns.map((draftDesign) => draftDesign.designId));
+    return normalizeDesignIds(
+      [...draft.draftDesigns]
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+        .map((draftDesign) => draftDesign.designId),
+    );
   }
 
   return draft.designId ? normalizeDesignIds([draft.designId]) : [];
