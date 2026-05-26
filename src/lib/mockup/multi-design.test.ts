@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  getActiveDraftDesignId,
   getLatestJobByDraftDesignId,
   hasActiveOrCompletedJobsForAllDesigns,
 } from "./multi-design";
@@ -15,6 +16,16 @@ test("getLatestJobByDraftDesignId groups latest job per child design", () => {
   const grouped = getLatestJobByDraftDesignId(jobs);
   assert.equal(grouped.get("a")?.id, "new-a");
   assert.equal(grouped.get("b")?.id, "only-b");
+});
+
+test("getLatestJobByDraftDesignId falls back to designId for legacy jobs", () => {
+  const grouped = getLatestJobByDraftDesignId([
+    { id: "legacy-a", designId: "a", createdAt: "2026-05-24T10:00:00.000Z", status: "completed" },
+    { id: "legacy-b", designId: "b", createdAt: "2026-05-24T11:00:00.000Z", status: "running" },
+  ]);
+
+  assert.equal(grouped.get("a")?.id, "legacy-a");
+  assert.equal(grouped.get("b")?.id, "legacy-b");
 });
 
 test("hasActiveOrCompletedJobsForAllDesigns requires a usable job for each selected design", () => {
@@ -39,4 +50,10 @@ test("hasActiveOrCompletedJobsForAllDesigns requires a usable job for each selec
     ),
     false,
   );
+});
+
+test("getActiveDraftDesignId keeps selected active tab when still available", () => {
+  assert.equal(getActiveDraftDesignId(["a", "b"], "b"), "b");
+  assert.equal(getActiveDraftDesignId(["a", "b"], "missing"), "a");
+  assert.equal(getActiveDraftDesignId([], "missing"), null);
 });

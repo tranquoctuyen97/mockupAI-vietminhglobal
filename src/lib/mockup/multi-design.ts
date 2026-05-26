@@ -1,6 +1,7 @@
 export type MockupJobLike = {
   id: string;
   draftDesignId?: string | null;
+  designId?: string | null;
   createdAt?: string | Date | null;
   status?: string | null;
 };
@@ -11,10 +12,11 @@ export function getLatestJobByDraftDesignId<T extends MockupJobLike>(jobs: T[]):
   const grouped = new Map<string, T>();
 
   for (const job of jobs) {
-    if (!job.draftDesignId) continue;
-    const current = grouped.get(job.draftDesignId);
+    const designKey = job.draftDesignId ?? job.designId ?? null;
+    if (!designKey) continue;
+    const current = grouped.get(designKey);
     if (!current || getTime(job.createdAt) > getTime(current.createdAt)) {
-      grouped.set(job.draftDesignId, job);
+      grouped.set(designKey, job);
     }
   }
 
@@ -30,6 +32,14 @@ export function hasActiveOrCompletedJobsForAllDesigns(
     const job = latestByDesign.get(draftDesignId);
     return Boolean(job?.status && USABLE_JOB_STATUSES.has(job.status.toLowerCase()));
   });
+}
+
+export function getActiveDraftDesignId(
+  draftDesignIds: string[],
+  current: string | null | undefined,
+): string | null {
+  if (current && draftDesignIds.includes(current)) return current;
+  return draftDesignIds[0] ?? null;
 }
 
 function getTime(value: string | Date | null | undefined): number {

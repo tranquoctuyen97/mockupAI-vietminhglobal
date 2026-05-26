@@ -1,14 +1,18 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useWizardStore } from "@/lib/wizard/use-wizard-store";
 
-import { pickLatestMockupJobId } from "@/lib/mockup/latest-job";
-import { isTerminalMockupJobStatus, shouldSyncFinishedMockupJob } from "@/lib/mockup/job-sync";
+import { isTerminalMockupJobStatus } from "@/lib/mockup/job-sync";
 import { MOCKUP_JOB_SOFT_WAIT_MS } from "@/lib/mockup/job-timeout";
 import { shouldShowInOfficialGallery } from "@/lib/mockup/official-gallery";
+import {
+  getActiveDraftDesignId,
+  getLatestJobByDraftDesignId,
+  hasActiveOrCompletedJobsForAllDesigns,
+} from "@/lib/mockup/multi-design";
 import { MockupGallery } from "@/components/mockup/MockupGallery";
 import { WizardMockupSourcePanel } from "@/components/mockup/WizardMockupSourcePanel";
 import { ColorMockupCardGrid } from "@/components/mockup/ColorMockupCardGrid";
@@ -77,6 +81,42 @@ type WizardTemplateOption = {
   }>;
 };
 
+type DraftDesignEntry = {
+  id: string;
+  designId: string;
+  sortOrder: number;
+  design?: {
+    id: string;
+    name?: string | null;
+    previewPath?: string | null;
+  } | null;
+  jobs?: Array<{
+    id: string;
+    draftDesignId?: string | null;
+    designId?: string | null;
+    createdAt?: string | Date | null;
+    status?: string | null;
+    completedImages?: number | null;
+    totalImages?: number | null;
+    failedImages?: number | null;
+    errorMessage?: string | null;
+    images?: any[];
+  }>;
+};
+
+type DesignJobState = {
+  jobId: string;
+  draftDesignId: string;
+  designId: string;
+  designName: string;
+  status: string;
+  completed: number;
+  total: number;
+  failed: number;
+  images: any[];
+  errorMessage: string | null;
+};
+
 const WIZARD_PRINT_AREA = { ...DEFAULT_PRINT_AREA, safeMarginMm: 12.7 };
 
 export default function Step3PreviewPage() {
@@ -90,7 +130,7 @@ export default function Step3PreviewPage() {
   const [template, setTemplate] = useState<WizardTemplateOption | null>(null);
   const [templateWarning, setTemplateWarning] = useState("");
   const [presetStatus, setPresetStatus] = useState<any>(null);
-  const [designPreviewUrl, setDesignPreviewUrl] = useState<string | null>(null);
+  const [designPreviewUrlsById, setDesignPreviewUrlsById] = useState<Record<string, string | null>>({});
   const [previewColorIdx, setPreviewColorIdx] = useState(0);
   const [livePreviewView, setLivePreviewView] = useState<ViewKey>("front");
 
@@ -98,16 +138,14 @@ export default function Step3PreviewPage() {
   const [selectedColorIds, setSelectedColorIds] = useState<Set<string>>(new Set());
   const [placementOverride, setPlacementOverride] = useState<PlacementData | null>(null);
   const [isPlacementEditorOpen, setIsPlacementEditorOpen] = useState(false);
+  const [activeDraftDesignId, setActiveDraftDesignId] = useState<string | null>(null);
+  const [mockupJobsByDesign, setMockupJobsByDesign] = useState<Map<string, DesignJobState>>(new Map());
 
   // Generating state
   const [generating, setGenerating] = useState(false);
-  const [mockupJobId, setMockupJobId] = useState<string | null>(null);
-  const [mockupImages, setMockupImages] = useState<any[]>([]);
-  const [jobProgress, setJobProgress] = useState({ completed: 0, total: 0, failed: 0 });
-  const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
   const [showSlowMockupWarning, setShowSlowMockupWarning] = useState(false);
-  const [hasTriggeredMockupRender, setHasTriggeredMockupRender] = useState(false);
+  const [hasTriggeredBatchRender, setHasTriggeredBatchRender] = useState(false);
 
   // Size selection state
   const [storeSizes, setStoreSizes] = useState<Array<{ size: string; costDeltaCents: number; isAvailable: boolean }>>([]);
@@ -115,13 +153,6 @@ export default function Step3PreviewPage() {
   const [error, setError] = useState("");
   const [retryNonce, setRetryNonce] = useState(0);
   const [userRole, setUserRole] = useState<string | null>(null);
-  const syncedJobIdsRef = useRef<Set<string>>(new Set());
-  const progressFinished =
-    jobProgress.total > 0 &&
-    jobProgress.completed + jobProgress.failed >= jobProgress.total;
-  const isGenerating =
-    generating ||
-    (jobStatus ? !isTerminalMockupJobStatus(jobStatus) && !progressFinished : false);
   const selectedTemplate = template;
   const selectedTemplateReady = Boolean(selectedTemplate?.readiness.ready);
   const isCustomTemplateDefault = selectedTemplate?.defaultMockupSource === "CUSTOM";
@@ -132,7 +163,7 @@ export default function Step3PreviewPage() {
     : "Mockup tham khảo từ Printify. Bạn có thể chỉnh vị trí design trước khi tạo mockup.";
   const resultsSectionTitle = "Kết quả mockup";
   const resultsEmptyState =
-    'Khi sẵn sàng, nhấn "Tạo Mockups" để render ảnh listing.';
+    'Khi sẵn sàng, nhấn "Tạo Mockups" để render ảnh listing cho từng design.';
   const customAvailabilityByColorId = useMemo(() => {
     const map = new Map<string, boolean>();
     for (const color of selectedTemplate?.colors ?? []) {
@@ -147,11 +178,6 @@ export default function Step3PreviewPage() {
     );
   }, [customAvailabilityByColorId, isCustomTemplateDefault, selectedColorIds, storeColors]);
   const hasSelectedMissingCustomColors = selectedMissingCustomColors.length > 0;
-  const generateButtonLabel = isGenerating
-    ? progressFinished
-      ? "Đang đồng bộ kết quả..."
-      : `Đang tạo... (${jobProgress.completed}/${jobProgress.total || "..."})`
-    : "Tạo Mockups";
   const draftEnabledColorKey = (draft?.enabledColorIds ?? []).join("|");
   const draftPlacementOverrideKey = useMemo(
     () => JSON.stringify(draft?.placementOverride ?? null),
@@ -173,22 +199,6 @@ export default function Step3PreviewPage() {
       .then((data) => setUserRole(data?.role ?? null))
       .catch(() => setUserRole(null));
   }, []);
-
-  useEffect(() => {
-    if (!isGenerating || !generationStartedAt || jobProgress.total > 0) {
-      setShowSlowMockupWarning(false);
-      return;
-    }
-
-    const remaining = MOCKUP_JOB_SOFT_WAIT_MS - (Date.now() - generationStartedAt);
-    if (remaining <= 0) {
-      setShowSlowMockupWarning(true);
-      return;
-    }
-
-    const timeout = setTimeout(() => setShowSlowMockupWarning(true), remaining);
-    return () => clearTimeout(timeout);
-  }, [generationStartedAt, isGenerating, jobProgress.total]);
 
   useEffect(() => {
     if (!draftId) {
@@ -308,119 +318,404 @@ export default function Step3PreviewPage() {
       });
   }, [draft?.id, draft?.storeId, draft?.templateId, draftId, retryNonce]);
 
-  // Load existing mockups if available
-  useEffect(() => {
-    if (draft?.mockupJobs && draft.mockupJobs.length > 0) {
-      if (mockupJobId && !draft.mockupJobs.some((job) => job.id === mockupJobId)) {
-        return;
-      }
-      const latestJobId = pickLatestMockupJobId(draft.mockupJobs, mockupJobId);
-      const latestJob = [...draft.mockupJobs].sort(
-        (a: any, b: any) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime(),
-      )[0] as any;
-      if (latestJob?.images?.length) {
-        setMockupImages(latestJob.images);
-        setJobStatus(latestJob.status);
-        setJobProgress({
-          completed: latestJob.completedImages ?? latestJob.images.filter((img: any) => img.compositeStatus === "completed").length,
-          total: latestJob.totalImages ?? latestJob.images.length,
-          failed: latestJob.failedImages ?? latestJob.images.filter((img: any) => img.compositeStatus === "failed").length,
-        });
-        const latestJobFinished =
-          (latestJob.totalImages ?? latestJob.images.length) > 0 &&
-          (latestJob.completedImages ?? 0) + (latestJob.failedImages ?? 0) >=
-            (latestJob.totalImages ?? latestJob.images.length);
-        if (isTerminalMockupJobStatus(latestJob.status) || latestJobFinished) {
-          setGenerating(false);
-          setHasTriggeredMockupRender(false);
-        } else {
-          setHasTriggeredMockupRender(true);
-        }
-      }
-      if (latestJobId) setMockupJobId(latestJobId);
+  const selectedDraftDesigns = useMemo<DraftDesignEntry[]>(() => {
+    const childRows = (draft?.draftDesigns ?? []) as DraftDesignEntry[];
+    if (childRows.length > 0) {
+      return [...childRows].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
     }
-  }, [draft?.mockupJobs, mockupJobId]);
 
-  // Fetch design preview URL for LivePreview
+    if (!draft?.designId) return [];
+
+    const legacyDesign = (draft as any)?.design ?? null;
+    return [
+      {
+        id: "legacy",
+        designId: draft.designId,
+        sortOrder: 0,
+        design: legacyDesign
+          ? {
+              id: legacyDesign.id ?? draft.designId,
+              name: legacyDesign.name ?? "Design",
+              previewPath: legacyDesign.previewPath ?? null,
+            }
+          : { id: draft.designId, name: "Design", previewPath: null },
+        jobs: (draft.mockupJobs ?? []) as DraftDesignEntry["jobs"],
+      },
+    ];
+  }, [draft?.designId, draft?.draftDesigns, draft?.mockupJobs]);
+
+  const selectedDraftDesignIds = useMemo(
+    () => selectedDraftDesigns.map((entry) => entry.id),
+    [selectedDraftDesigns],
+  );
+
+  const selectedDesignJobs = useMemo(() => {
+    return selectedDraftDesigns.flatMap((entry) =>
+      (entry.jobs ?? []).map((job) => ({
+        ...job,
+        draftDesignId: job.draftDesignId ?? entry.id,
+        designId: job.designId ?? entry.designId,
+      })),
+    );
+  }, [selectedDraftDesigns]);
+
+  const latestMockupJobByDesign = useMemo(
+    () => getLatestJobByDraftDesignId(selectedDesignJobs),
+    [selectedDesignJobs],
+  );
+
+  const primarySelectedDesignId = selectedDraftDesigns[0]?.designId ?? draft?.designId ?? null;
+  const primarySelectedDesign = selectedDraftDesigns[0] ?? null;
+
   useEffect(() => {
-    if (!draft?.designId) {
-      setDesignPreviewUrl(null);
+    setActiveDraftDesignId((current) => getActiveDraftDesignId(selectedDraftDesignIds, current));
+  }, [selectedDraftDesignIds]);
+
+  useEffect(() => {
+    if (selectedDraftDesignIds.length === 0) {
+      setDesignPreviewUrlsById({});
       return;
     }
-    fetch(`/api/designs/${draft.designId}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => setDesignPreviewUrl(d?.previewUrl ?? d?.originalUrl ?? null))
-      .catch(() => setDesignPreviewUrl(null));
-  }, [draft?.designId]);
 
-  // Polling mockup job status
+    let cancelled = false;
+
+    const loadDesignPreviews = async () => {
+      const entries = await Promise.all(
+        selectedDraftDesigns.map(async (entry) => {
+          try {
+            const res = await fetch(`/api/designs/${entry.designId}`);
+            if (!res.ok) return [entry.designId, null] as const;
+            const data = await res.json();
+            return [entry.designId, data?.previewUrl ?? data?.originalUrl ?? null] as const;
+          } catch {
+            return [entry.designId, null] as const;
+          }
+        }),
+      );
+
+      if (cancelled) return;
+      setDesignPreviewUrlsById(Object.fromEntries(entries));
+    };
+
+    void loadDesignPreviews();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDraftDesignIds, selectedDraftDesigns]);
+
   useEffect(() => {
-    if (!mockupJobId) return;
+    if (selectedDraftDesigns.length === 0) {
+      setMockupJobsByDesign(new Map());
+      return;
+    }
 
-    let timeoutId: NodeJS.Timeout;
+    const next = new Map<string, DesignJobState>();
 
-    const pollJob = async () => {
-      try {
-        const res = await fetch(`/api/mockup-jobs/${mockupJobId}`);
-        if (!res.ok) throw new Error("Failed to fetch job");
-        const job = await res.json();
-        const finishedByProgress =
-          job.totalImages > 0 &&
-          job.completedImages + job.failedImages >= job.totalImages;
+    selectedDraftDesigns.forEach((entry, index) => {
+      const latestJob = latestMockupJobByDesign.get(entry.id);
+      if (!latestJob) return;
 
-        setJobStatus(job.status);
-        setJobProgress({
-          completed: job.completedImages,
-          total: job.totalImages,
-          failed: job.failedImages
-        });
+      const images = latestJob.images ?? [];
+      next.set(entry.id, {
+        jobId: latestJob.id,
+        draftDesignId: entry.id,
+        designId: latestJob.designId ?? entry.designId,
+        designName: entry.design?.name ?? `Design ${index + 1}`,
+        status: latestJob.status ?? "pending",
+        completed:
+          latestJob.completedImages ?? images.filter((img: any) => img.compositeStatus === "completed").length,
+        total: latestJob.totalImages ?? images.length,
+        failed:
+          latestJob.failedImages ?? images.filter((img: any) => img.compositeStatus === "failed").length,
+        images,
+        errorMessage: latestJob.errorMessage ?? null,
+      });
+    });
 
-        setMockupImages(job.images || []);
+    setMockupJobsByDesign(next);
+  }, [latestMockupJobByDesign, selectedDraftDesigns]);
 
-        if ((job.status === "running" || job.status === "pending") && !finishedByProgress) {
-          setGenerating(true);
-          timeoutId = setTimeout(pollJob, 2000);
+  const overallJobProgress = useMemo(() => {
+    let completed = 0;
+    let total = 0;
+    let failed = 0;
+
+    for (const job of mockupJobsByDesign.values()) {
+      completed += job.completed ?? 0;
+      total += job.total ?? 0;
+      failed += job.failed ?? 0;
+    }
+
+    return { completed, total, failed };
+  }, [mockupJobsByDesign]);
+
+  const activeDesignJob = useMemo(() => {
+    if (!activeDraftDesignId) return null;
+    return mockupJobsByDesign.get(activeDraftDesignId) ?? null;
+  }, [activeDraftDesignId, mockupJobsByDesign]);
+
+  const activeMockupImages = activeDesignJob?.images ?? [];
+  const activeDesignProgress = activeDesignJob ?? {
+    jobId: "",
+    draftDesignId: activeDraftDesignId ?? "",
+    designId: primarySelectedDesignId ?? "",
+    designName: primarySelectedDesign?.design?.name ?? "Design",
+    status: "pending",
+    completed: 0,
+    total: 0,
+    failed: 0,
+    images: [],
+    errorMessage: null,
+  };
+  const hasActiveMockupJobs = useMemo(
+    () =>
+      Array.from(mockupJobsByDesign.values()).some(
+        (job) => !isTerminalMockupJobStatus(job.status) || (job.total > 0 && job.completed + job.failed < job.total),
+      ),
+    [mockupJobsByDesign],
+  );
+  const progressFinished =
+    overallJobProgress.total > 0 &&
+    overallJobProgress.completed + overallJobProgress.failed >= overallJobProgress.total;
+  const isGenerating = generating || hasActiveMockupJobs;
+  const generateButtonLabel = isGenerating
+    ? progressFinished
+      ? "Đang đồng bộ kết quả..."
+      : `Đang tạo... (${selectedDraftDesignIds.length} designs)`
+    : "Tạo Mockups";
+
+  const handleGenerate = useCallback(async () => {
+    if (selectedColorIds.size === 0) {
+      setError("Vui lòng chọn ít nhất 1 màu");
+      return;
+    }
+    if (!selectedTemplate?.readiness.ready) {
+      setError("Template đang chọn chưa sẵn sàng. Vui lòng chọn template READY hoặc hoàn tất preset.");
+      return;
+    }
+    if (selectedMissingCustomColors.length > 0) {
+      const missingColorNames = selectedMissingCustomColors.map((color) => color.name).join(", ");
+      setError(
+        `Template đang dùng Custom nhưng ${missingColorNames} chưa có mockup custom. Màu này sẽ chưa thể tạo mockup cho tới khi bạn upload mockup custom hoặc bỏ màu này khỏi listing.`,
+      );
+      return;
+    }
+
+    setGenerating(true);
+    setGenerationStartedAt(Date.now());
+    setShowSlowMockupWarning(false);
+    setHasTriggeredBatchRender(true);
+    setError("");
+    setMockupJobsByDesign(new Map());
+
+    const enabledColorIds = Array.from(selectedColorIds);
+    await updateDraft({
+      templateId: selectedTemplate.id,
+      enabledColorIds,
+      enabledSizes: Array.from(selectedSizes),
+      placementOverride: placementOverride || undefined,
+    });
+    await saveDraftImmediately();
+
+    try {
+      const res = await fetch(`/api/mockup-jobs/batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftId }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        if (data.error === "No enabled variants") {
+          setError("Store chưa chọn variants. Vui lòng cập nhật Blueprint trong Store Settings.");
         } else {
-          setGenerating(false);
-          setGenerationStartedAt(null);
-          setShowSlowMockupWarning(false);
-          if (job.status === "completed" && job.images?.length > 0) {
-            toast.success(`Đã tạo ${job.images.length} mockups`);
-          } else if (job.status === "failed") {
-            setError(job.errorMessage || "Printify tạo mockup lỗi. Vui lòng thử lại.");
-          }
-          const draftJobStatus = useWizardStore
-            .getState()
-            .draft?.mockupJobs?.find((draftJob) => draftJob.id === mockupJobId)
-            ?.status;
-          const alreadySynced = syncedJobIdsRef.current.has(mockupJobId);
-          if (
-            shouldSyncFinishedMockupJob({
-              jobStatus: job.status,
-              draftJobStatus,
-              alreadySynced,
-            })
-          ) {
-            syncedJobIdsRef.current.add(mockupJobId);
-            useWizardStore.getState().loadDraft(draftId as string);
-          } else if (!alreadySynced) {
-            syncedJobIdsRef.current.add(mockupJobId);
-          }
+          setError(data.error || "Không thể tạo mockup");
         }
-      } catch (err) {
-        console.error("Polling error:", err);
         setGenerating(false);
         setGenerationStartedAt(null);
         setShowSlowMockupWarning(false);
+        return;
+      }
+
+      const next = new Map<string, DesignJobState>();
+      for (const job of data.jobs ?? []) {
+        next.set(job.draftDesignId, {
+          jobId: job.jobId,
+          draftDesignId: job.draftDesignId,
+          designId: job.designId,
+          designName: job.designName,
+          status: job.status ?? "pending",
+          completed: 0,
+          total: 0,
+          failed: 0,
+          images: [],
+          errorMessage: null,
+        });
+      }
+
+      for (const failure of data.failures ?? []) {
+        next.set(failure.draftDesignId, {
+          jobId: failure.draftDesignId,
+          draftDesignId: failure.draftDesignId,
+          designId: failure.designId,
+          designName: failure.designName,
+          status: "failed",
+          completed: 0,
+          total: 0,
+          failed: 1,
+          images: [],
+          errorMessage: failure.error,
+        });
+      }
+
+      setMockupJobsByDesign(next);
+      const hasQueuedJobs = (data.jobs ?? []).length > 0;
+      setGenerating(hasQueuedJobs);
+      if (!hasQueuedJobs) {
+        setGenerationStartedAt(null);
+        setShowSlowMockupWarning(false);
+      }
+    } catch {
+      setError("Lỗi kết nối");
+      setGenerating(false);
+      setGenerationStartedAt(null);
+      setShowSlowMockupWarning(false);
+    }
+  }, [
+    draftId,
+    placementOverride,
+    saveDraftImmediately,
+    selectedColorIds,
+    selectedMissingCustomColors,
+    selectedSizes,
+    selectedTemplate,
+    updateDraft,
+  ]);
+
+  useEffect(() => {
+    if (!draft || loading || hasTriggeredBatchRender) return;
+    if (selectedDraftDesigns.length === 0) return;
+    if (selectedColorIds.size === 0 || !selectedTemplateReady || hasSelectedMissingCustomColors) return;
+
+    if (!draft.mockupsStale && hasActiveOrCompletedJobsForAllDesigns(selectedDraftDesignIds, selectedDesignJobs)) {
+      return;
+    }
+
+    void handleGenerate();
+  }, [
+    draft?.id,
+    draft?.mockupsStale,
+    handleGenerate,
+    hasSelectedMissingCustomColors,
+    hasTriggeredBatchRender,
+    loading,
+    selectedColorIds.size,
+    selectedDesignJobs,
+    selectedDraftDesignIds,
+    selectedDraftDesigns.length,
+    selectedTemplateReady,
+  ]);
+
+  useEffect(() => {
+    if (!isGenerating || !generationStartedAt || overallJobProgress.total > 0) {
+      setShowSlowMockupWarning(false);
+      return;
+    }
+
+    const remaining = MOCKUP_JOB_SOFT_WAIT_MS - (Date.now() - generationStartedAt);
+    if (remaining <= 0) {
+      setShowSlowMockupWarning(true);
+      return;
+    }
+
+    const timeout = setTimeout(() => setShowSlowMockupWarning(true), remaining);
+    return () => clearTimeout(timeout);
+  }, [generationStartedAt, isGenerating, overallJobProgress.total]);
+
+  useEffect(() => {
+    const activeJobs = Array.from(mockupJobsByDesign.values()).filter(
+      (job) => job.jobId && !isTerminalMockupJobStatus(job.status),
+    );
+    if (activeJobs.length === 0) return;
+
+    let cancelled = false;
+    let timeoutId: NodeJS.Timeout;
+
+    const poll = async () => {
+      const updates = await Promise.all(
+        activeJobs.map(async (state) => {
+          try {
+            const res = await fetch(`/api/mockup-jobs/${state.jobId}`);
+            if (!res.ok) return state;
+            const job = await res.json();
+            const images = job.images ?? [];
+            return {
+              ...state,
+              status: job.status ?? state.status,
+              completed:
+                job.completedImages ?? images.filter((img: any) => img.compositeStatus === "completed").length,
+              total: job.totalImages ?? images.length,
+              failed:
+                job.failedImages ?? images.filter((img: any) => img.compositeStatus === "failed").length,
+              images,
+              errorMessage: job.errorMessage ?? null,
+            };
+          } catch {
+            return state;
+          }
+        }),
+      );
+
+      if (cancelled) return;
+
+      setMockupJobsByDesign((current) => {
+        const next = new Map(current);
+        for (const update of updates) {
+          next.set(update.draftDesignId, update);
+        }
+        return next;
+      });
+
+      const stillRunning = updates.some(
+        (job) =>
+          !isTerminalMockupJobStatus(job.status) ||
+          !(job.total > 0 && job.completed + job.failed >= job.total),
+      );
+
+      setGenerating(stillRunning);
+      if (stillRunning) {
+        timeoutId = setTimeout(poll, 2000);
+        return;
+      }
+
+      setGenerationStartedAt(null);
+      setShowSlowMockupWarning(false);
+
+      const doneCount = updates.filter(
+        (job) => isTerminalMockupJobStatus(job.status) || (job.total > 0 && job.completed + job.failed >= job.total),
+      ).length;
+      if (doneCount > 0) {
+        toast.success(`Đã tạo mockups cho ${doneCount} designs`);
+      }
+
+      const draftStatuses = useWizardStore.getState().draft?.mockupJobs ?? [];
+      const allFinished = activeJobs.every((job) => {
+        const latestDraftJob = draftStatuses.find((draftJob) => draftJob.id === job.jobId);
+        return !latestDraftJob || isTerminalMockupJobStatus(latestDraftJob.status);
+      });
+      if (allFinished) {
+        void useWizardStore.getState().loadDraft(draftId as string);
       }
     };
 
-    pollJob();
+    timeoutId = setTimeout(poll, 500);
 
     return () => {
+      cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [mockupJobId, draftId]);
+  }, [draftId, mockupJobsByDesign]);
 
   const toggleColor = (id: string) => {
     if (isCustomTemplateDefault && !customAvailabilityByColorId.get(id)) {
@@ -483,14 +778,11 @@ export default function Step3PreviewPage() {
     setPlacementOverride(null);
     setPreviewColorIdx(0);
     setLivePreviewView("front");
-    setMockupJobId(null);
-    setMockupImages([]);
-    setJobStatus(null);
-    setJobProgress({ completed: 0, total: 0, failed: 0 });
+    setMockupJobsByDesign(new Map());
     setGenerating(false);
     setGenerationStartedAt(null);
     setShowSlowMockupWarning(false);
-    setHasTriggeredMockupRender(false);
+    setHasTriggeredBatchRender(false);
     setError("");
 
     await updateDraft({
@@ -502,71 +794,6 @@ export default function Step3PreviewPage() {
     });
     await saveDraftImmediately();
     setRetryNonce((value) => value + 1);
-  };
-
-  const handleGenerate = async () => {
-    if (selectedColorIds.size === 0) {
-      setError("Vui lòng chọn ít nhất 1 màu");
-      return;
-    }
-    if (!selectedTemplate?.readiness.ready) {
-      setError("Template đang chọn chưa sẵn sàng. Vui lòng chọn template READY hoặc hoàn tất preset.");
-      return;
-    }
-    if (selectedMissingCustomColors.length > 0) {
-      const missingColorNames = selectedMissingCustomColors.map((color) => color.name).join(", ");
-      setError(
-        `Template đang dùng Custom nhưng ${missingColorNames} chưa có mockup custom. Màu này sẽ chưa thể tạo mockup cho tới khi bạn upload mockup custom hoặc bỏ màu này khỏi listing.`,
-      );
-      return;
-    }
-
-    setGenerating(true);
-    setJobStatus("pending");
-    setJobProgress({ completed: 0, total: 0, failed: 0 });
-    setMockupImages([]);
-    setGenerationStartedAt(Date.now());
-    setShowSlowMockupWarning(false);
-    setHasTriggeredMockupRender(true);
-    setError("");
-
-    // 1. Save state to draft
-    const enabledColorIds = Array.from(selectedColorIds);
-    await updateDraft({
-      templateId: selectedTemplate.id,
-      enabledColorIds,
-      enabledSizes: Array.from(selectedSizes),
-      placementOverride: placementOverride || undefined,
-    });
-    await saveDraftImmediately();
-
-    // 2. Trigger Mockup Generation Job
-    try {
-      const res = await fetch(`/api/mockup-jobs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ draftId })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.error === "No enabled variants") {
-          setError("Store chưa chọn variants. Vui lòng cập nhật Blueprint trong Store Settings.");
-        } else {
-          setError(data.error || "Không thể tạo mockup");
-        }
-        setGenerating(false);
-        setGenerationStartedAt(null);
-        setShowSlowMockupWarning(false);
-      } else {
-        setMockupJobId(data.jobId);
-        setJobStatus(data.status ?? "pending");
-      }
-    } catch (e) {
-      setError("Lỗi kết nối");
-      setGenerating(false);
-      setGenerationStartedAt(null);
-      setShowSlowMockupWarning(false);
-    }
   };
 
   const removeColorFromListing = async (colorId: string) => {
@@ -646,7 +873,9 @@ export default function Step3PreviewPage() {
   const previewPlacementView = enabledPlacementViews.includes(livePreviewView)
     ? livePreviewView
     : enabledPlacementViews[0] ?? "front";
-  const placementSourceLabel = placementOverride ? "Đã override cho design này" : "Dùng preset của store";
+  const placementSourceLabel = placementOverride
+    ? "Đang áp dụng cho toàn bộ designs"
+    : "Dùng preset của store cho toàn bộ designs";
   const bgColor = storeColors.find((color) => color.enabled !== false)?.hex ?? "#EEEEEE";
   const selectedPreviewColors = storeColors.filter((color) => selectedColorIds.has(color.id));
   const previewColors = selectedPreviewColors;
@@ -675,6 +904,26 @@ export default function Step3PreviewPage() {
     setPlacementOverride(normalized);
     updateDraft({ placementOverride: normalized });
   };
+
+  const primaryDesignPreviewUrl = primarySelectedDesignId
+    ? designPreviewUrlsById[primarySelectedDesignId] ?? null
+    : null;
+  const activeDesignTab =
+    (activeDraftDesignId
+      ? selectedDraftDesigns.find((entry) => entry.id === activeDraftDesignId) ?? null
+      : null) ?? selectedDraftDesigns[0] ?? null;
+  const activeDesignTabIndex = activeDesignTab
+    ? selectedDraftDesigns.findIndex((entry) => entry.id === activeDesignTab.id)
+    : -1;
+  const activeDesignTabLabel = activeDesignTab
+    ? activeDesignTab.design?.name ?? `Design ${activeDesignTabIndex + 1}`
+    : "Design";
+  const canGenerateMockups =
+    selectedDraftDesigns.length > 0 &&
+    selectedColorIds.size > 0 &&
+    selectedTemplateReady &&
+    !hasSelectedMissingCustomColors &&
+    !isGenerating;
 
   return (
     <div>
@@ -772,12 +1021,12 @@ export default function Step3PreviewPage() {
         </div>
       )}
 
-      {!draft?.designId && (
+      {selectedDraftDesigns.length === 0 && (
         <div className="alert" style={{ marginBottom: 16, backgroundColor: "var(--bg-tertiary)", border: "1px solid var(--border-default)" }}>
           <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
           <div className="flex-1">
             <p style={{ margin: 0, fontWeight: 500 }}>Chưa có Design</p>
-            <p style={{ margin: 0, fontSize: "0.85rem", opacity: 0.6 }}>Bạn cần chọn design ở bước trước để tạo mockup.</p>
+            <p style={{ margin: 0, fontSize: "0.85rem", opacity: 0.6 }}>Bạn cần chọn ít nhất 1 design ở bước trước để tạo mockup.</p>
           </div>
           <button
             className="btn btn-secondary"
@@ -798,7 +1047,7 @@ export default function Step3PreviewPage() {
               <div style={{ minWidth: 0 }}>
                 <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Mockup template</h3>
                 <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
-                  Chọn template cho listing hiện tại
+                  Chọn template cho wizard này
                 </p>
               </div>
               {selectedTemplate && (
@@ -1004,7 +1253,7 @@ export default function Step3PreviewPage() {
                 </p>
                 <p style={{ margin: 0, opacity: 0.5, fontSize: "0.72rem", lineHeight: 1.35 }}>
                   {placementOverride
-                    ? "Chỉ áp dụng cho listing hiện tại."
+                    ? "Đang áp dụng cho toàn bộ designs trong wizard."
                     : savedPlacementViews.length > 0
                       ? "Đang dùng placement đã lưu trong template đang chọn."
                       : "Preview có thể dùng fallback để xem nhanh, nhưng template vẫn cần placement đã lưu."}
@@ -1082,18 +1331,167 @@ export default function Step3PreviewPage() {
 
         {/* RIGHT PANEL: LIVE PREVIEW + MOCKUP GALLERY */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {selectedDraftDesigns.length > 1 && (
+            <div className="card" style={{ padding: 14, display: "grid", gap: 12 }}>
+              <div className="flex items-center justify-between gap-3" style={{ minWidth: 0 }}>
+                <div style={{ minWidth: 0 }}>
+                  <h3 style={{ fontWeight: 700, margin: 0, fontSize: "0.95rem" }}>
+                    {selectedDraftDesigns.length} designs
+                  </h3>
+                  <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                    Chọn design để xem mockup theo từng listing.
+                  </p>
+                </div>
+                <span className="badge badge-success" style={{ flexShrink: 0, fontSize: "0.65rem" }}>
+                  {overallJobProgress.completed}/{overallJobProgress.total || 0} ảnh
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                {selectedDraftDesigns.map((entry, index) => {
+                  const state = mockupJobsByDesign.get(entry.id);
+                  const isActive = entry.id === activeDraftDesignId || (!activeDraftDesignId && index === 0);
+                  const thumbUrl = designPreviewUrlsById[entry.designId] ?? null;
+                  const label = entry.design?.name ?? `Design ${index + 1}`;
+                  return (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      className={isActive ? "btn btn-primary" : "btn btn-secondary"}
+                      onClick={() => setActiveDraftDesignId(entry.id)}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 8,
+                        minHeight: 42,
+                        padding: "6px 10px",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 24,
+                          height: 24,
+                          borderRadius: 6,
+                          overflow: "hidden",
+                          backgroundColor: "var(--bg-tertiary)",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {thumbUrl ? (
+                          <img
+                            src={thumbUrl}
+                            alt=""
+                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                          />
+                        ) : (
+                          <ImageIcon size={12} style={{ opacity: 0.35 }} />
+                        )}
+                      </span>
+                      <span style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {label}
+                      </span>
+                      {state?.status && (
+                        <span className="badge" style={{ fontSize: "0.62rem", opacity: 0.8 }}>
+                          {state.status === "completed"
+                            ? "Hoàn tất"
+                            : state.status === "failed"
+                              ? "Lỗi"
+                              : state.status === "running"
+                                ? "Đang render"
+                                : "Đang chờ"}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {mockupJobsByDesign.size > 0 && (
+            <div className="card" style={{ padding: 16, display: "grid", gap: 12 }}>
+              <div className="flex items-center justify-between gap-3" style={{ minWidth: 0 }}>
+                <div style={{ minWidth: 0 }}>
+                  <h3 style={{ fontWeight: 700, margin: 0, fontSize: "0.95rem" }}>
+                    Đang tạo mockup cho {selectedDraftDesigns.length} designs
+                  </h3>
+                  <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                    Tiến độ được theo dõi riêng cho từng design.
+                  </p>
+                </div>
+                <span style={{ fontSize: "0.72rem", opacity: 0.6, whiteSpace: "nowrap" }}>
+                  {overallJobProgress.completed}/{overallJobProgress.total || 0} ảnh
+                </span>
+              </div>
+
+              <div style={{ display: "grid", gap: 12 }}>
+                {selectedDraftDesigns.map((entry, index) => {
+                  const state = mockupJobsByDesign.get(entry.id);
+                  const total = state?.total ?? 0;
+                  const completed = state?.completed ?? 0;
+                  const failed = state?.failed ?? 0;
+                  const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : state?.status === "failed" ? 100 : 0;
+                  const label = entry.design?.name ?? `Design ${index + 1}`;
+                  const statusLabel = state?.status === "completed"
+                    ? "Hoàn tất"
+                    : state?.status === "failed"
+                      ? "Lỗi"
+                      : state?.status === "running"
+                        ? "Đang render"
+                        : "Đang chờ";
+
+                  return (
+                    <div key={entry.id} style={{ display: "grid", gap: 6 }}>
+                      <div className="flex items-center justify-between gap-3" style={{ minWidth: 0 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <strong style={{ display: "block", fontSize: "0.82rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {label}
+                          </strong>
+                          <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55 }}>
+                            {statusLabel}
+                            {total > 0 ? ` · ${completed}/${total} ảnh` : ""}
+                            {failed > 0 ? ` · ${failed} lỗi` : ""}
+                          </p>
+                        </div>
+                        {state?.errorMessage && (
+                          <span style={{ fontSize: "0.72rem", color: "var(--color-danger, #dc2626)", maxWidth: 220, textAlign: "right" }}>
+                            {state.errorMessage}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ height: 8, borderRadius: 999, backgroundColor: "var(--bg-tertiary)", overflow: "hidden" }}>
+                        <div
+                          style={{
+                            width: `${percent}%`,
+                            height: "100%",
+                            backgroundColor: state?.status === "failed" ? "var(--color-danger, #dc2626)" : "var(--color-wise-green)",
+                            transition: "width 0.2s ease",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {isCustomTemplateDefault ? (
             draft?.storeId && selectedTemplate ? (
               <ColorMockupCardGrid
                 draftId={draftId as string}
                 templateId={selectedTemplate.id}
                 selectedColors={storeColors.filter((c) => selectedColorIds.has(c.id))}
-                designImageUrl={designPreviewUrl}
-                mockupImages={mockupImages}
+                designImageUrl={primaryDesignPreviewUrl}
+                mockupImages={activeMockupImages}
                 onGenerate={handleGenerate}
                 isGenerating={isGenerating}
                 generateButtonLabel={generateButtonLabel}
-                hasRenderedMockups={mockupImages.length > 0}
+                hasRenderedMockups={selectedDraftDesigns.length > 0 && selectedDraftDesigns.every((entry) => (mockupJobsByDesign.get(entry.id)?.images ?? []).length > 0)}
                 onNextStep={async () => {
                   if (draft) {
                     const store = useWizardStore.getState();
@@ -1109,259 +1507,272 @@ export default function Step3PreviewPage() {
             ) : null
           ) : (
             <>
-          {/* Live preview / placement editor */}
-          {showFullLivePreview ? (
-            <div className="card" style={{ padding: 20 }}>
-              <div className="flex justify-between items-center" style={{ marginBottom: 12 }}>
-                <div>
-                  <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>{livePreviewTitle}</h3>
-                  <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55 }}>
-                    {livePreviewDescription}
-                  </p>
-                </div>
-                {previewColors.length > 1 && (
-                  <div className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
-                    {previewColors.map((c, idx) => (
-                      <button
-                        key={c.id}
-                        onClick={() => setPreviewColorIdx(idx)}
-                        aria-label={`Xem màu ${c.name}`}
-                        title={c.name}
-                        style={{
-                          width: 24, height: 24, borderRadius: "50%",
-                          backgroundColor: c.hex,
-                          border: idx === Math.min(previewColorIdx, previewColors.length - 1)
-                            ? "2px solid var(--text-primary, #2a2a2a)"
-                            : "1px solid var(--border-default)",
-                          cursor: "pointer",
-                          padding: 0,
-                        }}
-                      />
-                    ))}
+              {showFullLivePreview ? (
+                <div className="card" style={{ padding: 20 }}>
+                  <div className="flex justify-between items-center" style={{ marginBottom: 12 }}>
+                    <div>
+                      <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>{livePreviewTitle}</h3>
+                      <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55 }}>
+                        {livePreviewDescription}
+                      </p>
+                    </div>
+                    {previewColors.length > 1 && (
+                      <div className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
+                        {previewColors.map((c, idx) => (
+                          <button
+                            key={c.id}
+                            onClick={() => setPreviewColorIdx(idx)}
+                            aria-label={`Xem màu ${c.name}`}
+                            title={c.name}
+                            style={{
+                              width: 24,
+                              height: 24,
+                              borderRadius: "50%",
+                              backgroundColor: c.hex,
+                              border:
+                                idx === Math.min(previewColorIdx, previewColors.length - 1)
+                                  ? "2px solid var(--text-primary, #2a2a2a)"
+                                  : "1px solid var(--border-default)",
+                              cursor: "pointer",
+                              padding: 0,
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
 
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setIsPlacementEditorOpen(true)}
-                disabled={!previewColor || !currentPreviewPlacement}
-                style={{
-                  marginBottom: 12,
-                  minHeight: 40,
-                  opacity: !previewColor || !currentPreviewPlacement ? 0.5 : 1,
-                  cursor: !previewColor || !currentPreviewPlacement ? "not-allowed" : "pointer",
-                }}
-              >
-                <SlidersHorizontal size={14} />
-                Chỉnh vị trí design
-              </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setIsPlacementEditorOpen(true)}
+                    disabled={!previewColor || !currentPreviewPlacement}
+                    style={{
+                      marginBottom: 12,
+                      minHeight: 40,
+                      opacity: !previewColor || !currentPreviewPlacement ? 0.5 : 1,
+                      cursor: !previewColor || !currentPreviewPlacement ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    <SlidersHorizontal size={14} />
+                    Chỉnh vị trí design
+                  </button>
 
-              {previewColor && currentPreviewPlacement ? (
-                <LivePreview
-                  colorHex={previewColor.hex}
-                  designUrl={designPreviewUrl}
-                  placement={currentPreviewPlacement}
-                  placementsByView={placementsByView}
-                  availableViews={livePreviewViews}
-                  selectedView={selectedLivePreviewView}
-                  onViewChange={(view) => setLivePreviewView(view)}
-                  printArea={WIZARD_PRINT_AREA}
-                  height={420}
-                />
-              ) : (
-                <div style={{ padding: 40, textAlign: "center", opacity: 0.5 }}>
-                  {!draft?.designId ? (
-                    <>
-                      <ArrowUpCircle size={32} style={{ marginBottom: 8 }} />
-                      <p style={{ fontSize: "0.85rem", margin: 0 }}>Chọn design ở bước trước.</p>
-                    </>
-                  ) : selectedColorIds.size === 0 && storeColors.length === 0 ? (
-                    <p style={{ fontSize: "0.85rem", margin: 0 }}>Cấu hình màu ở Store Settings trước.</p>
+                  {previewColor && currentPreviewPlacement ? (
+                    <LivePreview
+                      colorHex={previewColor.hex}
+                      designUrl={primaryDesignPreviewUrl}
+                      placement={currentPreviewPlacement}
+                      placementsByView={placementsByView}
+                      availableViews={livePreviewViews}
+                      selectedView={selectedLivePreviewView}
+                      onViewChange={(view) => setLivePreviewView(view)}
+                      printArea={WIZARD_PRINT_AREA}
+                      height={420}
+                    />
                   ) : (
-                    <p style={{ fontSize: "0.85rem", margin: 0 }}>Chọn màu và bật ít nhất 1 vị trí in để xem preview.</p>
+                    <div style={{ padding: 40, textAlign: "center", opacity: 0.5 }}>
+                      {selectedDraftDesigns.length === 0 ? (
+                        <>
+                          <ArrowUpCircle size={32} style={{ marginBottom: 8 }} />
+                          <p style={{ fontSize: "0.85rem", margin: 0 }}>Chọn design ở bước trước.</p>
+                        </>
+                      ) : selectedColorIds.size === 0 && storeColors.length === 0 ? (
+                        <p style={{ fontSize: "0.85rem", margin: 0 }}>Cấu hình màu ở Store Settings trước.</p>
+                      ) : (
+                        <p style={{ fontSize: "0.85rem", margin: 0 }}>Chọn màu và bật ít nhất 1 vị trí in để xem preview.</p>
+                      )}
+                    </div>
                   )}
                 </div>
-              )}
-            </div>
-          ) : (
-            <div
-              className="card"
-              style={{
-                padding: 14,
-                display: "grid",
-                gap: 10,
-                border: "1px solid var(--border-default)",
-                background: "var(--bg-primary)",
-              }}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div style={{ minWidth: 0 }}>
-                  <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>{livePreviewTitle}</h3>
-                  <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
-                    {livePreviewDescription}
-                  </p>
+              ) : (
+                <div
+                  className="card"
+                  style={{
+                    padding: 14,
+                    display: "grid",
+                    gap: 10,
+                    border: "1px solid var(--border-default)",
+                    background: "var(--bg-primary)",
+                  }}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div style={{ minWidth: 0 }}>
+                      <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>{livePreviewTitle}</h3>
+                      <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                        {livePreviewDescription}
+                      </p>
+                    </div>
+                    {previewColors.length > 1 && (
+                      <div className="flex items-center gap-1" style={{ flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        {previewColors.map((c, idx) => (
+                          <button
+                            key={c.id}
+                            onClick={() => setPreviewColorIdx(idx)}
+                            aria-label={`Xem màu ${c.name}`}
+                            title={c.name}
+                            style={{
+                              width: 20,
+                              height: 20,
+                              borderRadius: "50%",
+                              backgroundColor: c.hex,
+                              border:
+                                idx === Math.min(previewColorIdx, previewColors.length - 1)
+                                  ? "2px solid var(--text-primary, #2a2a2a)"
+                                  : "1px solid var(--border-default)",
+                              cursor: "pointer",
+                              padding: 0,
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      background: "var(--bg-inset, #f7f7f4)",
+                      border: "1px solid var(--border-default)",
+                      fontSize: "0.78rem",
+                      lineHeight: 1.45,
+                      color: "var(--text-muted)",
+                    }}
+                  >
+                    Preview lớn và nút <strong>Chỉnh vị trí</strong> nằm ở khối mockup bên dưới, bám theo mockup đang chọn.
+                  </div>
                 </div>
-                {previewColors.length > 1 && (
-                  <div className="flex items-center gap-1" style={{ flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    {previewColors.map((c, idx) => (
-                      <button
-                        key={c.id}
-                        onClick={() => setPreviewColorIdx(idx)}
-                        aria-label={`Xem màu ${c.name}`}
-                        title={c.name}
-                        style={{
-                          width: 20,
-                          height: 20,
-                          borderRadius: "50%",
-                          backgroundColor: c.hex,
-                          border: idx === Math.min(previewColorIdx, previewColors.length - 1)
-                            ? "2px solid var(--text-primary, #2a2a2a)"
-                            : "1px solid var(--border-default)",
-                          cursor: "pointer",
-                          padding: 0,
-                        }}
-                      />
-                    ))}
+              )}
+
+              {draft?.storeId && selectedTemplate && (
+                <WizardMockupSourcePanel
+                  draftId={draftId as string}
+                  storeId={draft.storeId}
+                  templateId={selectedTemplate.id}
+                  enabledColorIds={Array.from(selectedColorIds)}
+                  storeColors={storeColors}
+                  designImageUrl={primaryDesignPreviewUrl}
+                  onRegenerate={handleGenerate}
+                  onRemoveColor={removeColorFromListing}
+                />
+              )}
+
+              <div className="card" style={{ padding: 20, minHeight: 200 }}>
+                <div className="flex justify-between items-center" style={{ marginBottom: 16 }}>
+                  <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>
+                    {resultsSectionTitle}
+                    {selectedDraftDesigns.length > 1 ? ` · ${activeDesignTabLabel}` : ""}
+                  </h3>
+                  <button
+                    data-generate-mockups
+                    className={`btn flex items-center gap-2 px-4 py-2 rounded font-medium ${canGenerateMockups ? "btn-primary" : ""}`}
+                    onClick={handleGenerate}
+                    disabled={!canGenerateMockups}
+                    style={!canGenerateMockups ? { backgroundColor: "var(--bg-tertiary)", color: "var(--color-text)", opacity: 0.5, cursor: "not-allowed" } : {}}
+                  >
+                    {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                    {generateButtonLabel}
+                  </button>
+                </div>
+
+                {showSlowMockupWarning && isGenerating && overallJobProgress.total === 0 && (
+                  <div
+                    className="alert"
+                    style={{
+                      marginBottom: 12,
+                      backgroundColor: "rgba(234, 179, 8, 0.06)",
+                      border: "1px solid rgba(234, 179, 8, 0.25)",
+                    }}
+                  >
+                    <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
+                    <span style={{ fontSize: "0.82rem" }}>
+                      {isCustomTemplateDefault
+                        ? "Custom đang chuẩn bị mockup từ thư viện hoặc mockup riêng. Hệ thống vẫn đang kiểm tra và sẽ hiện lỗi nếu job bị kẹt."
+                        : "Printify đang render lâu hơn bình thường. Hệ thống vẫn đang kiểm tra và sẽ hiện lỗi nếu job bị kẹt."}
+                    </span>
                   </div>
                 )}
-              </div>
-              <div
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 8,
-                  background: "var(--bg-inset, #f7f7f4)",
-                  border: "1px solid var(--border-default)",
-                  fontSize: "0.78rem",
-                  lineHeight: 1.45,
-                  color: "var(--text-muted)",
-                }}
-              >
-                Preview lớn và nút <strong>Chỉnh vị trí</strong> nằm ở khối mockup bên dưới, bám theo mockup đang chọn.
-              </div>
-            </div>
-          )}
 
-          {/* Generate button + Real Mockup Gallery */}
-          {/* MOCKUP SOURCE PANEL */}
-          {draft?.storeId && (
-            <WizardMockupSourcePanel
-              draftId={draftId as string}
-              storeId={draft.storeId}
-              templateId={selectedTemplate?.id ?? null}
-              enabledColorIds={Array.from(selectedColorIds)}
-              storeColors={storeColors}
-              designImageUrl={designPreviewUrl}
-              onRegenerate={handleGenerate}
-              onRemoveColor={removeColorFromListing}
-            />
-          )}
+                {draft?.mockupsStale && activeMockupImages.length > 0 && !isGenerating && (
+                  <div
+                    className="alert"
+                    style={{
+                      marginBottom: 12,
+                      backgroundColor: "rgba(234, 179, 8, 0.06)",
+                      border: "1px solid rgba(234, 179, 8, 0.25)",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                    }}
+                  >
+                    <AlertTriangle size={16} style={{ color: "var(--color-warning)", flexShrink: 0 }} />
+                    <span style={{ flex: 1, fontSize: "0.82rem" }}>
+                      Mockup cũ không khớp placement/màu hiện tại.
+                    </span>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ fontSize: "0.75rem", padding: "4px 10px", flexShrink: 0 }}
+                      onClick={handleGenerate}
+                      disabled={isGenerating}
+                    >
+                      Tạo lại mockup →
+                    </button>
+                  </div>
+                )}
 
-          <div className="card" style={{ padding: 20, minHeight: 200 }}>
-            <div className="flex justify-between items-center" style={{ marginBottom: 16 }}>
-              <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>{resultsSectionTitle}</h3>
-              <button
-                data-generate-mockups
-                className={`btn flex items-center gap-2 px-4 py-2 rounded font-medium ${draft?.designId && !isGenerating && selectedTemplateReady && !hasSelectedMissingCustomColors ? 'btn-primary' : ''}`}
-                onClick={handleGenerate}
-                disabled={isGenerating || !draft?.designId || selectedColorIds.size === 0 || !selectedTemplateReady || hasSelectedMissingCustomColors}
-                style={(!draft?.designId || isGenerating || selectedColorIds.size === 0 || !selectedTemplateReady || hasSelectedMissingCustomColors) ? { backgroundColor: "var(--bg-tertiary)", color: "var(--color-text)", opacity: 0.5, cursor: "not-allowed" } : {}}
-              >
-                {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-                {generateButtonLabel}
-              </button>
-            </div>
-
-            {showSlowMockupWarning && isGenerating && jobProgress.total === 0 && (
-              <div
-                className="alert"
-                style={{
-                  marginBottom: 12,
-                  backgroundColor: "rgba(234, 179, 8, 0.06)",
-                  border: "1px solid rgba(234, 179, 8, 0.25)",
-                }}
-              >
-                <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
-                <span style={{ fontSize: "0.82rem" }}>
-                  {isCustomTemplateDefault
-                    ? "Custom đang chuẩn bị mockup từ thư viện hoặc mockup riêng. Hệ thống vẫn đang kiểm tra và sẽ hiện lỗi nếu job bị kẹt."
-                    : "Printify đang render lâu hơn bình thường. Hệ thống vẫn đang kiểm tra và sẽ hiện lỗi nếu job bị kẹt."}
-                </span>
+                {!(hasTriggeredBatchRender || isGenerating || activeMockupImages.length > 0) ? (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", opacity: 0.5, padding: 24 }}>
+                    <ImageIcon size={32} style={{ marginBottom: 8 }} />
+                    <p style={{ fontSize: "0.85rem", margin: 0, textAlign: "center" }}>
+                      {resultsEmptyState}
+                    </p>
+                  </div>
+                ) : (
+                  <MockupGallery
+                    draftId={draftId as string}
+                    images={activeMockupImages.filter((img) => {
+                      const normalizedColorName = img.colorName.trim().toLowerCase();
+                      return shouldShowInOfficialGallery(
+                        img,
+                        selectedTemplate?.defaultMockupSource ?? "PRINTIFY",
+                      ) && storeColors.some(
+                        (c) =>
+                          selectedColorIds.has(c.id) &&
+                          c.name.trim().toLowerCase() === normalizedColorName,
+                      );
+                    })}
+                    isPolling={isGenerating}
+                    progress={activeDesignProgress}
+                    onSelectionChange={async () => {
+                      if (!activeDesignJob?.jobId) return;
+                      try {
+                        const res = await fetch(`/api/mockup-jobs/${activeDesignJob.jobId}`);
+                        if (res.ok) {
+                          const job = await res.json();
+                          setMockupJobsByDesign((current) => {
+                            const next = new Map(current);
+                            const images = job.images ?? [];
+                            next.set(activeDesignJob.draftDesignId, {
+                              ...activeDesignJob,
+                              status: job.status ?? activeDesignJob.status,
+                              completed:
+                                job.completedImages ?? images.filter((img: any) => img.compositeStatus === "completed").length,
+                              total: job.totalImages ?? images.length,
+                              failed:
+                                job.failedImages ?? images.filter((img: any) => img.compositeStatus === "failed").length,
+                              images,
+                              errorMessage: job.errorMessage ?? null,
+                            });
+                            return next;
+                          });
+                        }
+                      } catch {
+                        // gallery already shows optimistic state
+                      }
+                    }}
+                  />
+                )}
               </div>
-            )}
-
-            {/* Outdated mockup banner */}
-            {draft?.mockupsStale && mockupImages.length > 0 && !isGenerating && (
-              <div
-                className="alert"
-                style={{
-                  marginBottom: 12,
-                  backgroundColor: "rgba(234, 179, 8, 0.06)",
-                  border: "1px solid rgba(234, 179, 8, 0.25)",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                }}
-              >
-                <AlertTriangle size={16} style={{ color: "var(--color-warning)", flexShrink: 0 }} />
-                <span style={{ flex: 1, fontSize: "0.82rem" }}>
-                  Mockup cũ không khớp placement/màu hiện tại.
-                </span>
-                <button
-                  className="btn btn-secondary"
-                  style={{ fontSize: "0.75rem", padding: "4px 10px", flexShrink: 0 }}
-                  onClick={handleGenerate}
-                  disabled={isGenerating}
-                >
-                  Tạo lại mockup →
-                </button>
-              </div>
-            )}
-
-            {!(hasTriggeredMockupRender || isGenerating || mockupImages.length > 0) ? (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", opacity: 0.5, padding: 24 }}>
-                <ImageIcon size={32} style={{ marginBottom: 8 }} />
-                <p style={{ fontSize: "0.85rem", margin: 0, textAlign: "center" }}>
-                  {resultsEmptyState}
-                </p>
-              </div>
-            ) : (
-              <MockupGallery
-                draftId={draftId as string}
-                images={mockupImages.filter((img) => {
-                  const normalizedColorName = img.colorName.trim().toLowerCase();
-                  return shouldShowInOfficialGallery(
-                    img,
-                    selectedTemplate?.defaultMockupSource ?? "PRINTIFY",
-                  ) && storeColors.some(
-                    (c) =>
-                      selectedColorIds.has(c.id) &&
-                      c.name.trim().toLowerCase() === normalizedColorName
-                  );
-                })}
-                isPolling={isGenerating}
-                progress={jobProgress}
-                onSelectionChange={async () => {
-                  // Refetch mockup images so parent state stays in sync
-                  if (!mockupJobId) return;
-                  try {
-                    const res = await fetch(`/api/mockup-jobs/${mockupJobId}`);
-                    if (res.ok) {
-                      const job = await res.json();
-                      setJobStatus(job.status);
-                      setJobProgress({
-                        completed: job.completedImages,
-                        total: job.totalImages,
-                        failed: job.failedImages,
-                      });
-                      setMockupImages(job.images || []);
-                    }
-                  } catch { /* gallery already shows optimistic state */ }
-                }}
-              />
-            )}
-          </div>
             </>
           )}
         </div>
@@ -1395,7 +1806,7 @@ export default function Step3PreviewPage() {
               <div>
                 <h3 style={{ margin: 0, fontWeight: 800 }}>Chỉnh vị trí design</h3>
                 <p style={{ margin: "3px 0 0", opacity: 0.55, fontSize: "0.85rem" }}>
-                  Thay đổi tại đây chỉ áp dụng cho listing hiện tại.
+                  Thay đổi tại đây sẽ áp dụng cho toàn bộ designs trong wizard.
                 </p>
               </div>
               <button
@@ -1422,7 +1833,7 @@ export default function Step3PreviewPage() {
             {currentPreviewPlacement ? (
               <CanvasPlacementEditor
                 backgroundImageUrl={canvasBackgroundImageUrl}
-                designImageUrl={designPreviewUrl}
+                designImageUrl={primaryDesignPreviewUrl}
                 imageWidth={SVG_VIEWBOX_W}
                 imageHeight={SVG_VIEWBOX_H}
                 mode={canvasEditorMode}
@@ -1441,8 +1852,8 @@ export default function Step3PreviewPage() {
                   );
                   toast.success(
                     canvasEditorMode === "CUSTOM_COMPOSITE"
-                      ? "Đã lưu vùng ghép cho listing hiện tại"
-                      : "Đã lưu vị trí design cho listing hiện tại",
+                      ? "Đã lưu vùng ghép cho toàn bộ designs trong wizard"
+                      : "Đã lưu vị trí design cho toàn bộ designs trong wizard",
                   );
                   setIsPlacementEditorOpen(false);
                 }}
