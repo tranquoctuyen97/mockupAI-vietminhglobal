@@ -19,6 +19,12 @@ export async function GET(
   const job = await prisma.mockupJob.findUnique({
     where: { id },
     include: {
+      draftDesign: {
+        include: {
+          design: true,
+        },
+      },
+      design: true,
       images: {
         orderBy: { sortOrder: 'asc' }
       }

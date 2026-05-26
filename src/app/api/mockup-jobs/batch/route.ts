@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import {
+  type BatchMockupJobFailure,
   MockupGenerationError,
   createMockupJobForDraftDesign,
   loadMockupGenerationContext,
   prepareMockupGeneration,
-  resolvePrimaryDraftDesign,
 } from "@/lib/mockup/generation";
 
 export async function POST(request: Request) {
@@ -19,20 +19,29 @@ export async function POST(request: Request) {
   try {
     const context = await loadMockupGenerationContext(draftId, session.tenantId);
     const prepared = await prepareMockupGeneration(context);
-    const result = await createMockupJobForDraftDesign(
-      context,
-      prepared,
-      resolvePrimaryDraftDesign(context),
-    );
+    const draftDesigns = context.draft.draftDesigns;
 
-    return NextResponse.json({
-      jobId: result.jobId,
-      totalImages: 0,
-      status: result.status,
-      provider: "printify",
-      draftDesignId: result.draftDesignId,
-      designId: result.designId,
-    });
+    if (draftDesigns.length === 0) {
+      throw new MockupGenerationError("No designs attached to draft", 400);
+    }
+
+    const jobs = [];
+    const failures: BatchMockupJobFailure[] = [];
+
+    for (const draftDesign of draftDesigns) {
+      try {
+        jobs.push(await createMockupJobForDraftDesign(context, prepared, draftDesign));
+      } catch (error) {
+        failures.push({
+          draftDesignId: draftDesign.id,
+          designId: draftDesign.designId,
+          designName: draftDesign.design.name,
+          error: error instanceof Error ? error.message : "Unknown Printify error",
+        });
+      }
+    }
+
+    return NextResponse.json({ jobs, failures });
   } catch (error) {
     if (error instanceof MockupGenerationError) {
       return NextResponse.json(
@@ -41,7 +50,7 @@ export async function POST(request: Request) {
       );
     }
     const message = error instanceof Error ? error.message : "Unknown Printify error";
-    console.error("Printify real mockup generation failed:", error);
+    console.error("Printify batch mockup generation failed:", error);
     return NextResponse.json(
       {
         error: `Printify không tạo được mockup thật: ${message}`,
