@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { sanitizeDraftPatch } from "./state";
@@ -87,4 +87,24 @@ test("step 1 resets templateId when store changes", () => {
   );
 
   assert.match(source, /templateId:\s*null/);
+});
+
+test("multi-design wizard migration backfills child design rows and removes single-listing uniqueness", () => {
+  const migrations = readdirSync(join(process.cwd(), "prisma/migrations"))
+    .filter((name) => name.includes("multi_design_wizard") || name.includes("add_multi_design_wizard"))
+    .sort();
+
+  assert.ok(migrations.length > 0, "expected add_multi_design_wizard migration");
+
+  const migration = readFileSync(
+    join(process.cwd(), "prisma/migrations", migrations[migrations.length - 1], "migration.sql"),
+    "utf8",
+  );
+
+  assert.match(migration, /CREATE TABLE\s+"wizard_draft_designs"/);
+  assert.match(migration, /INSERT INTO\s+"wizard_draft_designs"/);
+  assert.match(migration, /FROM\s+"wizard_drafts"/);
+  assert.match(migration, /ALTER TABLE\s+"mockup_jobs"\s+ADD COLUMN\s+"wizard_draft_design_id"/);
+  assert.match(migration, /ALTER TABLE\s+"listings"\s+ADD COLUMN\s+"wizard_draft_design_id"/);
+  assert.match(migration, /DROP CONSTRAINT IF EXISTS\s+"listings_wizard_draft_id_key"/);
 });
