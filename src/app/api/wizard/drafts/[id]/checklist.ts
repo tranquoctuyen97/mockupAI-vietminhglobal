@@ -1,4 +1,5 @@
 import { PRODUCT_DEFAULTS } from "@/lib/config/runtime-controls";
+import { getLatestJobByDraftDesignId } from "@/lib/mockup/multi-design";
 import { isRealPrintifyMockupMedia } from "@/lib/mockup/real-printify-media";
 import { migratePlacementOnRead } from "@/lib/placement/migrate";
 import { validatePlacementSet } from "@/lib/placement/validate";
@@ -9,36 +10,41 @@ export async function buildChecklist(draft: any) {
   const selectedColorIds = new Set((draft.enabledColorIds ?? []) as string[]);
   const selectedColors = ((draft.store?.colors ?? []) as Array<{ id: string; name: string }>)
     .filter((color) => selectedColorIds.has(color.id));
+  const selectedDraftDesignKeys = getChecklistDesignKeys(draft);
+  const latestJobsByDesign = getLatestJobByDraftDesignId(
+    (draft.mockupJobs ?? []) as Array<{
+      id: string;
+      draftDesignId?: string | null;
+      designId?: string | null;
+      createdAt: Date | string;
+      status: string;
+      images?: Array<{
+        colorName: string;
+        included: boolean;
+        compositeUrl?: string | null;
+        sourceUrl?: string | null;
+      }>;
+    }>,
+  );
 
   const requireRealPrintifyMockups = PRODUCT_DEFAULTS.mockup.requireRealPrintifyMockups;
-
-  const completedJobsSorted = ((draft.mockupJobs ?? []) as Array<{
-    id: string;
-    createdAt: Date | string;
-    status: string;
-    images?: Array<{
-      colorName: string;
-      included: boolean;
-      compositeUrl?: string | null;
-      sourceUrl?: string | null;
-    }>;
-  }>)
-    .filter((job) => job.status === "completed")
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-  const latestJob = completedJobsSorted[0];
-  const includedImages = latestJob
-    ? (latestJob.images ?? [])
-        .filter((image) => image.included)
-        .filter((image) => !requireRealPrintifyMockups || isRealPrintifyMockup(image))
-    : [];
-
-  const colorsWithMockup = new Set(
-    includedImages.map((image) => normalizeColorName(image.colorName)),
-  );
   const mockupsMatchColors =
     selectedColors.length > 0 &&
-    selectedColors.every((color) => colorsWithMockup.has(normalizeColorName(color.name)));
+    selectedDraftDesignKeys.length > 0 &&
+    selectedDraftDesignKeys.every((draftDesignKey) => {
+      const latestJob = latestJobsByDesign.get(draftDesignKey);
+      if (!latestJob || latestJob.status.toLowerCase() !== "completed") return false;
+
+      const includedImages = (latestJob.images ?? [])
+        .filter((image) => image.included)
+        .filter((image) => !requireRealPrintifyMockups || isRealPrintifyMockup(image));
+
+      const colorsWithMockup = new Set(
+        includedImages.map((image) => normalizeColorName(image.colorName)),
+      );
+
+      return selectedColors.every((color) => colorsWithMockup.has(normalizeColorName(color.name)));
+    });
 
   const content = draft.aiContent as {
     title?: string;
@@ -88,6 +94,26 @@ export async function buildChecklist(draft: any) {
 
 function normalizeColorName(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function getChecklistDesignKeys(draft: any): string[] {
+  type DraftDesignEntry = {
+    id?: string | null;
+    designId?: string | null;
+    sortOrder?: number | null;
+  };
+
+  const draftDesigns: DraftDesignEntry[] = Array.isArray(draft?.draftDesigns) ? draft.draftDesigns : [];
+
+  if (draftDesigns.length > 0) {
+    return draftDesigns
+      .slice()
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+      .map((entry) => entry.id ?? entry.designId ?? "")
+      .filter((value): value is string => Boolean(value.trim()));
+  }
+
+  return typeof draft?.designId === "string" && draft.designId.trim() ? [draft.designId.trim()] : [];
 }
 
 function isRealPrintifyMockup(image: { compositeUrl?: string | null; sourceUrl?: string | null }): boolean {

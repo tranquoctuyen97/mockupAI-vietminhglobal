@@ -29,9 +29,9 @@ export default function UploadDesignPage() {
   const [dragActive, setDragActive] = useState(false);
 
   const handleFile = useCallback((f: File) => {
-    const allowed = ["image/png", "image/jpeg", "image/webp"];
+    const allowed = ["image/png", "image/jpeg"];
     if (!allowed.includes(f.type)) {
-      setError("Chỉ chấp nhận PNG, JPG, hoặc WEBP");
+      setError("Chỉ chấp nhận PNG hoặc JPG");
       return;
     }
     if (f.size > 20 * 1024 * 1024) {
@@ -184,7 +184,7 @@ export default function UploadDesignPage() {
             <input
               id="file-input"
               type="file"
-              accept="image/png,image/jpeg,image/webp"
+              accept="image/png,image/jpeg"
               style={{ display: "none" }}
               onChange={(e) => {
                 const f = e.target.files?.[0];
@@ -229,7 +229,7 @@ export default function UploadDesignPage() {
                   Kéo thả file vào đây hoặc click để chọn
                 </p>
                 <p style={{ opacity: 0.5, fontSize: "0.8rem", margin: 0 }}>
-                  PNG, JPG, WEBP · Tối đa 20MB
+                  PNG, JPG · Tối đa 20MB
                 </p>
               </>
             )}

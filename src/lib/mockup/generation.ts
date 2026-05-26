@@ -58,6 +58,12 @@ export async function loadMockupGenerationContext(draftId: string, tenantId: str
       design: true,
       draftDesigns: {
         orderBy: { sortOrder: "asc" },
+        where: {
+          design: {
+            status: "ACTIVE",
+            deletedAt: null,
+          },
+        },
         include: { design: true },
       },
       template: {

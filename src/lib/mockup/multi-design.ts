@@ -4,6 +4,13 @@ export type MockupJobLike = {
   designId?: string | null;
   createdAt?: string | Date | null;
   status?: string | null;
+  images?: Array<{
+    included?: boolean;
+    printifyMockupId?: string | null;
+    colorName?: string;
+    sourceUrl?: string | null;
+    compositeUrl?: string | null;
+  }>;
 };
 
 const USABLE_JOB_STATUSES = new Set(["pending", "running", "completed"]);

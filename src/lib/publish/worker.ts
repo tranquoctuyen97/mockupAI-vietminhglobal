@@ -3,13 +3,14 @@
  *
  * Retry: 3 attempts with exponential backoff (1s, 2s, 4s)
  * SSE: real-time progress events
- * Idempotency: sha256(draftId + tenantId)
+ * Idempotency: sha256(draftId + tenantId + scope)
  */
 
 import { createHash } from "node:crypto";
 import { isPublishDryRun, PRODUCT_DEFAULTS } from "@/lib/config/runtime-controls";
 import { decrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
+import { getLatestJobByDraftDesignId } from "@/lib/mockup/multi-design";
 import { resolveEffectivePlacementData } from "@/lib/mockup/plan";
 import {
   isAllowedRemoteMockupUrl,
@@ -31,8 +32,8 @@ import { publishToShopify, type ShopifyMockupImage } from "./shopify";
 const MAX_RETRIES = 5;
 const BACKOFF_BASE_MS = 2000;
 
-export function generateIdempotencyKey(draftId: string, tenantId: string): string {
-  return createHash("sha256").update(`${draftId}|${tenantId}`).digest("hex");
+export function generateIdempotencyKey(draftId: string, tenantId: string, scope = ""): string {
+  return createHash("sha256").update(`${draftId}|${tenantId}|${scope}`).digest("hex");
 }
 
 interface PublishInput {
@@ -55,10 +56,12 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
   const { listingId, draftId, tenantId } = input;
   const publishChannelId = `publish:${listingId}`;
   const draftChannelId = draftId; // Also emit to draft events for Step 5 review page
+  let draftDesignIdForEvents: string | null = null;
 
-  const emitEvent = (type: string, data: any) => {
-    sseChannels.emit(publishChannelId, { type, data });
-    sseChannels.emit(draftChannelId, { type, data });
+  const emitEvent = (type: string, data: Record<string, unknown> = {}) => {
+    const payload = { ...data, listingId, draftId, draftDesignId: draftDesignIdForEvents };
+    sseChannels.emit(publishChannelId, { type, data: payload });
+    sseChannels.emit(draftChannelId, { type, data: payload });
   };
 
   try {
@@ -68,6 +71,7 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
       include: { variants: true, publishJobs: true },
     });
     if (!listing) throw new Error("Listing not found");
+    draftDesignIdForEvents = listing.wizardDraftDesignId ?? null;
 
     // Load store
     const store = await prisma.store.findUnique({
@@ -111,8 +115,20 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
     const draft = await prisma.wizardDraft.findUnique({
       where: { id: draftId },
       include: {
-        mockupJobs: true,
+        mockupJobs: {
+          include: {
+            images: {
+              orderBy: { sortOrder: "asc" },
+            },
+          },
+        },
         design: true,
+        draftDesigns: {
+          orderBy: { sortOrder: "asc" },
+          include: {
+            design: true,
+          },
+        },
         template: true,
         store: { include: { colors: true } },
       },
@@ -121,31 +137,22 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
 
     const storage = getStorage();
     const listingColorNames = listing.variants.map((v) => v.colorName);
-    const latestCompletedJob = await prisma.mockupJob.findFirst({
-      where: {
-        draftId,
-        status: "completed",
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+    const latestJobsByDesign = getLatestJobByDraftDesignId(draft.mockupJobs);
+    const draftDesign = listing.wizardDraftDesignId
+      ? draft.draftDesigns.find((entry) => entry.id === listing.wizardDraftDesignId) ?? null
+      : null;
+    const designJobKey = listing.wizardDraftDesignId ?? listing.designId ?? draft.designId ?? null;
+    const selectedMockupJob = designJobKey ? latestJobsByDesign.get(designJobKey) ?? null : null;
 
-    const includedImages = latestCompletedJob
-      ? await prisma.mockupImage.findMany({
-          where: {
-            mockupJobId: latestCompletedJob.id,
-            included: true,
-            compositeUrl: { not: null },
-          },
-        })
-      : await prisma.mockupImage.findMany({
-          where: {
-            mockupJob: { draftId },
-            included: true,
-            compositeUrl: { not: null },
-          },
-        });
+    if (!selectedMockupJob || selectedMockupJob.status?.toLowerCase() !== "completed") {
+      throw new Error(
+        `Mockups chưa hoàn tất cho design ${draftDesign?.design?.name ?? draft.design?.name ?? listing.title}`,
+      );
+    }
+
+    const includedImages = (selectedMockupJob.images ?? []).filter(
+      (image) => image.included && Boolean(image.compositeUrl),
+    );
     const isDryRun = isPublishDryRun();
     const requireRealPrintifyMockups = PRODUCT_DEFAULTS.mockup.requireRealPrintifyMockups;
     const { mockupImages, mockupPaths, missingColorNames } = resolveShopifyMockupMedia({
@@ -314,14 +321,34 @@ export async function runPrintifyStage(
   const printifyJob = listing.publishJobs.find((j: any) => j.stage === "PRINTIFY");
   if (!printifyJob) return;
 
-  sseChannels.emit(channelId, {
-    type: "publish.printify.start",
-    data: { stage: "PRINTIFY" },
-  });
-  sseChannels.emit(draftId, {
-    type: "publish.printify.start",
-    data: { stage: "PRINTIFY" },
-  });
+  const emitEvent = (type: string, data: Record<string, unknown> = {}) => {
+    const payload = { ...data, listingId, draftId, draftDesignId: listing.wizardDraftDesignId ?? null };
+    sseChannels.emit(channelId, { type, data: payload });
+    sseChannels.emit(draftId, { type, data: payload });
+  };
+
+  const draftDesign = listing.wizardDraftDesignId
+    ? draft.draftDesigns?.find((entry: any) => entry.id === listing.wizardDraftDesignId) ?? null
+    : null;
+  const targetDesign = draftDesign?.design ?? draft.design ?? null;
+  if (listing.wizardDraftDesignId && !draftDesign) {
+    await prisma.publishJob.update({
+      where: { id: printifyJob.id },
+      data: { status: "FAILED", lastError: "Draft design not found", attempts: { increment: 1 } },
+    });
+    await prisma.listing.update({
+      where: { id: listingId },
+      data: { status: "PARTIAL_FAILURE" },
+    });
+    emitEvent("publish.complete", { status: "PARTIAL_FAILURE", reason: "Draft design not found" });
+    return;
+  }
+
+  const designJobKey = listing.wizardDraftDesignId ?? listing.designId ?? draft.designId ?? null;
+  const latestJobsByDesign = getLatestJobByDraftDesignId(draft.mockupJobs ?? []);
+  const selectedMockupJob = designJobKey ? latestJobsByDesign.get(designJobKey) ?? null : null;
+
+  emitEvent("publish.printify.start", { stage: "PRINTIFY" });
 
   await prisma.publishJob.update({
     where: { id: printifyJob.id },
@@ -334,8 +361,24 @@ export async function runPrintifyStage(
     printifyResult = { printifyProductId: `dry-run-${Date.now()}` };
     await sleep(1000);
   } else {
-    const designPath = draft.design?.storagePath
-      ? storage.resolvePath(draft.design.storagePath)
+    if (!selectedMockupJob || selectedMockupJob.status?.toLowerCase() !== "completed") {
+      await prisma.publishJob.update({
+        where: { id: printifyJob.id },
+        data: { status: "FAILED", lastError: "Mockups not ready", attempts: { increment: 1 } },
+      });
+      await prisma.listing.update({
+        where: { id: listingId },
+        data: { status: "PARTIAL_FAILURE" },
+      });
+      emitEvent("publish.complete", {
+        status: "PARTIAL_FAILURE",
+        reason: `Mockups chưa hoàn tất cho design ${targetDesign?.name ?? listing.title}`,
+      });
+      return;
+    }
+
+    const designPath = targetDesign?.storagePath
+      ? storage.resolvePath(targetDesign.storagePath)
       : null;
 
     if (!designPath) {
@@ -347,45 +390,17 @@ export async function runPrintifyStage(
         where: { id: listingId },
         data: { status: "PARTIAL_FAILURE" },
       });
-      sseChannels.emit(channelId, {
-        type: "publish.complete",
-        data: { status: "PARTIAL_FAILURE", reason: "Design file not found" },
-      });
-      sseChannels.emit(draftId, {
-        type: "publish.complete",
-        data: { status: "PARTIAL_FAILURE", reason: "Design file not found" },
-      });
+      emitEvent("publish.complete", { status: "PARTIAL_FAILURE", reason: "Design file not found" });
       return;
     }
 
-    // Find included mockup images from latest completed job
-    const latestPrintifyCompletedJob = await prisma.mockupJob.findFirst({
-      where: {
-        draftId,
-        status: "completed",
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
-
-    const includedImagesForPrintify = latestPrintifyCompletedJob
-      ? await prisma.mockupImage.findMany({
-          where: {
-            mockupJobId: latestPrintifyCompletedJob.id,
-            included: true,
-          },
-        })
-      : await prisma.mockupImage.findMany({
-          where: {
-            mockupJob: { draftId },
-            included: true,
-          },
-        });
+    const includedImagesForPrintify = (selectedMockupJob.images ?? []).filter((img: any) => img.included);
 
     const selectedMockupIds = includedImagesForPrintify
       .map((img: any) => img.printifyMockupId)
       .filter((id: string) => id && !id.startsWith("custom:") && !id.startsWith("synthetic:"));
+    const draftProductId = draftDesign?.printifyDraftProductId ?? draft.printifyDraftProductId ?? null;
+    const draftImageId = draftDesign?.printifyImageId ?? draft.printifyImageId ?? null;
     let template = draft.template;
     if (!template && draft.storeId) {
       template = await prisma.storeMockupTemplate.findFirst({
@@ -449,15 +464,16 @@ export async function runPrintifyStage(
       );
     }
 
-    if (draft.printifyDraftProductId) {
+    if (draftProductId) {
       printifyResult = await retryWithBackoff(
         async () =>
           publishExistingPrintifyDraftProduct({
             storeId: store.id,
             draftId: draft.id,
-            productId: draft.printifyDraftProductId!,
-            designStoragePath: draft.design!.storagePath,
-            cachedImageId: draft.printifyImageId,
+            draftDesignId: draftDesign?.id ?? null,
+            productId: draftProductId,
+            designStoragePath: designPath,
+            cachedImageId: draftImageId,
             title: listing.title,
             description: listing.descriptionHtml,
             blueprintId: template?.printifyBlueprintId ?? 0,
@@ -506,43 +522,17 @@ export async function runPrintifyStage(
       data: { status: "SUCCEEDED", completedAt: new Date() },
     });
     // Emit printify done before final complete
-    sseChannels.emit(channelId, {
-      type: "publish.printify.done",
-      data: { printifyProductId: printifyResult.printifyProductId },
-    });
-    sseChannels.emit(draftId, {
-      type: "publish.printify.done",
-      data: { printifyProductId: printifyResult.printifyProductId },
-    });
+    emitEvent("publish.printify.done", { printifyProductId: printifyResult.printifyProductId });
 
-    sseChannels.emit(channelId, {
-      type: "publish.complete",
-      data: { status: "ACTIVE", printifyProductId: printifyResult.printifyProductId },
-    });
-    sseChannels.emit(draftId, {
-      type: "publish.complete",
-      data: { status: "ACTIVE", printifyProductId: printifyResult.printifyProductId },
-    });
+    emitEvent("publish.complete", { status: "ACTIVE", printifyProductId: printifyResult.printifyProductId });
   } else {
     await prisma.listing.update({
       where: { id: listingId },
       data: { status: "PARTIAL_FAILURE" },
     });
-    sseChannels.emit(channelId, {
-      type: "publish.complete",
-      data: {
-        status: "PARTIAL_FAILURE",
-        reason: "Printify publish failed after retries",
-        listingId,
-      },
-    });
-    sseChannels.emit(draftId, {
-      type: "publish.complete",
-      data: {
-        status: "PARTIAL_FAILURE",
-        reason: "Printify publish failed after retries",
-        listingId,
-      },
+    emitEvent("publish.complete", {
+      status: "PARTIAL_FAILURE",
+      reason: "Printify publish failed after retries",
     });
   }
 }
@@ -612,6 +602,7 @@ export function resolvePublishVariantIds(
 async function publishExistingPrintifyDraftProduct(input: {
   storeId: string;
   draftId: string;
+  draftDesignId?: string | null;
   productId: string;
   designStoragePath: string;
   cachedImageId?: string | null;
@@ -659,6 +650,24 @@ async function publishExistingPrintifyDraftProduct(input: {
       ...commonPayload,
       productId: input.productId,
     });
+    if (input.draftDesignId) {
+      await prisma.wizardDraftDesign.update({
+        where: { id: input.draftDesignId },
+        data: {
+          printifyImageId: imageId,
+          printifyDraftProductId: product.productId,
+          lastError: null,
+        },
+      });
+    } else {
+      await prisma.wizardDraft.update({
+        where: { id: input.draftId },
+        data: {
+          printifyImageId: imageId,
+          printifyDraftProductId: product.productId,
+        },
+      });
+    }
     return { printifyProductId: product.productId };
   } catch (err) {
     // Draft product was deleted or corrupted on Printify — clear stale ref and CREATE new
@@ -668,15 +677,40 @@ async function publishExistingPrintifyDraftProduct(input: {
       console.warn(
         `[PublishWorker] Draft product ${input.productId} ${isNotFound ? "not found (404)" : "server error (5xx)"}. Clearing stale ref and creating new product.`,
       );
-      await prisma.wizardDraft.update({
-        where: { id: input.draftId },
-        data: { printifyDraftProductId: null },
-      });
+      if (input.draftDesignId) {
+        await prisma.wizardDraftDesign.update({
+          where: { id: input.draftDesignId },
+          data: { printifyDraftProductId: null },
+        });
+      } else {
+        await prisma.wizardDraft.update({
+          where: { id: input.draftId },
+          data: { printifyDraftProductId: null },
+        });
+      }
 
       const product = await createOrUpdatePrintifyProduct({
         ...commonPayload,
         productId: null, // Force CREATE
       });
+      if (input.draftDesignId) {
+        await prisma.wizardDraftDesign.update({
+          where: { id: input.draftDesignId },
+          data: {
+            printifyImageId: imageId,
+            printifyDraftProductId: product.productId,
+            lastError: null,
+          },
+        });
+      } else {
+        await prisma.wizardDraft.update({
+          where: { id: input.draftId },
+          data: {
+            printifyImageId: imageId,
+            printifyDraftProductId: product.productId,
+          },
+        });
+      }
       return { printifyProductId: product.productId };
     }
     throw err;

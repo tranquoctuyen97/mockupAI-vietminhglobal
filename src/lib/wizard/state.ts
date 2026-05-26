@@ -41,6 +41,12 @@ const draftPatchKeys = [
 
 const draftDesignsWithRelationsInclude = {
   orderBy: { sortOrder: "asc" },
+  where: {
+    design: {
+      status: "ACTIVE",
+      deletedAt: null,
+    },
+  },
   include: {
     design: true,
     jobs: {
@@ -206,6 +212,16 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
           : undefined,
       },
     });
+
+    // When template changes, clear cached Printify product IDs.
+    // Old products belong to a different blueprint/provider — reusing them
+    // via PUT would cause Printify error 8251 "Variants do not match".
+    if (templateChanged) {
+      await tx.wizardDraftDesign.updateMany({
+        where: { draftId: id },
+        data: { printifyDraftProductId: null },
+      });
+    }
 
     if (nextDesignIds !== undefined) {
       if (nextDesignIds.length > 0) {

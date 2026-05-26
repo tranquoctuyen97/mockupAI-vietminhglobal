@@ -87,6 +87,7 @@ test("getDraft and updateDraft include ordered draftDesigns with design and job 
   );
 
   assert.match(source, /const draftDesignsWithRelationsInclude = {\s*orderBy:\s*{\s*sortOrder:\s*"asc"/);
+  assert.match(source, /draftDesignsWithRelationsInclude[\s\S]*where:\s*{\s*design:\s*{\s*status:\s*"ACTIVE"/);
   assert.match(source, /draftDesignsWithRelationsInclude[\s\S]*include:\s*{[\s\S]*design:\s*true/);
   assert.match(source, /draftDesignsWithRelationsInclude[\s\S]*jobs:\s*{[\s\S]*include:\s*{[\s\S]*images:\s*{[\s\S]*orderBy:\s*{\s*sortOrder:\s*"asc"/);
   assert.equal(

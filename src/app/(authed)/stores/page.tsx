@@ -15,7 +15,6 @@ export default async function StoresPage() {
 
   const stores = await listStores(session.tenantId);
   const canManageStores = await hasFeature(session.tenantId, session.role, "stores");
-  const canManageMockupLibrary = await hasFeature(session.tenantId, session.role, "mockup_library");
 
   // Serialize Date fields for client
   const serialized = stores.map((s: Record<string, unknown>) => ({
@@ -29,7 +28,6 @@ export default async function StoresPage() {
     <StoresClient
       initialStores={serialized as never[]}
       canManageStores={canManageStores}
-      canManageMockupLibrary={canManageMockupLibrary}
     />
   );
 }

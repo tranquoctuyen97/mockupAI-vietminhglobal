@@ -66,6 +66,18 @@ interface DraftData {
   selectedColors: SelectedColor[] | null;
   enabledColorIds: string[] | null;
   enabledSizes: string[] | null;
+  design?: {
+    id: string;
+    name: string;
+    storagePath: string;
+    previewPath?: string | null;
+  } | null;
+  template?: {
+    id: string;
+    blueprintTitle?: string;
+    defaultPlacement?: unknown;
+    enabledVariantIds?: number[];
+  } | null;
   store?: {
     colors?: StoreColor[];
     template?: {

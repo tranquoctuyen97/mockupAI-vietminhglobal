@@ -1002,9 +1002,9 @@ export default function Step3PreviewPage() {
               <button
                 type="button"
                 className="btn btn-primary"
-                onClick={() => router.push(`/stores/${draft?.storeId}/mockup-library?templateId=${selectedTemplate?.id}`)}
+                onClick={() => router.push(`/stores/${draft?.storeId}/config`)}
               >
-                Mở Thư viện mockup
+                Mở Store Settings
               </button>
               <button
                 type="button"

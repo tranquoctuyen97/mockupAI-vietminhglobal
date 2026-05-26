@@ -42,7 +42,19 @@ export async function POST(
         where: { id: listing.wizardDraftId },
         include: {
           design: true,
-          mockupJobs: true,
+          draftDesigns: {
+            orderBy: { sortOrder: "asc" },
+            include: {
+              design: true,
+            },
+          },
+          mockupJobs: {
+            include: {
+              images: {
+                orderBy: { sortOrder: "asc" },
+              },
+            },
+          },
           template: true,
           store: true,
         },

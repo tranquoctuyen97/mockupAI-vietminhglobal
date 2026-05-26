@@ -45,6 +45,7 @@ interface MultiViewPlacementEditorProps {
   onChange: (next: PlacementData) => void;
   bgColor?: string;
   designUrl?: string | null;
+  mockupUrlsByView?: Record<string, string | null>;
   title?: string;
   description?: string;
   compact?: boolean;
@@ -55,6 +56,7 @@ export function MultiViewPlacementEditor({
   onChange,
   bgColor = "#EEEEEE",
   designUrl,
+  mockupUrlsByView,
   title = "Placement",
   description = "Cấu hình vị trí in cho từng mặt sản phẩm.",
   compact = false,
@@ -211,6 +213,7 @@ export function MultiViewPlacementEditor({
               placement={activePlacement}
               onChange={updateActivePlacement}
               bgColor={bgColor}
+              bgImageUrl={mockupUrlsByView?.[activeView] ?? undefined}
               designUrl={designUrl ?? undefined}
               canvasWidth={compact ? 460 : 560}
               canvasHeight={compact ? 500 : 560}

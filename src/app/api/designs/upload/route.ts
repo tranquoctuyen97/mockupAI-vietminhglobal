@@ -1,6 +1,6 @@
 /**
  * POST /api/designs/upload
- * Upload a design file (PNG/JPG/WEBP, max 20MB)
+ * Upload a design file (PNG/JPG, max 20MB)
  */
 
 import { NextResponse } from "next/server";
@@ -19,7 +19,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
-const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const ALLOWED_TYPES = ["image/png", "image/jpeg"];
 
 /**
  * Convert Web Request to Node IncomingMessage for formidable
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
     const fileArray = files.file;
     if (!fileArray || fileArray.length === 0) {
       return NextResponse.json(
-        { error: "Vui lòng chọn file ảnh (PNG, JPG, hoặc WEBP)" },
+        { error: "Vui lòng chọn file ảnh (PNG hoặc JPG)" },
         { status: 400 },
       );
     }
@@ -97,7 +97,7 @@ export async function POST(request: Request) {
 
     if (!file.mimetype || !ALLOWED_TYPES.includes(file.mimetype)) {
       return NextResponse.json(
-        { error: "Chỉ chấp nhận PNG, JPG, hoặc WEBP" },
+        { error: "Chỉ chấp nhận PNG hoặc JPG" },
         { status: 400 },
       );
     }

@@ -29,6 +29,7 @@ interface Props {
   placement: Placement;
   onChange: (next: Placement) => void;
   bgColor?: string;        // solid color background (e.g. first variant hex)
+  bgImageUrl?: string;     // mockup image as background for the canvas
   designUrl?: string;       // optional: real design preview image
   readOnly?: boolean;
   canvasWidth?: number;
@@ -49,6 +50,7 @@ export function PlacementEditor({
   placement,
   onChange,
   bgColor = "#EEEEEE",
+  bgImageUrl,
   designUrl,
   readOnly = false,
   canvasWidth = 400,
@@ -85,6 +87,17 @@ export function PlacementEditor({
       trRef.current.getLayer()?.batchDraw();
     }
   }, [selected]);
+
+  // Load background mockup image
+  const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
+  useEffect(() => {
+    if (!bgImageUrl) { setBgImage(null); return; }
+    const img = new window.Image();
+    img.crossOrigin = "anonymous";
+    img.src = bgImageUrl;
+    img.onload = () => setBgImage(img);
+    return () => { img.onload = null; };
+  }, [bgImageUrl]);
 
   // Load design image
   useEffect(() => {
@@ -141,13 +154,33 @@ export function PlacementEditor({
         {/* Background fill */}
         <Rect x={0} y={0} width={canvasWidth} height={canvasHeight} fill="#f5f5f5" />
 
-        {/* Print area — product zone */}
+        {/* Mockup background image OR solid color fallback */}
+        {bgImage ? (
+          <KonvaImage
+            image={bgImage}
+            x={0}
+            y={0}
+            width={canvasWidth}
+            height={canvasHeight}
+            listening={false}
+          />
+        ) : (
+          <Rect
+            x={paX}
+            y={paY}
+            width={toPx(printArea.widthMm)}
+            height={toPx(printArea.heightMm)}
+            fill={bgColor}
+            cornerRadius={4}
+          />
+        )}
+
+        {/* Print area dashed outline (always visible) */}
         <Rect
           x={paX}
           y={paY}
           width={toPx(printArea.widthMm)}
           height={toPx(printArea.heightMm)}
-          fill={bgColor}
           stroke="#bbb"
           strokeWidth={1}
           dash={[6, 3]}

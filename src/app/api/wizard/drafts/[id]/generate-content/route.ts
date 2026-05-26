@@ -26,6 +26,12 @@ export async function POST(
     },
     include: {
       design: true,
+      draftDesigns: {
+        orderBy: { sortOrder: "asc" },
+        include: {
+          design: true,
+        },
+      },
       store: { include: { colors: true } },
       template: true,
     },
@@ -36,17 +42,22 @@ export async function POST(
   }
 
   // Pre-requisite checks
-  if (!draft.design) {
+  const primaryDesign = draft.draftDesigns[0]?.design ?? draft.design;
+
+  if (!primaryDesign) {
     return NextResponse.json({ error: "Design not selected" }, { status: 400 });
   }
 
   // Cast JsonValue to structured fallback
-  const colors = draft.store?.colors?.filter((c: any) => draft.enabledColorIds.includes(c.id)).map((c: any) => c.name) || [];
+  const colors =
+    draft.store?.colors
+      ?.filter((c: any) => (draft.enabledColorIds ?? []).includes(c.id))
+      .map((c: any) => c.name) || [];
   const placementObj = (draft.placementOverride as { position?: string }) || {};
   const productType = draft.template?.blueprintTitle || draft.store?.name || "T-Shirt";
 
   const input = {
-    designName: draft.design.name,
+    designName: primaryDesign.name,
     productType,
     colors: colors.length > 0 ? colors : ["Default"],
     placement: placementObj.position || "Front",
@@ -139,4 +150,3 @@ export async function POST(
     );
   }
 }
-

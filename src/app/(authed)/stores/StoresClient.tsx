@@ -4,10 +4,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   ExternalLink,
-  Images,
   Palette,
   Plus,
-  RefreshCw,
   Settings,
   Store,
   XCircle,
@@ -32,45 +30,14 @@ interface StoreData {
 interface Props {
   initialStores: StoreData[];
   canManageStores: boolean;
-  canManageMockupLibrary: boolean;
 }
 
 export default function StoresClient({
   initialStores,
   canManageStores,
-  canManageMockupLibrary,
 }: Props) {
-  const [stores, setStores] = useState<StoreData[]>(initialStores);
+  const [stores] = useState<StoreData[]>(initialStores);
   const isAdmin = canManageStores;
-
-  async function fetchStores() {
-    try {
-      const res = await fetch("/api/stores");
-      if (res.ok) {
-        const data = await res.json();
-        setStores(data);
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  async function handleTestConnection(storeId: string) {
-    try {
-      const res = await fetch(`/api/stores/${storeId}/test-connection`, {
-        method: "POST",
-      });
-      const result = await res.json();
-      await fetchStores();
-      if (result.status === "ACTIVE") {
-        toast.success("Kết nối OK!");
-      } else {
-        toast.error(`Lỗi: ${result.shopify?.error || result.printify?.error || "Không xác định"}`);
-      }
-    } catch {
-      toast.error("Lỗi kết nối");
-    }
-  }
 
   async function handleDelete(storeId: string, storeName: string) {
     // Native confirm vẫn dùng cho destructive — user phải chủ động click OK,
@@ -80,7 +47,7 @@ export default function StoresClient({
       const res = await fetch(`/api/stores/${storeId}`, { method: "DELETE" });
       if (res.ok) {
         toast.success(`Đã xóa store "${storeName}"`);
-        await fetchStores();
+        window.location.reload();
       } else {
         toast.error("Lỗi khi xóa store");
       }
@@ -224,28 +191,6 @@ export default function StoresClient({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {canManageMockupLibrary && (
-                    <Link
-                      href={`/stores/${store.id}/mockup-library`}
-                      className="btn btn-secondary"
-                      style={{ padding: "8px 12px" }}
-                    >
-                      <Images size={14} />
-                      Mockup Library
-                    </Link>
-                  )}
-                  {isAdmin && (
-                    <button
-                      onClick={() => handleTestConnection(store.id)}
-                      className="btn btn-secondary"
-                      title="Test kết nối"
-                      style={{ padding: "8px 12px" }}
-                      type="button"
-                    >
-                      <RefreshCw size={14} />
-                      Test
-                    </button>
-                  )}
                   {isAdmin && (
                     <>
                       <Link

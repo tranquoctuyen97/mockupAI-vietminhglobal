@@ -1,25 +1,28 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
+import { toast } from "sonner";
 import { useWizardStore } from "@/lib/wizard/use-wizard-store";
+import {
+  getActiveDraftDesignId,
+  getLatestJobByDraftDesignId,
+} from "@/lib/mockup/multi-design";
 import { isRealPrintifyMockupMedia } from "@/lib/mockup/real-printify-media";
 import { viewLabel } from "@/lib/placement/views";
 import {
-  ClipboardCheck,
+  AlertTriangle,
   CheckCircle2,
-  XCircle,
-  Image as ImageIcon,
-  ImageOff,
+  ClipboardCheck,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  ImageOff,
   Loader2,
   Play,
-  RefreshCcw
+  Check,
 } from "lucide-react";
-import Link from "next/link";
-import { toast } from "sonner";
 
 interface AiContent {
   title: string;
@@ -34,19 +37,17 @@ interface SizeOption {
   costDeltaCents: number;
 }
 
-interface MockupJob {
-  id: string;
-  status: "pending" | "running" | "completed" | "failed" | string;
-  totalImages?: number;
-  completedImages?: number;
-  failedImages?: number;
-  images?: MockupImage[];
+interface Checklist {
+  mockupsMatchColors: boolean;
+  contentComplete: boolean;
+  placementValid: boolean;
+  mockupsNotStale: boolean;
+  readyToPublish: boolean;
 }
 
 interface MockupImage {
   id: string;
   printifyMockupId?: string;
-  variantId?: number;
   colorName: string;
   viewPosition: string;
   sourceUrl: string;
@@ -59,24 +60,60 @@ interface MockupImage {
   sortOrder?: number;
 }
 
+interface MockupJob {
+  id: string;
+  draftDesignId?: string | null;
+  designId?: string | null;
+  status: string;
+  totalImages?: number;
+  completedImages?: number;
+  failedImages?: number;
+  images?: MockupImage[];
+}
+
+interface DraftDesignEntry {
+  id: string;
+  designId: string;
+  sortOrder: number;
+  design?: {
+    id: string;
+    name?: string | null;
+    previewPath?: string | null;
+  } | null;
+  jobs?: MockupJob[];
+}
+
 interface StoreColor {
   id: string;
   name: string;
   hex: string;
 }
 
-interface Checklist {
-  mockupsMatchColors: boolean;
-  contentComplete: boolean;
-  placementValid: boolean;
-  mockupsNotStale: boolean;
-  readyToPublish: boolean;
+interface PublishLog {
+  stage: string;
+  message: string;
+  status: "pending" | "success" | "error";
 }
 
-/** Format price consistently as en-US decimal: e.g. "24.99" */
+interface PublishDesignState {
+  listingId: string | null;
+  status: "IDLE" | "PUBLISHING" | "SUCCESS" | "ERROR";
+  logs: PublishLog[];
+  alreadyPublished?: boolean;
+}
+
+interface PublishResponseEntry {
+  listingId: string;
+  draftDesignId: string | null;
+  designId: string;
+  designName: string;
+  status: string;
+  alreadyPublished: boolean;
+}
+
 function formatPriceDisplay(raw: string): string {
   const n = parseFloat(raw);
-  if (isNaN(n)) return raw;
+  if (Number.isNaN(n)) return raw;
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -103,7 +140,6 @@ function InlineLink({ href, children }: { href: string; children: React.ReactNod
   );
 }
 
-/** Normalize storage key → browser URL (same pattern as step-4) */
 function toPublicUrl(storagePathOrUrl: string | null | undefined): string | null {
   if (!storagePathOrUrl || storagePathOrUrl.startsWith("mockup://")) {
     return null;
@@ -117,6 +153,7 @@ function toPublicUrl(storagePathOrUrl: string | null | undefined): string | null
   ) {
     return storagePathOrUrl;
   }
+
   return `/api/files/${storagePathOrUrl.split("/").map(encodeURIComponent).join("/")}`;
 }
 
@@ -124,727 +161,950 @@ function normalizeColorName(value: string): string {
   return value.trim().toLowerCase();
 }
 
-export default function Step6ReviewPage() {
+function isUsableMockupImage(image: MockupImage): boolean {
+  const isCustomSource =
+    image.sourceUrl?.startsWith("mockup://custom/") || image.sourceUrl?.startsWith("mockup://custom-");
+  const isPrintifySource = isRealPrintifyMockupMedia(image);
+  return image.included && (isCustomSource || isPrintifySource);
+}
+
+function defaultPublishState(): PublishDesignState {
+  return { listingId: null, status: "IDLE", logs: [] };
+}
+
+export default function Step5ReviewPage() {
   const { draftId } = useParams<{ draftId: string }>();
   const { draft, setDraft, setChecklist } = useWizardStore();
 
+  const [loading, setLoading] = useState(true);
+  const [price, setPrice] = useState("24.99");
+  const [sizes, setSizes] = useState<SizeOption[]>([]);
+  const [localChecklist, setLocalChecklist] = useState<Checklist | null>(null);
+  const [activeDesignId, setActiveDesignId] = useState<string | null>(null);
+  const [carouselIdx, setCarouselIdx] = useState(0);
+  const [publishing, setPublishing] = useState(false);
+  const [publishStateByDesignId, setPublishStateByDesignId] = useState<Record<string, PublishDesignState>>({});
+
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const listingIdToDesignIdRef = useRef<Map<string, string>>(new Map());
+
   const aiContent = (draft?.aiContent as AiContent | null) || null;
-  const mockupJobs = (draft?.mockupJobs || []) as MockupJob[];
-  const storeColors = ((draft?.store?.colors ?? []) as StoreColor[]);
+  const storeColors = (draft?.store?.colors ?? []) as StoreColor[];
   const selectedColorIds = new Set(draft?.enabledColorIds ?? []);
   const colors = storeColors.filter((color) => selectedColorIds.has(color.id));
   const colorHexLookup = useMemo(
     () => new Map(colors.map((color) => [color.name.toLowerCase(), color.hex])),
     [colors],
   );
-  // Use only the latest completed job's images — older jobs are stale runs
-  const latestCompletedJob = useMemo(
-    () => [...mockupJobs].reverse().find((job) => job.status === "completed") ?? null,
-    [mockupJobs],
-  );
-  const allMockups = useMemo(
-    () => (latestCompletedJob?.images ?? [])
-      .filter((image) => {
-        const isCustomSource = image.sourceUrl?.startsWith("mockup://custom/") || image.sourceUrl?.startsWith("mockup://custom-");
-        const isPrintifySource = isRealPrintifyMockupMedia(image);
-        return image.included &&
-          (isCustomSource || isPrintifySource) &&
-          colorHexLookup.has(normalizeColorName(image.colorName));
-      }),
-    [latestCompletedJob, colorHexLookup],
-  );
-  const latestMockupJob = mockupJobs[mockupJobs.length - 1] ?? null;
-  const isPrintifyRendering = latestMockupJob?.status === "running" || latestMockupJob?.status === "pending";
-  const hasPrintifyFailure = latestMockupJob?.status === "failed";
-  const emptyMockupState = isPrintifyRendering
-    ? {
-        title: "Printify đang render mockups.",
-        body: "Ảnh thật có thể mất vài phút. Quay lại bước Mockups để theo dõi tiến trình.",
-        action: "Theo dõi Mockups →",
-      }
-    : hasPrintifyFailure
-      ? {
-          title: "Printify tạo mockup lỗi.",
-          body: "Hãy tạo lại mockup hoặc kiểm tra cấu hình store/Printify trước khi publish.",
-          action: "Tạo lại Mockups →",
-        }
-      : {
-          title: "Chưa có mockup Printify thật.",
-          body: "Quay lại bước Mockups để tạo ảnh thật trước khi publish Shopify.",
-          action: "Tạo Mockups →",
-        };
-  const colorsWithMockup = useMemo(
-    () => new Set(allMockups.map((image) => normalizeColorName(image.colorName))),
-    [allMockups],
-  );
-  const selectedMockupColorCount = useMemo(
-    () => colors.filter((color) => colorsWithMockup.has(normalizeColorName(color.name))).length,
-    [colors, colorsWithMockup],
-  );
 
-  // Fetch pricing template and base state
-  const [price, setPrice] = useState("24.99");
-  const [sizes, setSizes] = useState<SizeOption[]>([]);
-  const [carouselIdx, setCarouselIdx] = useState(0);
-  const [localChecklist, setLocalChecklist] = useState<Checklist | null>(null);
-
-  // Publish state
-  const [publishing, setPublishing] = useState(false);
-  const [publishStatus, setPublishStatus] = useState<"IDLE" | "PUBLISHING" | "SUCCESS" | "ERROR">("IDLE");
-  const [publishLogs, setPublishLogs] = useState<{stage: string, message: string, status?: string}[]>([]);
-  const [failedListingId, setFailedListingId] = useState<string | null>(null);
-  const [successListingId, setSuccessListingId] = useState<string | null>(null);
-  const [isAlreadyPublished, setIsAlreadyPublished] = useState(false);
-  const [showRepublishConfirm, setShowRepublishConfirm] = useState(false);
-  const [republishing, setRepublishing] = useState(false);
-  const [retrying, setRetrying] = useState(false);
-
-  // Fetch pricing template & store sizes
-  useEffect(() => {
-    const productType = draft?.store?.template?.blueprintTitle ?? draft?.productType;
-    if (productType) {
-      fetch("/api/admin/pricing-templates")
-        .then(r => r.json())
-        .then(data => {
-          if (data.templates) {
-            const match = data.templates.find((t: any) => t.productType === productType);
-            if (match) setPrice(match.basePriceUsd.toFixed(2));
-          }
-        }).catch(() => {});
+  const selectedDraftDesigns = useMemo<DraftDesignEntry[]>(() => {
+    const childRows = (draft?.draftDesigns ?? []) as DraftDesignEntry[];
+    if (childRows.length > 0) {
+      return [...childRows].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
     }
 
-    if (draft?.storeId) {
-      fetch(`/api/stores/${draft.storeId}/sizes`)
-        .then(r => r.json())
-        .then(data => {
-          if (data.sizes) setSizes(data.sizes);
-        }).catch(() => {});
-    }
-  }, [draft?.productType, draft?.store?.template?.blueprintTitle, draft?.storeId]);
+    if (!draft?.designId) return [];
 
-  // Fetch checklist from GET draft API (Bug #7)
+    return [
+      {
+        id: draft.designId,
+        designId: draft.designId,
+        sortOrder: 0,
+        design: draft.design
+          ? {
+              id: draft.design.id ?? draft.designId,
+              name: draft.design.name ?? "Design",
+              previewPath: draft.design.previewPath ?? null,
+            }
+          : { id: draft.designId, name: "Design", previewPath: null },
+        jobs: (draft.mockupJobs ?? []) as MockupJob[],
+      },
+    ];
+  }, [draft?.design, draft?.designId, draft?.draftDesigns, draft?.mockupJobs]);
+
+  const selectedDesignJobs = useMemo(() => {
+    return selectedDraftDesigns.flatMap((entry) =>
+      (entry.jobs ?? []).map((job) => ({
+        ...job,
+        draftDesignId: job.draftDesignId ?? entry.id,
+        designId: job.designId ?? entry.designId,
+      })),
+    );
+  }, [selectedDraftDesigns]);
+
+  const latestMockupJobByDesign = useMemo(
+    () => getLatestJobByDraftDesignId(selectedDesignJobs),
+    [selectedDesignJobs],
+  );
+
+  const selectedDraftDesignIds = useMemo(
+    () => selectedDraftDesigns.map((entry) => entry.id),
+    [selectedDraftDesigns],
+  );
+
   useEffect(() => {
     if (!draftId) return;
+
+    let cancelled = false;
+
     (async () => {
       try {
         const res = await fetch(`/api/wizard/drafts/${draftId}`);
         const data = await res.json();
-        if (res.ok) {
-          const { checklist, ...freshDraft } = data;
-          setDraft(freshDraft);
-          if (checklist) setLocalChecklist(checklist);
-        }
+        if (!res.ok) return;
+        if (cancelled) return;
+
+        const { checklist, ...freshDraft } = data;
+        setDraft(freshDraft);
+        if (checklist) setLocalChecklist(checklist);
       } catch {
         // ignore
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [draftId, setDraft]);
 
-  // Sync checklist to store so layout Tiếp theo button can read it
   useEffect(() => {
     if (localChecklist) setChecklist(localChecklist);
   }, [localChecklist, setChecklist]);
 
   useEffect(() => {
-    if (carouselIdx >= allMockups.length) {
+    setActiveDesignId((current) => getActiveDraftDesignId(selectedDraftDesignIds, current));
+  }, [selectedDraftDesignIds]);
+
+  useEffect(() => {
+    return () => {
+      eventSourceRef.current?.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!draft || draft.id !== draftId) return;
+
+    const productType = draft.template?.blueprintTitle ?? draft.store?.template?.blueprintTitle ?? draft.productType;
+    if (productType) {
+      fetch("/api/admin/pricing-templates")
+        .then((response) => response.json())
+        .then((data) => {
+          if (data.templates) {
+            const match = data.templates.find((candidate: any) => candidate.productType === productType);
+            if (match) setPrice(match.basePriceUsd.toFixed(2));
+          }
+        })
+        .catch(() => {});
+    }
+
+    if (draft.storeId) {
+      fetch(`/api/stores/${draft.storeId}/sizes`)
+        .then((response) => response.json())
+        .then((data) => {
+          if (data.sizes) setSizes(data.sizes);
+        })
+        .catch(() => {});
+    }
+  }, [draft, draftId]);
+
+  const activeDesign = useMemo(() => {
+    return (
+      (activeDesignId
+        ? selectedDraftDesigns.find((entry) => entry.id === activeDesignId)
+        : null) ?? selectedDraftDesigns[0] ?? null
+    );
+  }, [activeDesignId, selectedDraftDesigns]);
+
+  const activeMockupJob = useMemo(() => {
+    if (!activeDesign) return null;
+    return latestMockupJobByDesign.get(activeDesign.id) ?? null;
+  }, [activeDesign, latestMockupJobByDesign]);
+
+  const activeMockups = useMemo(() => {
+    return (activeMockupJob?.images ?? []).filter((image) => {
+      if (!isUsableMockupImage(image)) return false;
+      return colorHexLookup.has(normalizeColorName(image.colorName));
+    });
+  }, [activeMockupJob, colorHexLookup]);
+
+  useEffect(() => {
+    if (carouselIdx >= activeMockups.length) {
       setCarouselIdx(0);
     }
-  }, [allMockups.length, carouselIdx]);
+  }, [activeMockups.length, carouselIdx]);
 
-  const step4Url = `/wizard/${draftId}/step-4`;
-  const step3Url = `/wizard/${draftId}/step-3`;
-  const currentMockup = allMockups[carouselIdx] ?? null;
-  const currentMockupUrl = currentMockup ? toPublicUrl(currentMockup.compositeUrl) : null;
-  const currentMockupColorHex = currentMockup
-    ? colorHexLookup.get(normalizeColorName(currentMockup.colorName)) ?? "var(--bg-tertiary)"
+  const activeMockup = activeMockups[carouselIdx] ?? null;
+  const activeMockupUrl = activeMockup ? toPublicUrl(activeMockup.compositeUrl) : null;
+  const activeMockupColorHex = activeMockup
+    ? colorHexLookup.get(normalizeColorName(activeMockup.colorName)) ?? "var(--bg-tertiary)"
     : "var(--bg-tertiary)";
 
+  const designPublishEntries = useMemo(() => {
+    return selectedDraftDesigns.map((entry) => ({
+      ...entry,
+      publish: publishStateByDesignId[entry.id] ?? defaultPublishState(),
+    }));
+  }, [publishStateByDesignId, selectedDraftDesigns]);
+
+  const overallPublishStatus = useMemo(() => {
+    const states = designPublishEntries.map((entry) => entry.publish.status);
+    if (states.some((status) => status === "ERROR")) return "ERROR";
+    if (states.some((status) => status === "PUBLISHING")) return "PUBLISHING";
+    if (states.length > 0 && states.every((status) => status === "SUCCESS")) return "SUCCESS";
+    return "IDLE";
+  }, [designPublishEntries]);
+
+  useEffect(() => {
+    if (!publishing) return;
+    const states = designPublishEntries.map((entry) => entry.publish.status);
+    if (states.length === 0) return;
+    if (states.every((status) => status !== "PUBLISHING" && status !== "IDLE")) {
+      setPublishing(false);
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+    }
+  }, [designPublishEntries, publishing]);
+
+  const selectedTemplateBlueprint = draft?.template?.blueprintTitle ?? draft?.store?.template?.blueprintTitle ?? draft?.productType;
+  const selectedSizesCount = draft?.enabledSizes?.length ?? 0;
+  const summaryListingsCount = selectedDraftDesigns.length;
+  const selectedMockupColorCount = colors.filter((color) =>
+    activeMockups.some((image) => normalizeColorName(image.colorName) === normalizeColorName(color.name)),
+  ).length;
+
+  const isLoadingPage = loading || !draft;
+  const canPublish = Boolean(localChecklist?.readyToPublish && selectedDraftDesigns.length > 0 && !publishing);
+
+  function updatePublishStateByListingId(
+    listingId: string | null | undefined,
+    fallbackDesignKey: string | null,
+    updater: (current: PublishDesignState) => PublishDesignState,
+  ) {
+    const designKey = (listingId ? listingIdToDesignIdRef.current.get(listingId) : null) ?? fallbackDesignKey;
+    if (!designKey) return;
+
+    setPublishStateByDesignId((current) => {
+      const next = { ...current };
+      const currentState = current[designKey] ?? defaultPublishState();
+      next[designKey] = updater(currentState);
+      return next;
+    });
+  }
+
+  function appendPublishLog(current: PublishDesignState, log: PublishLog): PublishDesignState {
+    return {
+      ...current,
+      logs: [...current.logs, log],
+    };
+  }
+
   async function handlePublish() {
-    if (!localChecklist?.readyToPublish) return;
+    if (!localChecklist?.readyToPublish || selectedDraftDesigns.length === 0) return;
+
+    const trimmedPrice = price.trim();
+    const priceValue = trimmedPrice ? Number(trimmedPrice) : Number.NaN;
+    const requestPrice = Number.isFinite(priceValue) ? priceValue : null;
+
     setPublishing(true);
-    setPublishStatus("PUBLISHING");
-    setPublishLogs([
-      { stage: "INIT", message: "Bắt đầu publish...", status: "pending" }
-    ]);
+    setPublishStateByDesignId(
+      Object.fromEntries(
+        selectedDraftDesigns.map((entry) => [
+          entry.id,
+          {
+            listingId: null,
+            status: "PUBLISHING" as const,
+            logs: [{ stage: "INIT", message: "Đang khởi tạo publish...", status: "pending" as const }],
+            alreadyPublished: false,
+          },
+        ]),
+      ),
+    );
 
-    // Setup SSE connection
-    const evtSource = new EventSource(`/api/wizard/drafts/${draftId}/events`);
-    let sseCompleted = false; // Track whether we received a terminal event
+    listingIdToDesignIdRef.current = new Map();
+    eventSourceRef.current?.close();
 
-    evtSource.onmessage = (event) => {
+    const eventSource = new EventSource(`/api/wizard/drafts/${draftId}/events`);
+    eventSourceRef.current = eventSource;
+
+    eventSource.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
-        if (data.type === "publish.shopify.start" || data.type === "publish.printify.start") {
-          setPublishLogs(prev => [...prev, { stage: data.data.stage, message: `Đang xử lý ${data.data.stage}...`, status: "pending" }]);
-        }
-        if (data.type === "publish.shopify.done") {
-          setPublishLogs(prev => [...prev, { stage: "SHOPIFY", message: "Đã publish lên Shopify", status: "success" }]);
-        }
-        if (data.type === "publish.printify.done") {
-          setPublishLogs(prev => [...prev, { stage: "PRINTIFY", message: "Đã publish lên Printify", status: "success" }]);
-        }
-        if (data.type === "publish.complete") {
-          sseCompleted = true;
-          if (data.data.status === "ACTIVE") {
-            if (data.data.listingId) setSuccessListingId(data.data.listingId);
-            setPublishStatus("SUCCESS");
-            setPublishLogs(prev => [...prev, { stage: "DONE", message: "Publish hoàn tất!", status: "success" }]);
-            toast.success("Publish thành công!");
-          } else {
-            setPublishStatus("ERROR");
-            if (data.data.listingId) setFailedListingId(data.data.listingId);
-            setPublishLogs(prev => [...prev, { stage: "ERROR", message: data.data.reason || "Có lỗi xảy ra", status: "error" }]);
-            toast.error(data.data.reason || "Có lỗi xảy ra");
+        const data = JSON.parse(event.data) as {
+          type?: string;
+          data?: { listingId?: string; draftDesignId?: string; designId?: string; status?: string; reason?: string; error?: string };
+        };
+        const listingId = data.data?.listingId;
+        const designKeyFallback = data.data?.draftDesignId ?? data.data?.designId ?? null;
+        if (!listingId && !designKeyFallback) return;
+
+        updatePublishStateByListingId(listingId, designKeyFallback, (current) => {
+          const next = { ...current };
+          const eventType = data.type ?? "";
+
+          if (eventType === "publish.shopify.start") {
+            return appendPublishLog(next, {
+              stage: "SHOPIFY",
+              message: "Đang publish lên Shopify...",
+              status: "pending",
+            });
           }
-          evtSource.close();
-        }
-        if (data.type === "publish.failed") {
-          sseCompleted = true;
-          setPublishStatus("ERROR");
-          setPublishLogs(prev => [...prev, { stage: "ERROR", message: data.data.error || "Có lỗi xảy ra khi publish", status: "error" }]);
-          toast.error(data.data.error || "Có lỗi xảy ra khi publish");
-          evtSource.close();
-        }
-      } catch (e) {
-        console.error("SSE parse error", e);
-      }
-    };
-    evtSource.onerror = () => {
-      evtSource.close();
-      // Only show error if we never received a terminal event (publish.complete/publish.failed)
-      if (!sseCompleted) {
-        setPublishStatus("ERROR");
-        toast.error("Mất kết nối server");
+
+          if (eventType === "publish.shopify.done") {
+            return appendPublishLog(next, {
+              stage: "SHOPIFY",
+              message: "Đã publish lên Shopify",
+              status: "success",
+            });
+          }
+
+          if (eventType === "publish.printify.start") {
+            return appendPublishLog(next, {
+              stage: "PRINTIFY",
+              message: "Đang publish lên Printify...",
+              status: "pending",
+            });
+          }
+
+          if (eventType === "publish.printify.done") {
+            return appendPublishLog(next, {
+              stage: "PRINTIFY",
+              message: "Đã publish lên Printify",
+              status: "success",
+            });
+          }
+
+          if (eventType === "publish.complete") {
+            if (data.data?.status === "ACTIVE") {
+              return {
+                ...appendPublishLog(next, {
+                  stage: "DONE",
+                  message: "Publish hoàn tất!",
+                  status: "success",
+                }),
+                status: "SUCCESS",
+              };
+            }
+
+            return {
+              ...appendPublishLog(next, {
+                stage: "ERROR",
+                message: data.data?.reason || "Có lỗi xảy ra",
+                status: "error",
+              }),
+              status: "ERROR",
+            };
+          }
+
+          if (eventType === "publish.failed") {
+            return {
+              ...appendPublishLog(next, {
+                stage: "ERROR",
+                message: data.data?.error || "Có lỗi xảy ra khi publish",
+                status: "error",
+              }),
+              status: "ERROR",
+            };
+          }
+
+          return next;
+        });
+      } catch {
+        // ignore malformed event payloads
       }
     };
 
-    // Call POST API
+    eventSource.onerror = () => {
+      eventSource.close();
+      if (eventSourceRef.current === eventSource) {
+        eventSourceRef.current = null;
+      }
+      setPublishing(false);
+      toast.error("Mất kết nối server");
+    };
+
     try {
-      const res = await fetch(`/api/wizard/drafts/${draftId}/publish`, { method: "POST" });
+      const res = await fetch(`/api/wizard/drafts/${draftId}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ priceUsd: requestPrice }),
+      });
       const data = await res.json();
+
       if (!res.ok) {
         throw new Error(data.error || "Không thể khởi tạo tiến trình publish");
       }
-      if (data.alreadyPublished) {
-         if (data.status === "ACTIVE") {
-           if (data.listingId) setSuccessListingId(data.listingId);
-           setIsAlreadyPublished(true);
-           setPublishStatus("SUCCESS");
-           setPublishLogs([{ stage: "DONE", message: "Draft này đã được publish rồi.", status: "success" }]);
-           toast.info("Draft này đã được publish rồi.");
-         } else if (data.status === "PARTIAL_FAILURE" || data.status === "FAILED") {
-           setPublishStatus("ERROR");
-           setFailedListingId(data.listingId);
-           setPublishLogs([{ stage: "ERROR", message: `Publish trước đó bị lỗi (${data.status}). Nhấn "Thử lại Printify" bên dưới.`, status: "error" }]);
-           toast.error(`Publish trước đó bị lỗi: ${data.status}`);
-         } else {
-           // PUBLISHING state — still in progress
-           setPublishLogs([{ stage: "INIT", message: "Đang publish...", status: "pending" }]);
-         }
-         evtSource.close();
+
+      const nextMapping = new Map<string, string>();
+      const nextState: Record<string, PublishDesignState> = {};
+      for (const listing of (data.listings ?? []) as PublishResponseEntry[]) {
+        const designKey = listing.draftDesignId ?? listing.designId;
+        nextMapping.set(listing.listingId, designKey);
+
+        const baseLogs: PublishLog[] = listing.alreadyPublished
+          ? [{ stage: "DONE", message: "Listing đã tồn tại.", status: "success" }]
+          : listing.status === "ACTIVE"
+            ? [{ stage: "DONE", message: "Publish hoàn tất!", status: "success" }]
+            : listing.status === "PARTIAL_FAILURE" || listing.status === "FAILED"
+              ? [{ stage: "ERROR", message: "Publish trước đó bị lỗi.", status: "error" }]
+              : [{ stage: "INIT", message: "Đang publish...", status: "pending" }];
+
+        nextState[designKey] = {
+          listingId: listing.listingId,
+          status:
+            listing.status === "ACTIVE"
+              ? "SUCCESS"
+              : listing.status === "PARTIAL_FAILURE" || listing.status === "FAILED"
+                ? "ERROR"
+                : "PUBLISHING",
+          alreadyPublished: listing.alreadyPublished,
+          logs: baseLogs,
+        };
       }
-    } catch (e: any) {
-      setPublishStatus("ERROR");
-      setPublishLogs(prev => [...prev, { stage: "ERROR", message: e.message, status: "error" }]);
-      toast.error(e.message);
-      evtSource.close();
+
+      listingIdToDesignIdRef.current = nextMapping;
+      setPublishStateByDesignId(nextState);
+
+      if (Object.values(nextState).every((state) => state.status !== "PUBLISHING")) {
+        setPublishing(false);
+        eventSource.close();
+        eventSourceRef.current = null;
+      }
+    } catch (error: any) {
+      eventSource.close();
+      if (eventSourceRef.current === eventSource) {
+        eventSourceRef.current = null;
+      }
+      setPublishing(false);
+      toast.error(error.message || "Không thể khởi tạo tiến trình publish");
     }
   }
 
-  async function handleRetryPrintify() {
-    if (!failedListingId) return;
-    setRetrying(true);
-    setPublishStatus("PUBLISHING");
-    setPublishLogs([
-      { stage: "SHOPIFY", message: "Đã publish lên Shopify (trước đó)", status: "success" },
-      { stage: "PRINTIFY", message: "Đang thử lại Printify...", status: "pending" },
-    ]);
-
-    // Listen for SSE events
-    const evtSource = new EventSource(`/api/wizard/drafts/${draftId}/events`);
-    let sseRetryCompleted = false;
-
-    evtSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "publish.complete") {
-          sseRetryCompleted = true;
-          if (data.data.status === "ACTIVE") {
-            setPublishStatus("SUCCESS");
-            setPublishLogs(prev => [...prev, { stage: "DONE", message: "Printify publish thành công!", status: "success" }]);
-            toast.success("Printify publish thành công!");
-          } else {
-            setPublishStatus("ERROR");
-            setPublishLogs(prev => [...prev, { stage: "ERROR", message: data.data.reason || "Printify vẫn lỗi", status: "error" }]);
-            toast.error(data.data.reason || "Printify vẫn lỗi");
-          }
-          evtSource.close();
-          setRetrying(false);
-        }
-      } catch (e) {
-        console.error("SSE parse error", e);
-      }
-    };
-    evtSource.onerror = () => {
-      evtSource.close();
-      setRetrying(false);
-      if (!sseRetryCompleted) {
-        setPublishStatus("ERROR");
-        toast.error("Mất kết nối server");
-      }
-    };
-
-    try {
-      const res = await fetch(`/api/listings/${failedListingId}/retry-printify`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Không thể retry Printify");
-      }
-    } catch (e: any) {
-      setPublishStatus("ERROR");
-      setPublishLogs(prev => [...prev, { stage: "ERROR", message: e.message, status: "error" }]);
-      toast.error(e.message);
-      evtSource.close();
-      setRetrying(false);
-    }
+  if (isLoadingPage) {
+    return (
+      <div>
+        <div style={{ height: 20, width: 180, borderRadius: 6, backgroundColor: "var(--bg-tertiary)", marginBottom: 8 }} className="animate-pulse" />
+        <div style={{ height: 14, width: 320, borderRadius: 4, backgroundColor: "var(--bg-tertiary)", marginBottom: 20 }} className="animate-pulse" />
+        <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-6 items-start">
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div className="card animate-pulse" style={{ height: 360, padding: 16 }} />
+            <div className="card animate-pulse" style={{ height: 220, padding: 16 }} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div className="card animate-pulse" style={{ height: 260, padding: 16 }} />
+            <div className="card animate-pulse" style={{ height: 280, padding: 16 }} />
+          </div>
+        </div>
+      </div>
+    );
   }
 
-  async function handleForceRepublish() {
-    if (!successListingId) return;
-    setRepublishing(true);
-    try {
-      const res = await fetch(`/api/listings/${successListingId}/force-republish`, { method: "POST" });
-      if (!res.ok) {
-        const data = await res.json();
-        toast.error(data.error || "Không thể xóa listing cũ");
-        return;
-      }
-      // Reset all publish state then re-trigger publish
-      setPublishStatus("IDLE");
-      setPublishLogs([]);
-      setIsAlreadyPublished(false);
-      setShowRepublishConfirm(false);
-      setSuccessListingId(null);
-      await handlePublish();
-    } catch {
-      toast.error("Lỗi kết nối");
-    } finally {
-      setRepublishing(false);
-    }
-  }
+  const activeDesignMockupColorHex = activeMockup
+    ? colorHexLookup.get(normalizeColorName(activeMockup.colorName)) ?? "var(--bg-tertiary)"
+    : "var(--bg-tertiary)";
+  const activeDesignStatus = activeMockupJob?.status ?? "pending";
+  const activeDesignName = activeDesign?.design?.name ?? `Design ${selectedDraftDesigns.findIndex((entry) => entry.id === activeDesign?.id) + 1}`;
+  const previewPlacementLabel = activeMockup
+    ? `${activeMockup.colorName} · ${viewLabel(activeMockup.viewPosition)}`
+    : activeDesignStatus === "running" || activeDesignStatus === "pending"
+      ? "Đang render mockup..."
+      : "Chưa có mockup";
+  const overallSummaryLabel = `${selectedDraftDesigns.length} designs × ${colors.length} colors = ${selectedDraftDesigns.length} listings`;
 
   return (
     <div>
       <h2 style={{ fontWeight: 700, fontSize: "1.1rem", margin: "0 0 4px" }}>Review</h2>
       <p style={{ opacity: 0.5, fontSize: "0.85rem", margin: "0 0 24px" }}>
-        Tổng hợp và kiểm tra trước khi publish
+        {overallSummaryLabel}. Tất cả listings dùng chung template, màu sắc, placement và nội dung.
       </p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-        {/* Left: Mockup carousel */}
-        <div>
-          <div
-            className="card"
-            style={{
-              aspectRatio: "1/1",
-              backgroundColor: currentMockupColorHex,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              position: "relative", overflow: "hidden", maxHeight: 400,
-            }}
+      {selectedDraftDesigns.length === 0 && (
+        <div className="alert" style={{ marginBottom: 16, backgroundColor: "var(--bg-tertiary)", border: "1px solid var(--border-default)" }}>
+          <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
+          <div className="flex-1">
+            <p style={{ margin: 0, fontWeight: 500 }}>Chưa có Design</p>
+            <p style={{ margin: 0, fontSize: "0.85rem", opacity: 0.6 }}>Bạn cần chọn ít nhất 1 design ở bước trước để tạo listing.</p>
+          </div>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: "0.8rem", padding: "6px 12px" }}
+            onClick={() => document.getElementById("step-nav-2")?.click() || window.history.back()}
           >
-            {currentMockup && currentMockupUrl ? (
-              <img
-                src={currentMockupUrl}
-                alt={`${currentMockup.colorName} - ${viewLabel(currentMockup.viewPosition)}`}
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
-            ) : allMockups.length === 0 ? (
-              // Bug #6: empty state with clear action instead of silent grey icon
-              <div style={{ textAlign: "center", padding: "0 24px" }}>
-                {isPrintifyRendering ? (
-                  <Loader2 size={36} className="animate-spin" style={{ opacity: 0.45, marginBottom: 12 }} />
-                ) : (
-                  <ImageOff size={36} style={{ opacity: 0.3, marginBottom: 12 }} />
-                )}
-                <p style={{ fontSize: "0.82rem", opacity: 0.5, margin: "0 0 12px" }}>
-                  {emptyMockupState.title}
-                  <br />{emptyMockupState.body}
+            ← Quay lại Design
+          </button>
+        </div>
+      )}
+
+      {selectedDraftDesigns.length > 0 && localChecklist && (
+        <div className="card" style={{ padding: "12px 16px", fontSize: "0.82rem", marginBottom: 16 }}>
+          <div className="flex items-center gap-2" style={{ marginBottom: 10 }}>
+            <ClipboardCheck size={14} style={{ opacity: 0.5 }} />
+            <span style={{ fontWeight: 600 }}>Kiểm tra trước khi Publish</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            <ChecklistItem
+              ok={localChecklist.mockupsMatchColors}
+              label={`Mockup khớp số màu của design đang chọn (${selectedMockupColorCount}/${colors.length})`}
+              linkLabel="Fix ở Mockups"
+              linkHref={`/wizard/${draftId}/step-3`}
+            />
+            <ChecklistItem
+              ok={localChecklist.contentComplete}
+              label="Nội dung đầy đủ (title, description, tags)"
+              linkLabel="Fix ở Content"
+              linkHref={`/wizard/${draftId}/step-4`}
+            />
+            <ChecklistItem
+              ok={localChecklist.placementValid}
+              label="Placement hợp lệ"
+              linkLabel="Fix ở Placement"
+              linkHref={`/wizard/${draftId}/step-3`}
+            />
+            <ChecklistItem
+              ok={localChecklist.mockupsNotStale}
+              label="Mockup cập nhật (không bị outdated)"
+              linkLabel="Tạo lại"
+              linkHref={`/wizard/${draftId}/step-3`}
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-6 items-start">
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div className="card" style={{ padding: 16 }}>
+            <div className="flex items-center justify-between gap-3" style={{ marginBottom: 12 }}>
+              <div style={{ minWidth: 0 }}>
+                <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Mockup preview</h3>
+                <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                  Chọn design để xem mockup đã render cho design đó
                 </p>
-                <Link
-                  href={`/wizard/${draftId}/step-3`}
-                  style={{ fontSize: "0.8rem", color: "var(--color-wise-green)", textDecoration: "none" }}
-                >
-                  {emptyMockupState.action}
-                </Link>
               </div>
-            ) : (
-              <ImageIcon size={48} style={{ opacity: 0.2 }} />
-            )}
+              <span className="badge badge-success" style={{ flexShrink: 0, fontSize: "0.65rem" }}>
+                {selectedDraftDesigns.length} designs
+              </span>
+            </div>
 
-            {currentMockup && (
-              <div style={{ position: "absolute", bottom: 8, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.55)", color: "white", fontSize: "0.72rem", padding: "4px 10px", borderRadius: 999 }}>
-                {currentMockup.colorName} · {viewLabel(currentMockup.viewPosition)}
-              </div>
-            )}
+            <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, marginBottom: 12 }}>
+              {selectedDraftDesigns.map((design) => {
+                const active = design.id === activeDesign?.id;
+                const job = latestMockupJobByDesign.get(design.id) ?? null;
+                const statusLabel = job?.status ?? "pending";
+                return (
+                  <button
+                    key={design.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveDesignId(design.id);
+                      setCarouselIdx(0);
+                    }}
+                    style={{
+                      minWidth: 160,
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      border: active ? "1px solid var(--color-wise-green)" : "1px solid var(--border-default)",
+                      backgroundColor: active ? "rgba(146, 198, 72, 0.06)" : "transparent",
+                      textAlign: "left",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span style={{ fontWeight: 800, fontSize: "0.82rem", overflowWrap: "anywhere" }}>
+                        {design.design?.name ?? `Design ${design.sortOrder + 1}`}
+                      </span>
+                      {active ? <Check size={14} color="var(--color-wise-green)" /> : null}
+                    </div>
+                    <p style={{ margin: "4px 0 0", fontSize: "0.7rem", opacity: 0.65, lineHeight: 1.3 }}>
+                      {statusLabel === "completed" ? "Ready" : statusLabel === "running" ? "Rendering" : "Pending"}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
 
-            {allMockups.length > 1 && (
-              <>
-                <button
-                  onClick={() => setCarouselIdx((i) => i === 0 ? allMockups.length - 1 : i - 1)}
-                  style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "white" }}
-                >
-                  <ChevronLeft size={16} />
-                </button>
-                <button
-                  onClick={() => setCarouselIdx((i) => i === allMockups.length - 1 ? 0 : i + 1)}
-                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "white" }}
-                >
-                  <ChevronRight size={16} />
-                </button>
-                <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.5)", color: "white", fontSize: "0.7rem", padding: "3px 10px", borderRadius: 12 }}>
-                  {carouselIdx + 1} / {allMockups.length}
+            <div
+              className="card"
+              style={{
+                aspectRatio: "1/1",
+                backgroundColor: activeDesignMockupColorHex,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                position: "relative",
+                overflow: "hidden",
+                maxHeight: 420,
+              }}
+            >
+              {activeMockup && activeMockupUrl ? (
+                <img
+                  src={activeMockupUrl}
+                  alt={`${activeMockup.colorName} - ${viewLabel(activeMockup.viewPosition)}`}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              ) : (activeDesignStatus === "running" || activeDesignStatus === "pending") ? (
+                <div style={{ textAlign: "center", padding: "0 24px" }}>
+                  <Loader2 size={36} className="animate-spin" style={{ opacity: 0.45, marginBottom: 12 }} />
+                  <p style={{ fontSize: "0.82rem", opacity: 0.55, margin: 0 }}>
+                    Đang render mockup cho {activeDesignName}
+                    <br />
+                    Quay lại bước Mockups để theo dõi tiến trình nếu cần.
+                  </p>
                 </div>
-              </>
+              ) : (
+                <div style={{ textAlign: "center", padding: "0 24px" }}>
+                  <ImageOff size={36} style={{ opacity: 0.3, marginBottom: 12 }} />
+                  <p style={{ fontSize: "0.82rem", opacity: 0.55, margin: 0 }}>
+                    Chưa có mockup cho {activeDesignName}
+                    <br />
+                    Trở lại bước Mockups để tạo lại.
+                  </p>
+                </div>
+              )}
+
+              {activeMockup && (
+                <div style={{ position: "absolute", bottom: 8, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.55)", color: "white", fontSize: "0.72rem", padding: "4px 10px", borderRadius: 999 }}>
+                  {activeDesignName} · {previewPlacementLabel}
+                </div>
+              )}
+
+              {activeMockups.length > 1 && (
+                <>
+                  <button
+                    onClick={() => setCarouselIdx((i) => (i === 0 ? activeMockups.length - 1 : i - 1))}
+                    style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "white" }}
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <button
+                    onClick={() => setCarouselIdx((i) => (i === activeMockups.length - 1 ? 0 : i + 1))}
+                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "white" }}
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                  <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.5)", color: "white", fontSize: "0.7rem", padding: "3px 10px", borderRadius: 12 }}>
+                    {carouselIdx + 1} / {activeMockups.length}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {activeMockups.length > 1 && (
+              <div className="flex gap-2" style={{ marginTop: 8, overflowX: "auto" }}>
+                {activeMockups.map((mockup, idx) => {
+                  const thumbnailUrl = toPublicUrl(mockup.compositeUrl);
+                  const thumbnailColorHex = colorHexLookup.get(normalizeColorName(mockup.colorName)) ?? "var(--bg-tertiary)";
+                  return (
+                    <div
+                      key={mockup.id}
+                      onClick={() => setCarouselIdx(idx)}
+                      title={`${mockup.colorName} · ${viewLabel(mockup.viewPosition)}`}
+                      style={{ width: 48, height: 48, borderRadius: "var(--radius-sm)", backgroundColor: thumbnailColorHex, border: idx === carouselIdx ? "2px solid var(--color-wise-green)" : "1px solid var(--border-default)", cursor: "pointer", overflow: "hidden", flexShrink: 0 }}
+                    >
+                      {thumbnailUrl && (
+                        <img src={thumbnailUrl} alt={`${mockup.colorName} ${viewLabel(mockup.viewPosition)}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
 
-              {allMockups.length > 1 && (
-            <div className="flex gap-2" style={{ marginTop: 8, overflowX: "auto" }}>
-              {allMockups.map((mockup, idx) => {
-                const thumbnailUrl = toPublicUrl(mockup.compositeUrl);
-                const thumbnailColorHex = colorHexLookup.get(normalizeColorName(mockup.colorName)) ?? "var(--bg-tertiary)";
+          <div className="card" style={{ padding: 16 }}>
+            <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
+              <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Mockup groups</h3>
+              <span style={{ fontSize: "0.8rem", opacity: 0.6 }}>{selectedDraftDesigns.length} tabs</span>
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {selectedDraftDesigns.map((design) => {
+                const job = latestMockupJobByDesign.get(design.id) ?? null;
+                const progressText = job
+                  ? `${job.completedImages ?? 0}/${job.totalImages ?? (job.images?.length ?? 0)} ảnh`
+                  : "Chưa có job";
+                const statusClass =
+                  job?.status === "completed"
+                    ? "badge-success"
+                    : job?.status === "failed"
+                      ? "badge-danger"
+                      : "badge-warning";
                 return (
                   <div
-                    key={mockup.id}
-                    onClick={() => setCarouselIdx(idx)}
-                    title={`${mockup.colorName} · ${viewLabel(mockup.viewPosition)}`}
-                    style={{ width: 48, height: 48, borderRadius: "var(--radius-sm)", backgroundColor: thumbnailColorHex, border: idx === carouselIdx ? "2px solid var(--color-wise-green)" : "1px solid var(--border-default)", cursor: "pointer", overflow: "hidden", flexShrink: 0 }}
+                    key={design.id}
+                    className="flex items-center justify-between gap-3"
+                    style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border-default)", backgroundColor: "var(--bg-tertiary)" }}
                   >
-                    {thumbnailUrl && (
-                      <img src={thumbnailUrl} alt={`${mockup.colorName} ${viewLabel(mockup.viewPosition)}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    )}
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: "0.84rem", overflowWrap: "anywhere" }}>
+                        {design.design?.name ?? `Design ${design.sortOrder + 1}`}
+                      </div>
+                      <p style={{ margin: "4px 0 0", fontSize: "0.72rem", opacity: 0.65 }}>
+                        {progressText}
+                      </p>
+                    </div>
+                    <span className={`badge ${statusClass}`} style={{ flexShrink: 0, fontSize: "0.65rem" }}>
+                      {job?.status ?? "pending"}
+                    </span>
                   </div>
                 );
               })}
             </div>
-          )}
+          </div>
         </div>
 
-        {/* Right: Content summary + checklist */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Title (Bug #6 — inline link) */}
-          <div>
-            <label style={{ fontWeight: 600, fontSize: "0.8rem", opacity: 0.5, display: "block", marginBottom: 4 }}>
-              Tiêu đề
-            </label>
-            {aiContent?.title ? (
-              <p style={{ fontWeight: 700, fontSize: "1rem", margin: 0 }}>{aiContent.title}</p>
-            ) : (
-              <p style={{ opacity: 0.35, fontSize: "0.85rem", margin: 0 }}>
-                Chưa tạo nội dung
-                <InlineLink href={step4Url}>Sửa ở AI Content</InlineLink>
-              </p>
-            )}
-          </div>
-
-          {/* Description (Bug #6) */}
-          <div>
-            <label style={{ fontWeight: 600, fontSize: "0.8rem", opacity: 0.5, display: "block", marginBottom: 4 }}>
-              Mô tả
-            </label>
-            {aiContent?.description ? (
-              <div
-                style={{ fontSize: "0.85rem", lineHeight: 1.5, maxHeight: 120, overflow: "auto", padding: "8px 12px", backgroundColor: "var(--bg-tertiary)", borderRadius: "var(--radius-sm)" }}
-                dangerouslySetInnerHTML={{ __html: aiContent.description }}
-              />
-            ) : (
-              <p style={{ opacity: 0.35, fontSize: "0.85rem", margin: 0 }}>
-                Chưa có description
-                <InlineLink href={step4Url}>Sửa</InlineLink>
-              </p>
-            )}
-          </div>
-
-          {/* Tags (Bug #6) */}
-          <div>
-            <label style={{ fontWeight: 600, fontSize: "0.8rem", opacity: 0.5, display: "block", marginBottom: 4 }}>
-              Tags
-            </label>
-            {aiContent?.tags && aiContent.tags.length > 0 ? (
-              <div className="flex flex-wrap gap-1">
-                {aiContent.tags.map((tag) => (
-                  <span key={tag} style={{ padding: "3px 8px", borderRadius: "var(--radius-sm)", backgroundColor: "var(--bg-tertiary)", fontSize: "0.75rem" }}>
-                    {tag}
-                  </span>
-                ))}
+          <div className="card" style={{ padding: 16 }}>
+            <div className="flex items-center justify-between gap-3" style={{ marginBottom: 12 }}>
+              <div style={{ minWidth: 0 }}>
+                <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Content & pricing</h3>
+                <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                  Shared across all listings in this wizard run
+                </p>
               </div>
-            ) : (
-              <p style={{ opacity: 0.35, fontSize: "0.85rem", margin: 0 }}>
-                Chưa có tags
-                <InlineLink href={step4Url}>Thêm tags</InlineLink>
-              </p>
-            )}
-          </div>
-
-          {/* Price & Sizes Table */}
-          <div>
-            <div className="flex items-center gap-4 mb-3">
-              <div>
-                <label style={{ fontWeight: 600, fontSize: "0.8rem", opacity: 0.5, display: "block", marginBottom: 4 }}>
-                  Base Price (USD)
-                </label>
-                <div className="flex items-center gap-2">
-                  <span style={{ fontSize: "0.85rem", opacity: 0.6 }}>$</span>
-                  <input
-                    type="text"
-                    className="input"
-                    value={price}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (/^\d*\.?\d{0,2}$/.test(v)) setPrice(v);
-                    }}
-                    placeholder="24.99"
-                    style={{ maxWidth: 100 }}
-                  />
-                </div>
-              </div>
+              <span className="badge badge-success" style={{ flexShrink: 0, fontSize: "0.65rem" }}>
+                {selectedTemplateBlueprint || "T-Shirt"}
+              </span>
             </div>
 
-            {sizes.length > 0 && draft?.enabledSizes && draft.enabledSizes.length > 0 && (
-              <div style={{ backgroundColor: "var(--bg-tertiary)", borderRadius: "var(--radius-sm)", overflow: "hidden", border: "1px solid var(--border-default)" }}>
-                <table style={{ width: "100%", fontSize: "0.8rem", textAlign: "left", borderCollapse: "collapse" }}>
-                  <thead style={{ backgroundColor: "rgba(0,0,0,0.02)", borderBottom: "1px solid var(--border-default)" }}>
-                    <tr>
-                      <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Size</th>
-                      <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Cost</th>
-                      <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Retail Price</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sizes.filter(s => draft.enabledSizes?.includes(s.size)).map((s, i) => {
-                      const baseVal = parseFloat(price) || 0;
-                      const retail = baseVal + (s.costDeltaCents / 100);
-                      return (
-                        <tr key={s.size} style={{ borderBottom: i === draft.enabledSizes!.length - 1 ? "none" : "1px solid var(--border-default)" }}>
-                          <td style={{ padding: "8px 12px", fontWeight: 500 }}>{s.size}</td>
-                          <td style={{ padding: "8px 12px", opacity: 0.7 }}>${(s.costCents / 100).toFixed(2)}</td>
-                          <td style={{ padding: "8px 12px", fontWeight: 600 }}>${retail.toFixed(2)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+            <div style={{ display: "grid", gap: 14 }}>
+              <div>
+                <label style={{ fontWeight: 600, fontSize: "0.8rem", opacity: 0.5, display: "block", marginBottom: 4 }}>
+                  Tiêu đề
+                </label>
+                {aiContent?.title ? (
+                  <p style={{ fontWeight: 700, fontSize: "1rem", margin: 0 }}>{aiContent.title}</p>
+                ) : (
+                  <p style={{ opacity: 0.35, fontSize: "0.85rem", margin: 0 }}>
+                    Chưa tạo nội dung
+                    <InlineLink href={`/wizard/${draftId}/step-4`}>Sửa ở AI Content</InlineLink>
+                  </p>
+                )}
               </div>
-            )}
+
+              <div>
+                <label style={{ fontWeight: 600, fontSize: "0.8rem", opacity: 0.5, display: "block", marginBottom: 4 }}>
+                  Mô tả
+                </label>
+                {aiContent?.description ? (
+                  <div
+                    style={{ fontSize: "0.85rem", lineHeight: 1.5, maxHeight: 120, overflow: "auto", padding: "8px 12px", backgroundColor: "var(--bg-tertiary)", borderRadius: "var(--radius-sm)" }}
+                    dangerouslySetInnerHTML={{ __html: aiContent.description }}
+                  />
+                ) : (
+                  <p style={{ opacity: 0.35, fontSize: "0.85rem", margin: 0 }}>
+                    Chưa có description
+                    <InlineLink href={`/wizard/${draftId}/step-4`}>Sửa</InlineLink>
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label style={{ fontWeight: 600, fontSize: "0.8rem", opacity: 0.5, display: "block", marginBottom: 4 }}>
+                  Tags
+                </label>
+                {aiContent?.tags && aiContent.tags.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {aiContent.tags.map((tag) => (
+                      <span key={tag} style={{ padding: "3px 8px", borderRadius: "var(--radius-sm)", backgroundColor: "var(--bg-tertiary)", fontSize: "0.75rem" }}>
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ opacity: 0.35, fontSize: "0.85rem", margin: 0 }}>
+                    Chưa có tags
+                    <InlineLink href={`/wizard/${draftId}/step-4`}>Thêm tags</InlineLink>
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center gap-4 mb-3">
+                  <div>
+                    <label style={{ fontWeight: 600, fontSize: "0.8rem", opacity: 0.5, display: "block", marginBottom: 4 }}>
+                      Base Price (USD)
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <span style={{ fontSize: "0.85rem", opacity: 0.6 }}>$</span>
+                      <input
+                        type="text"
+                        className="input"
+                        value={price}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          if (/^\d*\.?\d{0,2}$/.test(next)) setPrice(next);
+                        }}
+                        placeholder="24.99"
+                        style={{ maxWidth: 100 }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {sizes.length > 0 && draft?.enabledSizes && draft.enabledSizes.length > 0 && (
+                  <div style={{ backgroundColor: "var(--bg-tertiary)", borderRadius: "var(--radius-sm)", overflow: "hidden", border: "1px solid var(--border-default)" }}>
+                    <table style={{ width: "100%", fontSize: "0.8rem", textAlign: "left", borderCollapse: "collapse" }}>
+                      <thead style={{ backgroundColor: "rgba(0,0,0,0.02)", borderBottom: "1px solid var(--border-default)" }}>
+                        <tr>
+                          <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Size</th>
+                          <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Cost</th>
+                          <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Retail Price</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sizes.filter((size) => draft.enabledSizes?.includes(size.size)).map((size, index) => {
+                          const baseVal = parseFloat(price) || 0;
+                          const retail = baseVal + size.costDeltaCents / 100;
+                          return (
+                            <tr key={size.size} style={{ borderBottom: index === (draft.enabledSizes?.length ?? 0) - 1 ? "none" : "1px solid var(--border-default)" }}>
+                              <td style={{ padding: "8px 12px", fontWeight: 500 }}>{size.size}</td>
+                              <td style={{ padding: "8px 12px", opacity: 0.7 }}>${(size.costCents / 100).toFixed(2)}</td>
+                              <td style={{ padding: "8px 12px", fontWeight: 600 }}>${retail.toFixed(2)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
-          {/* Summary card */}
           <div className="card" style={{ padding: "12px 16px", backgroundColor: "var(--bg-tertiary)", fontSize: "0.8rem" }}>
             <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
               <ClipboardCheck size={16} style={{ color: "var(--color-wise-green)" }} />
               <strong>Tổng hợp</strong>
             </div>
             <div style={{ lineHeight: 1.8 }}>
-              • Product: {draft?.store?.template?.blueprintTitle || draft?.productType || "—"}
+              • Product: {selectedTemplateBlueprint || "—"}
               <br />• Colors: {colors.length} màu
-              <br />• Sizes: {draft?.enabledSizes?.length || 0} size
-              <br />• Mockups: {allMockups.length} ảnh đã chọn
+              <br />• Sizes: {selectedSizesCount} size
+              <br />• Mockups: {activeMockups.length} ảnh cho design đang chọn
               <br />• Base Price: ${formatPriceDisplay(price)}
             </div>
           </div>
 
-          {/* Pre-publish checklist (Bug #7) */}
-          {localChecklist && (
-            <div className="card" style={{ padding: "12px 16px", fontSize: "0.82rem" }}>
-              <div className="flex items-center gap-2" style={{ marginBottom: 10 }}>
-                <ClipboardCheck size={14} style={{ opacity: 0.5 }} />
-                <span style={{ fontWeight: 600 }}>Kiểm tra trước khi Publish</span>
+          <div className="card" style={{ padding: 16 }}>
+            <div className="flex items-center justify-between gap-3" style={{ marginBottom: 10 }}>
+              <div>
+                <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Publish progress</h3>
+                <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                  Theo dõi từng listing theo design
+                </p>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-                <ChecklistItem ok={localChecklist.mockupsMatchColors} label={`Mockup khớp số màu (${selectedMockupColorCount}/${colors.length})`} linkLabel="Fix ở Mockups" linkHref={step3Url} />
-                <ChecklistItem ok={localChecklist.contentComplete}     label="Nội dung đầy đủ (title, description, tags)" linkLabel="Fix ở Content" linkHref={step4Url} />
-                <ChecklistItem ok={localChecklist.placementValid}      label="Placement hợp lệ" linkLabel="Fix ở Placement" linkHref={step3Url} />
-                <ChecklistItem ok={localChecklist.mockupsNotStale}     label="Mockup cập nhật (không bị outdated)" linkLabel="Tạo lại" linkHref={step3Url} />
-              </div>
+              <span className={`badge ${overallPublishStatus === "SUCCESS" ? "badge-success" : overallPublishStatus === "ERROR" ? "badge-danger" : overallPublishStatus === "PUBLISHING" ? "badge-warning" : "badge-info"}`} style={{ flexShrink: 0, fontSize: "0.65rem" }}>
+                {overallPublishStatus}
+              </span>
             </div>
-          )}
 
-          {/* Publish button & Progress */}
-          {publishStatus !== "IDLE" && (
-            <div className="card" style={{ padding: "16px", marginTop: 8 }}>
-              <div style={{ fontWeight: 600, marginBottom: 12 }}>Tiến trình Publish</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {publishLogs.map((log, i) => (
-                  <div key={i} className="flex items-center gap-2" style={{ fontSize: "0.85rem" }}>
-                    {log.status === "pending" ? (
-                      <Loader2 size={14} className="animate-spin text-amber-500" />
-                    ) : log.status === "error" ? (
-                      <XCircle size={14} className="text-red-500" />
-                    ) : (
-                      <CheckCircle2 size={14} className="text-green-500" />
-                    )}
-                    <span style={{ opacity: log.status === "pending" ? 0.8 : 1 }}>{log.message}</span>
-                  </div>
-                ))}
-              </div>
-              {publishStatus === "SUCCESS" && !isAlreadyPublished && (
-                <div style={{ marginTop: 16, textAlign: "center" }}>
-                  <CheckCircle2 size={40} style={{ color: "var(--color-wise-green)", margin: "0 auto 12px" }} />
-                  <p style={{ fontWeight: 700, fontSize: "1rem", margin: "0 0 16px" }}>Đã publish thành công!</p>
-                  {allMockups[0] && (
-                    <div className="flex items-center gap-3" style={{ marginBottom: 16, padding: "10px 12px", backgroundColor: "var(--bg-tertiary)", borderRadius: "var(--radius-sm)", textAlign: "left" }}>
-                      <div style={{ width: 56, height: 56, borderRadius: "var(--radius-sm)", overflow: "hidden", flexShrink: 0, backgroundColor: "var(--bg-tertiary)" }}>
-                        <img
-                          src={toPublicUrl(allMockups[0].compositeUrl) ?? undefined}
-                          alt="mockup"
-                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                        />
-                      </div>
-                      <p style={{ margin: 0, fontWeight: 600, fontSize: "0.85rem", lineHeight: 1.4 }}>
-                        {aiContent?.title ?? "Sản phẩm của bạn"}
-                      </p>
-                    </div>
-                  )}
-                  <div className="flex gap-3">
-                    {successListingId && (
-                      <Link
-                        href={`/listings/${successListingId}`}
-                        className="btn btn-primary"
-                        style={{ textDecoration: "none", flex: 1, justifyContent: "center" }}
-                      >
-                        Xem Listing →
-                      </Link>
-                    )}
-                    <Link
-                      href="/wizard"
-                      className="btn btn-secondary"
-                      style={{ textDecoration: "none", flex: 1, justifyContent: "center" }}
-                    >
-                      + Tạo wizard mới
-                    </Link>
-                  </div>
-                </div>
-              )}
+            <div style={{ display: "grid", gap: 10 }}>
+              {designPublishEntries.map((entry) => {
+                const statusClass =
+                  entry.publish.status === "SUCCESS"
+                    ? "badge-success"
+                    : entry.publish.status === "ERROR"
+                      ? "badge-danger"
+                      : entry.publish.status === "PUBLISHING"
+                        ? "badge-warning"
+                        : "badge-info";
 
-          {publishStatus === "SUCCESS" && isAlreadyPublished && (
-                <div style={{ marginTop: 16 }}>
-                  {!showRepublishConfirm ? (
-                    <>
-                      <p style={{ fontSize: "0.85rem", margin: "0 0 12px", opacity: 0.7 }}>
-                        Draft này đã được publish trước đó.
-                      </p>
-                      <div className="flex gap-3">
-                        {successListingId && (
-                          <Link
-                            href={`/listings/${successListingId}`}
-                            className="btn btn-primary"
-                            style={{ textDecoration: "none", flex: 1, justifyContent: "center" }}
-                          >
-                            Xem Listing →
-                          </Link>
-                        )}
-                        <button
-                          className="btn btn-secondary"
-                          style={{ flex: 1 }}
-                          onClick={() => setShowRepublishConfirm(true)}
-                        >
-                          <RefreshCcw size={14} /> Publish lại
-                        </button>
+                return (
+                  <div
+                    key={entry.id}
+                    style={{
+                      border: "1px solid var(--border-default)",
+                      borderRadius: 10,
+                      padding: 12,
+                      backgroundColor: "var(--bg-tertiary)",
+                    }}
+                  >
+                    <div className="flex items-start justify-between gap-3" style={{ marginBottom: 8 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: "0.85rem", overflowWrap: "anywhere" }}>
+                          {entry.design?.name ?? `Design ${entry.sortOrder + 1}`}
+                        </div>
+                        <p style={{ margin: "3px 0 0", fontSize: "0.72rem", opacity: 0.65 }}>
+                          {entry.publish.listingId ? `Listing ${entry.publish.listingId.slice(-6)}` : "Chưa tạo listing"}
+                        </p>
                       </div>
-                    </>
-                  ) : (
-                    <div style={{ padding: "14px 16px", borderRadius: "var(--radius-md)", border: "1px solid var(--color-danger)", backgroundColor: "rgba(239,68,68,0.05)" }}>
-                      <p style={{ fontWeight: 700, fontSize: "0.88rem", margin: "0 0 6px", color: "var(--color-danger)" }}>
-                        ⚠️ Xác nhận Publish lại
-                      </p>
-                      <p style={{ fontSize: "0.82rem", margin: "0 0 14px", lineHeight: 1.5, opacity: 0.8 }}>
-                        Hành động này sẽ <strong>XÓA listing cũ</strong> và tạo sản phẩm mới trên Shopify &amp; Printify. Listing cũ sẽ không thể khôi phục.
-                      </p>
-                      <div className="flex gap-3">
-                        <button
-                          className="btn btn-secondary"
-                          style={{ flex: 1 }}
-                          onClick={() => setShowRepublishConfirm(false)}
-                          disabled={republishing}
-                        >
-                          Hủy
-                        </button>
-                        <button
-                          className="btn"
-                          style={{ flex: 1, backgroundColor: "var(--color-danger)", color: "#fff", border: "none", cursor: republishing ? "not-allowed" : "pointer", opacity: republishing ? 0.6 : 1 }}
-                          onClick={handleForceRepublish}
-                          disabled={republishing}
-                        >
-                          {republishing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCcw size={14} />}
-                          Xóa &amp; Publish lại
-                        </button>
-                      </div>
+                      <span className={`badge ${statusClass}`} style={{ flexShrink: 0, fontSize: "0.65rem" }}>
+                        {entry.publish.status}
+                      </span>
                     </div>
-                  )}
-                </div>
-              )}
-              {publishStatus === "ERROR" && failedListingId && (
-                <button
-                  className="btn btn-primary"
-                  onClick={handleRetryPrintify}
-                  disabled={retrying}
-                  style={{
-                    fontSize: "0.85rem",
-                    padding: "10px 20px",
-                    width: "100%",
-                    marginTop: 12,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                    background: "var(--color-wise-green)",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 8,
-                    cursor: retrying ? "not-allowed" : "pointer",
-                    opacity: retrying ? 0.6 : 1,
-                  }}
-                >
-                  {retrying ? <Loader2 size={14} className="animate-spin" /> : <RefreshCcw size={14} />}
-                  Thử lại Printify
-                </button>
-              )}
+
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {entry.publish.logs.map((log, index) => (
+                        <div key={`${entry.id}-${index}`} className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
+                          {log.status === "pending" ? (
+                            <Loader2 size={14} className="animate-spin text-amber-500" />
+                          ) : log.status === "error" ? (
+                            <CheckCircle2 size={14} style={{ color: "var(--color-error)" }} />
+                          ) : (
+                            <CheckCircle2 size={14} style={{ color: "var(--color-wise-green)" }} />
+                          )}
+                          <span style={{ opacity: log.status === "pending" ? 0.8 : 1 }}>{log.message}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {entry.publish.status === "SUCCESS" && entry.publish.listingId && (
+                      <div style={{ marginTop: 10 }}>
+                        <Link
+                          href={`/listings/${entry.publish.listingId}`}
+                          className="btn btn-secondary"
+                          style={{ textDecoration: "none", width: "100%", justifyContent: "center" }}
+                        >
+                          Xem listing
+                        </Link>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          )}
 
-          {publishStatus === "IDLE" && (
             <button
               className="btn btn-primary"
               onClick={handlePublish}
-              disabled={localChecklist ? !localChecklist.readyToPublish || publishing : true}
+              disabled={!canPublish}
               title={localChecklist && !localChecklist.readyToPublish ? "Hoàn tất checklist để Publish" : undefined}
               style={{
-                fontSize: "0.9rem", padding: "12px 24px", width: "100%",
+                fontSize: "0.9rem",
+                padding: "12px 24px",
+                width: "100%",
+                marginTop: 14,
                 opacity: localChecklist && !localChecklist.readyToPublish ? 0.5 : 1,
                 cursor: localChecklist && !localChecklist.readyToPublish ? "not-allowed" : "pointer",
               }}
             >
               {publishing ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-              Publish to Shopify & Printify
+              Publish {selectedDraftDesigns.length} listings
             </button>
-          )}
-
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-// ── ChecklistItem ────────────────────────────────────────────────────────────
-
 function ChecklistItem({
-  ok, label, linkLabel, linkHref,
-}: { ok: boolean; label: string; linkLabel: string; linkHref: string }) {
+  ok,
+  label,
+  linkLabel,
+  linkHref,
+}: {
+  ok: boolean;
+  label: string;
+  linkLabel: string;
+  linkHref: string;
+}) {
   return (
     <div className="flex items-center gap-2">
-      {ok
-        ? <CheckCircle2 size={14} style={{ color: "var(--color-wise-green)", flexShrink: 0 }} />
-        : <XCircle size={14} style={{ color: "var(--color-error)", flexShrink: 0 }} />}
+      {ok ? (
+        <CheckCircle2 size={14} style={{ color: "var(--color-wise-green)", flexShrink: 0 }} />
+      ) : (
+        <AlertTriangle size={14} style={{ color: "var(--color-error)", flexShrink: 0 }} />
+      )}
       <span style={{ flex: 1, opacity: ok ? 0.8 : 1 }}>{label}</span>
       {!ok && (
         <a href={linkHref} style={{ fontSize: "0.75rem", color: "var(--color-wise-green)", textDecoration: "none", whiteSpace: "nowrap" }}>
