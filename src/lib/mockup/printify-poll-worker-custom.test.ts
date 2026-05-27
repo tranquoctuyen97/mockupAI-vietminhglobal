@@ -66,8 +66,8 @@ test("buildCustomMockupImageRows creates TEMPLATE rows with scope-aware source U
       },
       {
         sourceUrl: "mockup://custom/template/final/src_final",
-        compositeUrl: "custom-mockups/templates/store/template/color/src-output.jpg",
-        compositeStatus: "completed",
+        compositeUrl: null,
+        compositeStatus: "pending",
         included: true,
         isDefault: true,
         sortOrder: 10002,

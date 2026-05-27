@@ -317,6 +317,7 @@ export async function createTemplate(
     blueprintImageUrl?: string;
     blueprintBrand?: string;
     colorIds?: string[];
+    defaultMockupSource?: "PRINTIFY" | "CUSTOM";
   },
 ) {
   const existingCount = await prisma.storeMockupTemplate.count({ where: { storeId } });
@@ -350,6 +351,7 @@ export async function createTemplate(
         blueprintImageUrl: data.blueprintImageUrl ?? null,
         blueprintBrand: data.blueprintBrand ?? null,
         sortOrder: existingCount,
+        defaultMockupSource: data.defaultMockupSource ?? "PRINTIFY",
       },
     });
 

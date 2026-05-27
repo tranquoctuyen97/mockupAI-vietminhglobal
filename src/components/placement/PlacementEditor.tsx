@@ -158,10 +158,10 @@ export function PlacementEditor({
         {bgImage ? (
           <KonvaImage
             image={bgImage}
-            x={0}
-            y={0}
-            width={canvasWidth}
-            height={canvasHeight}
+            x={paX}
+            y={paY}
+            width={toPx(printArea.widthMm)}
+            height={toPx(printArea.heightMm)}
             listening={false}
           />
         ) : (

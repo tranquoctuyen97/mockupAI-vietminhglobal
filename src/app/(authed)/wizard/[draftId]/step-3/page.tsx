@@ -458,6 +458,16 @@ export default function Step3PreviewPage() {
   }, [activeDraftDesignId, mockupJobsByDesign]);
 
   const activeMockupImages = activeDesignJob?.images ?? [];
+
+  // Gộp mockup images từ tất cả design jobs để hiện cùng lúc trong gallery
+  const allMockupImages = useMemo(() => {
+    const images: typeof activeMockupImages = [];
+    for (const job of mockupJobsByDesign.values()) {
+      images.push(...(job.images ?? []));
+    }
+    return images;
+  }, [mockupJobsByDesign]);
+
   const activeDesignProgress = activeDesignJob ?? {
     jobId: "",
     draftDesignId: activeDraftDesignId ?? "",
@@ -1345,6 +1355,7 @@ export default function Step3PreviewPage() {
 
           {isCustomTemplateDefault ? (
             draft?.storeId && selectedTemplate ? (
+              <>
               <ColorMockupCardGrid
                 draftId={draftId as string}
                 templateId={selectedTemplate.id}
@@ -1367,6 +1378,34 @@ export default function Step3PreviewPage() {
                 }}
                 onDeselectColor={(colorId) => toggleColor(colorId)}
               />
+
+              {/* Kết quả mockup — gallery grid gộp tất cả designs */}
+              {(hasTriggeredBatchRender || isGenerating || allMockupImages.length > 0) && (
+                <div className="card" style={{ padding: 20, minHeight: 200 }}>
+                  <div className="flex justify-between items-center" style={{ marginBottom: 16 }}>
+                    <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>
+                      {resultsSectionTitle}
+                    </h3>
+                  </div>
+                  <MockupGallery
+                    draftId={draftId as string}
+                    images={allMockupImages.filter((img) => {
+                      const normalizedColorName = img.colorName.trim().toLowerCase();
+                      return shouldShowInOfficialGallery(
+                        img,
+                        selectedTemplate?.defaultMockupSource ?? "PRINTIFY",
+                      ) && storeColors.some(
+                        (c) =>
+                          selectedColorIds.has(c.id) &&
+                          c.name.trim().toLowerCase() === normalizedColorName,
+                      );
+                    })}
+                    isPolling={isGenerating}
+                    progress={activeDesignProgress}
+                  />
+                </div>
+              )}
+              </>
             ) : null
           ) : (
             <>

@@ -391,7 +391,7 @@ export function MockupGallery({
                 const imageUrl = normalizeImageUrl(img.compositeUrl);
                 const sourceType = parseMockupSourceUrl(img.sourceUrl);
                 const sourceBadge = getSourceBadge(sourceType);
-                const label = img.cameraLabel || viewLabel(img.mockupType ?? img.viewPosition);
+                const label = img.cameraLabel || viewLabel(img.viewPosition);
                 const imageBroken = brokenImageIds.has(img.id);
 
                 return (

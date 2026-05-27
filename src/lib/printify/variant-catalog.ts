@@ -146,25 +146,26 @@ export async function ensureVariantCostCache(input: {
       };
     });
 
-    // 8. UPSERT cache (delete old + insert new in transaction)
-    await prisma.$transaction([
-      prisma.printifyVariantCache.deleteMany({
-        where: { blueprintId, printProviderId },
-      }),
-      prisma.printifyVariantCache.createMany({
-        data: merged.map((v) => ({
-          blueprintId,
-          printProviderId,
-          variantId: v.variantId,
-          colorName: v.colorName,
-          colorHex: v.colorHex,
-          size: v.size,
-          sku: v.sku,
-          costCents: v.costCents,
-          isAvailable: v.isAvailable,
-        })),
-      }),
-    ]);
+    // 8. UPSERT cache: delete old, then batch-insert new.
+    // Sequential (not $transaction) to avoid P2028 timeout — connection pool
+    // is often exhausted after a long Printify API call (~10-16s). The cache
+    // table is idempotent: stale rows are harmless, fresh rows overwrite them.
+    await prisma.printifyVariantCache.deleteMany({
+      where: { blueprintId, printProviderId },
+    });
+    await prisma.printifyVariantCache.createMany({
+      data: merged.map((v) => ({
+        blueprintId,
+        printProviderId,
+        variantId: v.variantId,
+        colorName: v.colorName,
+        colorHex: v.colorHex,
+        size: v.size,
+        sku: v.sku,
+        costCents: v.costCents,
+        isAvailable: v.isAvailable,
+      })),
+    });
 
     return merged;
   } finally {

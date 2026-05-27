@@ -142,6 +142,14 @@ export async function POST(
     position?: "FRONT" | "BACK" | "SLEEVE";
     defaultPlacement?: Record<string, unknown>;
     colorIds?: string[];
+    defaultMockupSource?: "PRINTIFY" | "CUSTOM";
+    blueprintTitle?: string;
+    printProviderTitle?: string;
+    enabledVariantIds?: number[];
+    enabledSizes?: string[];
+    defaultAspectRatio?: string;
+    blueprintImageUrl?: string;
+    blueprintBrand?: string;
   };
 
   if (!data.name || !data.printifyBlueprintId || !data.printifyPrintProviderId) {
@@ -154,6 +162,7 @@ export async function POST(
   const result = await createTemplate(id, {
     ...data,
     defaultPlacement: data.defaultPlacement as Prisma.InputJsonValue,
+    defaultMockupSource: data.defaultMockupSource,
   });
   return NextResponse.json(result);
 }

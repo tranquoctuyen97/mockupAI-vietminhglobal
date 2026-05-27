@@ -50,7 +50,7 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
         const storage = getStorage();
         const parsed = parseMockupSourceUrl(sourceUrl);
 
-        if (parsed.kind === "custom" && parsed.renderMode === "COMPOSITE") {
+        if (parsed.kind === "custom" && (parsed.renderMode === "COMPOSITE" || parsed.renderMode === "FINAL")) {
           const source = await prisma.customMockupSource.findUniqueOrThrow({
             where: { id: parsed.sourceId },
             select: {
