@@ -66,8 +66,13 @@ export async function PATCH(
     }
 
     return NextResponse.json(updated);
-  } catch {
-    return NextResponse.json({ error: "Draft not found" }, { status: 404 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error(`[PATCH /api/wizard/drafts/${id}] Error:`, message, err);
+    if (message === "Draft not found") {
+      return NextResponse.json({ error: message }, { status: 404 });
+    }
+    return NextResponse.json({ error: message, code: "UPDATE_FAILED" }, { status: 422 });
   }
 }
 

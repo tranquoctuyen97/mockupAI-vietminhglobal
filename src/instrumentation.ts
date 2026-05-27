@@ -11,6 +11,14 @@ export async function register() {
     return;
   }
 
+  // Skip embedded worker startup when standalone workers run separately
+  // (pnpm worker). In-memory SSE channels only work within the same process,
+  // so having duplicate workers across processes causes missed progress events.
+  if (process.env.STANDALONE_WORKER === "1") {
+    console.log("[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.");
+    return;
+  }
+
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const { startHealthCheckWorker } = await import("@/lib/queue/workers/health-check-worker");
     const { startMockupWorker } = await import("@/lib/queue/workers/mockup-worker");

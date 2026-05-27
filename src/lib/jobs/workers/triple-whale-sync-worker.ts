@@ -4,12 +4,15 @@ import { TWAuthError } from "@/lib/triple-whale/client";
 import { handleSyncError, syncStore } from "@/lib/triple-whale/sync";
 import type { TWSyncJobPayload } from "@/lib/triple-whale/types";
 
-let tripleWhaleSyncWorker: Worker<TWSyncJobPayload> | null = null;
+// HMR-safe singleton — survives Turbopack module re-evaluation
+const globalForTWSyncWorker = globalThis as unknown as {
+  tripleWhaleSyncWorker?: Worker<TWSyncJobPayload>;
+};
 
 export function startTripleWhaleSyncWorker(): Worker<TWSyncJobPayload> {
-  if (tripleWhaleSyncWorker) return tripleWhaleSyncWorker;
+  if (globalForTWSyncWorker.tripleWhaleSyncWorker) return globalForTWSyncWorker.tripleWhaleSyncWorker;
 
-  tripleWhaleSyncWorker = new Worker<TWSyncJobPayload>(
+  const worker = new Worker<TWSyncJobPayload>(
     TW_SYNC_QUEUE_NAME,
     async (job: Job<TWSyncJobPayload>) => {
       const { credentialId } = job.data;
@@ -34,9 +37,10 @@ export function startTripleWhaleSyncWorker(): Worker<TWSyncJobPayload> {
     },
   );
 
-  tripleWhaleSyncWorker.on("failed", (job, err) => {
+  worker.on("failed", (job, err) => {
     console.error(`[TripleWhaleSync] Job failed for credential ${job?.data.credentialId}:`, err.message);
   });
 
-  return tripleWhaleSyncWorker;
+  globalForTWSyncWorker.tripleWhaleSyncWorker = worker;
+  return worker;
 }

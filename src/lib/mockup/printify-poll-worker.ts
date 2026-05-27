@@ -14,12 +14,15 @@ import { redisConnection } from "@/lib/queue/queue";
 const concurrency = parseInt(process.env.PRINTIFY_MOCKUP_WORKER_CONCURRENCY || "2", 10);
 const PRINTIFY_MOCKUP_QUEUE_NAME = "printify-mockup-poll-queue";
 
-let worker: Worker<PrintifyMockupPollPayload> | null = null;
+// HMR-safe singleton — survives Turbopack module re-evaluation
+const globalForPrintifyPollWorker = globalThis as unknown as {
+  printifyPollWorker?: Worker<PrintifyMockupPollPayload>;
+};
 
 export function startPrintifyMockupPollWorker(): Worker<PrintifyMockupPollPayload> {
-  if (worker) return worker;
+  if (globalForPrintifyPollWorker.printifyPollWorker) return globalForPrintifyPollWorker.printifyPollWorker;
 
-  worker = new Worker<PrintifyMockupPollPayload>(
+  const worker = new Worker<PrintifyMockupPollPayload>(
     PRINTIFY_MOCKUP_QUEUE_NAME,
     processPrintifyMockupPollJob,
     {
@@ -36,6 +39,7 @@ export function startPrintifyMockupPollWorker(): Worker<PrintifyMockupPollPayloa
     console.log(`Printify mockup poll job ${job.id} completed successfully`);
   });
 
+  globalForPrintifyPollWorker.printifyPollWorker = worker;
   return worker;
 }
 

@@ -18,12 +18,15 @@ import { redisConnection } from "@/lib/queue/queue";
 
 const concurrency = parseInt(process.env.MOCKUP_WORKER_CONCURRENCY || "5", 10);
 
-let mockupWorker: Worker<MockupJobPayload> | null = null;
+// HMR-safe singleton — survives Turbopack module re-evaluation
+const globalForMockupWorker = globalThis as unknown as {
+  mockupWorker?: Worker<MockupJobPayload>;
+};
 
 export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
-  if (mockupWorker) return mockupWorker;
+  if (globalForMockupWorker.mockupWorker) return globalForMockupWorker.mockupWorker;
 
-  mockupWorker = new Worker<MockupJobPayload>(
+  const worker = new Worker<MockupJobPayload>(
     MOCKUP_QUEUE_NAME,
     async (job: Job<MockupJobPayload>) => {
       const { mockupImageId, sourceUrl, designStoragePath, placementData, colorOverlayHex } =
@@ -130,15 +133,16 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
     },
   );
 
-  mockupWorker.on("failed", (job, err) => {
+  worker.on("failed", (job, err) => {
     console.error(`Job ${job?.id} failed with ${err.message}`);
   });
 
-  mockupWorker.on("completed", (job) => {
+  worker.on("completed", (job) => {
     console.log(`Job ${job.id} completed successfully`);
   });
 
-  return mockupWorker;
+  globalForMockupWorker.mockupWorker = worker;
+  return worker;
 }
 
 function coercePlacement(value: unknown): Placement {

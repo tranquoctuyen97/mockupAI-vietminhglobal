@@ -32,9 +32,12 @@ export const redisConnection = parseRedisUrl(REDIS_URL);
 
 // ── Queues (lazy singletons) ─────────────────────────────────────────────────
 
-let _healthCheckQueue: Queue | null = null;
-let _mockupQueue: Queue | null = null;
-let _tripleWhaleSyncQueue: Queue | null = null;
+// HMR-safe singleton queues — survives Turbopack module re-evaluation
+const globalForQueues = globalThis as unknown as {
+  healthCheckQueue?: Queue;
+  mockupQueue?: Queue;
+  tripleWhaleSyncQueue?: Queue;
+};
 
 const DEFAULT_JOB_OPTIONS = {
   removeOnComplete: 100,
@@ -50,16 +53,16 @@ const DEFAULT_JOB_OPTIONS = {
  * Health check queue — runs every 6 hours
  */
 export function getHealthCheckQueue(): Queue {
-  if (!_healthCheckQueue) {
-    _healthCheckQueue = new Queue("health-check-stores", {
+  if (!globalForQueues.healthCheckQueue) {
+    globalForQueues.healthCheckQueue = new Queue("health-check-stores", {
       connection: redisConnection,
       defaultJobOptions: DEFAULT_JOB_OPTIONS,
     });
-    _healthCheckQueue.on("error", (err) => {
+    globalForQueues.healthCheckQueue.on("error", (err) => {
       console.error("[Queue/health-check] Redis error:", err.message);
     });
   }
-  return _healthCheckQueue;
+  return globalForQueues.healthCheckQueue;
 }
 
 /**
@@ -67,8 +70,8 @@ export function getHealthCheckQueue(): Queue {
  * Phase 6.10: replaces in-process fire-and-forget
  */
 export function getMockupQueue(): Queue {
-  if (!_mockupQueue) {
-    _mockupQueue = new Queue("mockup-generation", {
+  if (!globalForQueues.mockupQueue) {
+    globalForQueues.mockupQueue = new Queue("mockup-generation", {
       connection: redisConnection,
       defaultJobOptions: {
         ...DEFAULT_JOB_OPTIONS,
@@ -76,18 +79,18 @@ export function getMockupQueue(): Queue {
         backoff: { type: "exponential", delay: 2000 },
       },
     });
-    _mockupQueue.on("error", (err) => {
+    globalForQueues.mockupQueue.on("error", (err) => {
       console.error("[Queue/mockup] Redis error:", err.message);
     });
   }
-  return _mockupQueue;
+  return globalForQueues.mockupQueue;
 }
 
 export const TW_SYNC_QUEUE_NAME = "triple-whale-sync";
 
 export function getTripleWhaleSyncQueue(): Queue {
-  if (!_tripleWhaleSyncQueue) {
-    _tripleWhaleSyncQueue = new Queue(TW_SYNC_QUEUE_NAME, {
+  if (!globalForQueues.tripleWhaleSyncQueue) {
+    globalForQueues.tripleWhaleSyncQueue = new Queue(TW_SYNC_QUEUE_NAME, {
       connection: redisConnection,
       defaultJobOptions: {
         removeOnComplete: 50,
@@ -96,9 +99,9 @@ export function getTripleWhaleSyncQueue(): Queue {
         backoff: { type: "exponential" as const, delay: 10_000 },
       },
     });
-    _tripleWhaleSyncQueue.on("error", (err) => {
+    globalForQueues.tripleWhaleSyncQueue.on("error", (err) => {
       console.error("[Queue/triple-whale-sync] Redis error:", err.message);
     });
   }
-  return _tripleWhaleSyncQueue;
+  return globalForQueues.tripleWhaleSyncQueue;
 }

@@ -55,6 +55,8 @@ export type PreparedMockupGeneration = {
   externalShopId: number;
   /** True when template.defaultMockupSource === "CUSTOM" — skips Printify upload/product/poll */
   isCustom: boolean;
+  /** Cached variant-to-color lookup — avoids duplicate Printify API calls */
+  variantColorLookup: Map<number, { colorName: string }>;
 };
 
 export async function loadMockupGenerationContext(draftId: string, tenantId: string) {
@@ -224,6 +226,7 @@ export async function prepareMockupGeneration(
     client,
     externalShopId,
     isCustom,
+    variantColorLookup,
   };
 }
 
@@ -320,15 +323,8 @@ export async function createCustomMockupJobForDraftDesign(
   const { draft } = context;
   const template = prepared.template;
 
-  // Build variantColorLookup (1 Printify API call reused from prepare step)
-  const { getClientForStore } = await import("@/lib/printify/account");
-  const { client, externalShopId } = await getClientForStore(draft.storeId!);
-  const variantColorLookup = await buildVariantColorLookup({
-    storeId: draft.storeId!,
-    draftId: draft.id,
-    client,
-    externalShopId,
-  });
+  // Reuse variant-color lookup from prepare step (avoids duplicate Printify API call)
+  const variantColorLookup = prepared.variantColorLookup;
 
   // Resolve custom sources for selected colors
   const enabledColorSet = new Set(draft.enabledColorIds);

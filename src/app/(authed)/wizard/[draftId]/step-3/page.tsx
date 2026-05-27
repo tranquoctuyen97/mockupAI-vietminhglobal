@@ -314,7 +314,11 @@ export default function Step3PreviewPage() {
         setError("Không tải được cấu hình wizard. Vui lòng thử lại.");
         setLoading(false);
       });
-  }, [draft?.id, draft?.storeId, draft?.templateId, draftId, retryNonce]);
+  // draft?.templateId intentionally excluded from deps — handleTemplateChange uses
+  // retryNonce to force a refetch after template switch. Including templateId causes
+  // a double-run that races with saveDraftImmediately and can revert the selection.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft?.id, draft?.storeId, draftId, retryNonce]);
 
   const selectedDraftDesigns = useMemo<DraftDesignEntry[]>(() => {
     const childRows = (draft?.draftDesigns ?? []) as DraftDesignEntry[];
@@ -631,14 +635,16 @@ export default function Step3PreviewPage() {
     return () => clearTimeout(timeout);
   }, [generationStartedAt, isGenerating, overallJobProgress.total]);
 
-  // SSE-based progress listener — replaces fixed 2s polling
-  // Subscribes to /api/wizard/drafts/:id/events and updates job state on mockup.progress events.
-  // Falls back to a single poll if SSE is unavailable.
+  // SSE-based progress listener with periodic poll fallback.
+  // SSE delivers real-time events when worker runs in the same process as Next.js server.
+  // Periodic poll (every 5s) catches updates from standalone worker processes where
+  // in-memory sseChannels.emit() cannot cross process boundaries.
   useEffect(() => {
     if (!isGenerating || !draftId) return;
 
     let es: EventSource | null = null;
     let pollFallbackId: NodeJS.Timeout | null = null;
+    let periodicPollId: NodeJS.Timeout | null = null;
     let closed = false;
 
     const refreshJobFromApi = async (jobId: string, draftDesignId: string | null) => {
@@ -667,22 +673,57 @@ export default function Step3PreviewPage() {
       } catch { /* ignore */ }
     };
 
+    // Uses functional updater to read current state — avoids stale closure.
+    // Side effects (setGenerating, toast, loadDraft) are deferred via queueMicrotask
+    // to avoid React error: "Cannot update a component while rendering a different component".
     const checkAllDone = () => {
-      const jobs = Array.from(mockupJobsByDesign.values());
-      const stillRunning = jobs.some(
-        (job) => !isTerminalMockupJobStatus(job.status) ||
-          !(job.total > 0 && job.completed + job.failed >= job.total),
-      );
-      setGenerating(stillRunning);
-      if (!stillRunning) {
-        setGenerationStartedAt(null);
-        setShowSlowMockupWarning(false);
-        const doneCount = jobs.filter(
-          (job) => isTerminalMockupJobStatus(job.status) || (job.total > 0 && job.completed + job.failed >= job.total),
-        ).length;
-        if (doneCount > 0) toast.success(`Đã tạo mockups cho ${doneCount} designs`);
-        void useWizardStore.getState().loadDraft(draftId as string);
-      }
+      setMockupJobsByDesign((current) => {
+        const jobs = Array.from(current.values());
+        const stillRunning = jobs.some(
+          (job) => !isTerminalMockupJobStatus(job.status) ||
+            !(job.total > 0 && job.completed + job.failed >= job.total),
+        );
+
+        // Schedule side effects outside the render cycle.
+        // NOTE: Do NOT call loadDraft() here — it overwrites the entire draft state
+        // (including templateId) and causes race conditions with concurrent user actions
+        // like switching templates. Individual job updates via refreshJobFromApi are sufficient.
+        queueMicrotask(() => {
+          setGenerating(stillRunning);
+          if (!stillRunning) {
+            setGenerationStartedAt(null);
+            setShowSlowMockupWarning(false);
+            const doneCount = jobs.filter(
+              (job) => isTerminalMockupJobStatus(job.status) || (job.total > 0 && job.completed + job.failed >= job.total),
+            ).length;
+            if (doneCount > 0) toast.success(`Đã tạo mockups cho ${doneCount} designs`);
+          }
+        });
+
+        return current; // read-only — no state mutation
+      });
+    };
+
+    // Periodic fallback poll — catches updates from standalone worker processes
+    // where in-memory SSE events cannot cross process boundaries.
+    const startPeriodicPoll = () => {
+      periodicPollId = setInterval(() => {
+        if (closed) return;
+        setMockupJobsByDesign((current) => {
+          const activeJobs = Array.from(current.values()).filter(
+            (job) => job.jobId && !isTerminalMockupJobStatus(job.status),
+          );
+          if (activeJobs.length > 0) {
+            void Promise.all(
+              activeJobs.map((j) => refreshJobFromApi(j.jobId, j.draftDesignId ?? null)),
+            ).then(checkAllDone);
+          } else {
+            // All jobs already terminal — ensure we exit generating state
+            checkAllDone();
+          }
+          return current; // read-only — no state mutation
+        });
+      }, 5000);
     };
 
     try {
@@ -725,32 +766,32 @@ export default function Step3PreviewPage() {
       };
 
       es.onerror = () => {
-        // SSE error — fall back to one-shot poll
+        // SSE connection error — trigger immediate poll for all active jobs
         if (!closed) {
           pollFallbackId = setTimeout(() => {
-            const activeJobs = Array.from(mockupJobsByDesign.values()).filter(
-              (job) => job.jobId && !isTerminalMockupJobStatus(job.status),
-            );
-            void Promise.all(activeJobs.map((j) => refreshJobFromApi(j.jobId, j.draftDesignId ?? null)))
-              .then(checkAllDone);
+            setMockupJobsByDesign((current) => {
+              const activeJobs = Array.from(current.values()).filter(
+                (job) => job.jobId && !isTerminalMockupJobStatus(job.status),
+              );
+              void Promise.all(activeJobs.map((j) => refreshJobFromApi(j.jobId, j.draftDesignId ?? null)))
+                .then(checkAllDone);
+              return current;
+            });
           }, 1000);
         }
       };
+
+      startPeriodicPoll();
     } catch {
-      // EventSource not available — fallback poll
-      pollFallbackId = setTimeout(() => {
-        const activeJobs = Array.from(mockupJobsByDesign.values()).filter(
-          (job) => job.jobId && !isTerminalMockupJobStatus(job.status),
-        );
-        void Promise.all(activeJobs.map((j) => refreshJobFromApi(j.jobId, j.draftDesignId ?? null)))
-          .then(checkAllDone);
-      }, 2000);
+      // EventSource not available — rely solely on periodic poll
+      startPeriodicPoll();
     }
 
     return () => {
       closed = true;
       es?.close();
       if (pollFallbackId) clearTimeout(pollFallbackId);
+      if (periodicPollId) clearInterval(periodicPollId);
     };
   }, [draftId, isGenerating]);
 

@@ -9,7 +9,14 @@ import { testStoreConnection } from "@/lib/stores/store-service";
 import { prisma } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 
+// HMR-safe singleton — survives Turbopack module re-evaluation
+const globalForHealthCheckWorker = globalThis as unknown as {
+  healthCheckWorker?: Worker;
+};
+
 export function startHealthCheckWorker() {
+  if (globalForHealthCheckWorker.healthCheckWorker) return globalForHealthCheckWorker.healthCheckWorker;
+
   const worker = new Worker(
     "health-check-stores",
     async (_job) => {
@@ -60,5 +67,6 @@ export function startHealthCheckWorker() {
     console.error(`[HealthCheck] Job ${job?.id} failed:`, err.message);
   });
 
+  globalForHealthCheckWorker.healthCheckWorker = worker;
   return worker;
 }

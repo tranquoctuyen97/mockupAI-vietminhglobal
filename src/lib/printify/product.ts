@@ -211,12 +211,18 @@ export async function pollPrintifyMockups(input: {
   const now = input.now ?? Date.now;
   const sleep = input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const start = now();
+  let attempts = 0;
 
   while (now() - start <= input.maxWaitMs) {
     const product = await input.client.getProduct(input.shopId, input.productId);
     const images = parsePrintifyMockupImages(product.id, product.images ?? []);
     if (images.length > 0) return images;
-    await sleep(input.intervalMs);
+
+    attempts++;
+    // Adaptive backoff: base intervalMs + 1.5s per retry, capped at 12s.
+    // e.g. 3s → 4.5s → 6s → 7.5s → 9s → 10.5s → 12s → 12s ...
+    const delay = Math.min(input.intervalMs + (attempts - 1) * 1500, 12000);
+    await sleep(delay);
   }
 
   throw new PrintifyMockupTimeoutError(input.productId, input.maxWaitMs);

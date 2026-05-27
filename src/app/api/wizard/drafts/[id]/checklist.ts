@@ -64,6 +64,11 @@ export async function buildChecklist(draft: any) {
       const placementData: PlacementData = migratePlacementOnRead(
         draft.placementOverride ?? template?.defaultPlacement,
       );
+      
+      // Clamp small negative coordinates (< 5mm) to 0 to prevent minor drag/drop imprecisions 
+      // from triggering outside_print_area validation errors.
+      clampNegativeCoords(placementData);
+
       const design = draft.design as { width: number; height: number; dpi: number | null } | null;
       if (design) {
         const designMeta: DesignMeta = {
@@ -121,4 +126,21 @@ function isRealPrintifyMockup(image: { compositeUrl?: string | null; sourceUrl?:
     return true;
   }
   return isRealPrintifyMockupMedia(image);
+}
+
+function clampNegativeCoords(data: PlacementData): void {
+  const TOLERANCE = 5; // mm tolerance for minor editor drag/drop offsets
+  if (!data?.variants) return;
+  for (const views of Object.values(data.variants)) {
+    for (const viewKey of Object.keys(views) as Array<keyof typeof views>) {
+      const p = views[viewKey];
+      if (!p) continue;
+      if (p.xMm < 0 && p.xMm > -TOLERANCE) {
+        p.xMm = 0;
+      }
+      if (p.yMm < 0 && p.yMm > -TOLERANCE) {
+        p.yMm = 0;
+      }
+    }
+  }
 }

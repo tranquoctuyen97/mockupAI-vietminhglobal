@@ -38,5 +38,15 @@ class SSEChannelManager {
   }
 }
 
-// Singleton
-export const sseChannels = new SSEChannelManager();
+// HMR-safe singleton — survives Turbopack module re-evaluation.
+// Same pattern as Prisma in db.ts: globalThis persists across HMR reloads,
+// so workers and SSE routes always share the same EventEmitter instances.
+const globalForSSE = globalThis as unknown as {
+  sseChannels?: SSEChannelManager;
+};
+
+export const sseChannels = globalForSSE.sseChannels ?? new SSEChannelManager();
+
+if (process.env.NODE_ENV !== "production") {
+  globalForSSE.sseChannels = sseChannels;
+}
