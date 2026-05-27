@@ -16,23 +16,19 @@ import {
 import { MockupGallery } from "@/components/mockup/MockupGallery";
 import { WizardMockupSourcePanel } from "@/components/mockup/WizardMockupSourcePanel";
 import { ColorMockupCardGrid } from "@/components/mockup/ColorMockupCardGrid";
-import {
-  CanvasPlacementEditor,
-  type CanvasRegionPx,
-} from "@/components/placement/CanvasPlacementEditor";
 import { LivePreview } from "@/components/mockup/LivePreview";
 import {
   Loader2,
   RefreshCw,
   AlertTriangle,
   Image as ImageIcon,
-  CheckSquare,
-  Square,
   ArrowUpCircle,
   SlidersHorizontal,
   X,
-  Ruler,
 } from "lucide-react";
+import {
+  CanvasPlacementEditor,
+} from "@/components/placement/CanvasPlacementEditor";
 import type { Placement, PlacementData, ViewKey } from "@/lib/placement/types";
 import { DEFAULT_PRINT_AREA } from "@/lib/placement/types";
 import {
@@ -51,6 +47,15 @@ import {
   SVG_VIEWBOX_H,
   SVG_VIEWBOX_W,
 } from "@/lib/mockup/svg-utils";
+
+// Extracted step-3 sub-components
+import { TemplateSelector } from "@/components/wizard/step3/TemplateSelector";
+import { ColorPicker } from "@/components/wizard/step3/ColorPicker";
+import { SizePicker } from "@/components/wizard/step3/SizePicker";
+import { PlacementPanel } from "@/components/wizard/step3/PlacementPanel";
+import { DesignProgressCard } from "@/components/wizard/step3/DesignProgressCard";
+import { PlacementEditorModal } from "@/components/wizard/step3/PlacementEditorModal";
+import type { CanvasRegionPx } from "@/components/placement/CanvasPlacementEditor";
 
 type TemplateReadinessLabel = "DEFAULT" | "DEFAULT INCOMPLETE" | "READY" | "INCOMPLETE";
 
@@ -251,8 +256,9 @@ export default function Step3PreviewPage() {
     setPlacementOverride((draft.placementOverride as PlacementData | null) ?? null);
   }, [draft?.id, draftPlacementOverrideKey]);
 
+  // Combined wizard-config + parallel sizes fetch — eliminates sequential waterfall
   useEffect(() => {
-    if (!draft || draft.id !== draftId) return; // Wait for direct route draft hydration
+    if (!draft || draft.id !== draftId) return;
     if (!draft.storeId) {
       setError("Chưa chọn Store ở bước 1.");
       setLoading(false);
@@ -260,14 +266,22 @@ export default function Step3PreviewPage() {
     }
 
     setLoading(true);
-    fetch(`/api/stores/${draft.storeId}/mockup-templates`)
-      .then(async (r) => {
-        if (!r.ok) throw new Error("Failed to fetch templates");
+    const storeId = draft.storeId;
+
+    // Fire wizard-config + sizes in parallel (not sequential)
+    Promise.all([
+      fetch(`/api/stores/${storeId}/wizard-config`).then((r) => {
+        if (!r.ok) throw new Error("Failed to fetch wizard config");
         return r.json();
-      })
-      .then((tData) => {
-        const nextTemplates: WizardTemplateOption[] = Array.isArray(tData.templates)
-          ? tData.templates
+      }),
+      fetch(`/api/stores/${storeId}/sizes`).then((r) => {
+        if (!r.ok) return null;
+        return r.json();
+      }).catch(() => null),
+    ])
+      .then(([config, sizeData]) => {
+        const nextTemplates: WizardTemplateOption[] = Array.isArray(config.templates)
+          ? config.templates
           : [];
         const activeTemplate =
           nextTemplates.find((candidate) => candidate.id === draft.templateId) ??
@@ -283,37 +297,21 @@ export default function Step3PreviewPage() {
         setStoreColors(enabledColors);
         setPresetStatus(activeTemplate?.readiness ?? { ready: false, missing: ["template"] });
 
-        if (!activeTemplate || !draft.storeId) {
-          setStoreSizes([]);
-          setSelectedSizes(new Set());
-          setLoading(false);
-          return;
-        }
-
-        const sizeUrl = `/api/stores/${draft.storeId}/sizes?templateId=${activeTemplate.id}`;
-        fetch(sizeUrl)
-          .then(async (r) => {
-            if (!r.ok) return;
-            const sData = await r.json();
-            const templateEnabledSizes: string[] =
-              activeTemplate.enabledSizes?.length
-                ? activeTemplate.enabledSizes
-                : sData.enabledSizes ?? sData.sizes?.map((s: any) => s.size) ?? [];
-            const availableSizes = (sData.sizes ?? []).filter((s: any) =>
-              templateEnabledSizes.includes(s.size),
-            );
-            setStoreSizes(availableSizes);
-            const draftSizes: string[] = ((draft as any)?.enabledSizes ?? []).filter((size: string) =>
-              templateEnabledSizes.includes(size),
-            );
-            setSelectedSizes(new Set(draftSizes.length > 0 ? draftSizes : templateEnabledSizes));
-          })
-          .catch(() => {})
-          .finally(() => setLoading(false));
+        // Apply template size filter to fetched size data
+        const templateEnabledSizes: string[] = activeTemplate?.enabledSizes ?? [];
+        const availableSizes = ((sizeData?.sizes ?? [])).filter((s: any) =>
+          templateEnabledSizes.length === 0 || templateEnabledSizes.includes(s.size),
+        );
+        setStoreSizes(availableSizes);
+        const draftSizes: string[] = ((draft as any)?.enabledSizes ?? []).filter((size: string) =>
+          templateEnabledSizes.length === 0 || templateEnabledSizes.includes(size),
+        );
+        setSelectedSizes(new Set(draftSizes.length > 0 ? draftSizes : templateEnabledSizes));
+        setLoading(false);
       })
       .catch((err) => {
         console.error(err);
-        setError("Không tải được preset store. Vui lòng thử lại.");
+        setError("Không tải được cấu hình wizard. Vui lòng thử lại.");
         setLoading(false);
       });
   }, [draft?.id, draft?.storeId, draft?.templateId, draftId, retryNonce]);
@@ -633,89 +631,128 @@ export default function Step3PreviewPage() {
     return () => clearTimeout(timeout);
   }, [generationStartedAt, isGenerating, overallJobProgress.total]);
 
+  // SSE-based progress listener — replaces fixed 2s polling
+  // Subscribes to /api/wizard/drafts/:id/events and updates job state on mockup.progress events.
+  // Falls back to a single poll if SSE is unavailable.
   useEffect(() => {
-    const activeJobs = Array.from(mockupJobsByDesign.values()).filter(
-      (job) => job.jobId && !isTerminalMockupJobStatus(job.status),
-    );
-    if (activeJobs.length === 0) return;
+    if (!isGenerating || !draftId) return;
 
-    let cancelled = false;
-    let timeoutId: NodeJS.Timeout;
+    let es: EventSource | null = null;
+    let pollFallbackId: NodeJS.Timeout | null = null;
+    let closed = false;
 
-    const poll = async () => {
-      const updates = await Promise.all(
-        activeJobs.map(async (state) => {
-          try {
-            const res = await fetch(`/api/mockup-jobs/${state.jobId}`);
-            if (!res.ok) return state;
-            const job = await res.json();
-            const images = job.images ?? [];
-            return {
-              ...state,
-              status: job.status ?? state.status,
-              completed:
-                job.completedImages ?? images.filter((img: any) => img.compositeStatus === "completed").length,
+    const refreshJobFromApi = async (jobId: string, draftDesignId: string | null) => {
+      try {
+        const res = await fetch(`/api/mockup-jobs/${jobId}`);
+        if (!res.ok) return;
+        const job = await res.json();
+        const images = job.images ?? [];
+        setMockupJobsByDesign((current) => {
+          const next = new Map(current);
+          const key = draftDesignId ?? jobId;
+          const prev = current.get(key);
+          if (prev) {
+            next.set(key, {
+              ...prev,
+              status: job.status ?? prev.status,
+              completed: job.completedImages ?? images.filter((img: any) => img.compositeStatus === "completed").length,
               total: job.totalImages ?? images.length,
-              failed:
-                job.failedImages ?? images.filter((img: any) => img.compositeStatus === "failed").length,
+              failed: job.failedImages ?? images.filter((img: any) => img.compositeStatus === "failed").length,
               images,
               errorMessage: job.errorMessage ?? null,
-            };
-          } catch {
-            return state;
+            });
           }
-        }),
-      );
+          return next;
+        });
+      } catch { /* ignore */ }
+    };
 
-      if (cancelled) return;
-
-      setMockupJobsByDesign((current) => {
-        const next = new Map(current);
-        for (const update of updates) {
-          next.set(update.draftDesignId, update);
-        }
-        return next;
-      });
-
-      const stillRunning = updates.some(
-        (job) =>
-          !isTerminalMockupJobStatus(job.status) ||
+    const checkAllDone = () => {
+      const jobs = Array.from(mockupJobsByDesign.values());
+      const stillRunning = jobs.some(
+        (job) => !isTerminalMockupJobStatus(job.status) ||
           !(job.total > 0 && job.completed + job.failed >= job.total),
       );
-
       setGenerating(stillRunning);
-      if (stillRunning) {
-        timeoutId = setTimeout(poll, 2000);
-        return;
-      }
-
-      setGenerationStartedAt(null);
-      setShowSlowMockupWarning(false);
-
-      const doneCount = updates.filter(
-        (job) => isTerminalMockupJobStatus(job.status) || (job.total > 0 && job.completed + job.failed >= job.total),
-      ).length;
-      if (doneCount > 0) {
-        toast.success(`Đã tạo mockups cho ${doneCount} designs`);
-      }
-
-      const draftStatuses = useWizardStore.getState().draft?.mockupJobs ?? [];
-      const allFinished = activeJobs.every((job) => {
-        const latestDraftJob = draftStatuses.find((draftJob) => draftJob.id === job.jobId);
-        return !latestDraftJob || isTerminalMockupJobStatus(latestDraftJob.status);
-      });
-      if (allFinished) {
+      if (!stillRunning) {
+        setGenerationStartedAt(null);
+        setShowSlowMockupWarning(false);
+        const doneCount = jobs.filter(
+          (job) => isTerminalMockupJobStatus(job.status) || (job.total > 0 && job.completed + job.failed >= job.total),
+        ).length;
+        if (doneCount > 0) toast.success(`Đã tạo mockups cho ${doneCount} designs`);
         void useWizardStore.getState().loadDraft(draftId as string);
       }
     };
 
-    timeoutId = setTimeout(poll, 500);
+    try {
+      es = new EventSource(`/api/wizard/drafts/${draftId}/events`);
+
+      es.onmessage = (ev) => {
+        if (closed) return;
+        try {
+          const event = JSON.parse(ev.data) as { type: string; data?: any };
+          if (event.type === "mockup.progress" || event.type === "mockup.job.created") {
+            const d = event.data ?? {};
+            const key = d.draftDesignId ?? d.jobId;
+            setMockupJobsByDesign((current) => {
+              const next = new Map(current);
+              const prev = current.get(key);
+              if (prev) {
+                next.set(key, {
+                  ...prev,
+                  status: d.status ?? prev.status,
+                  completed: d.completedImages ?? prev.completed,
+                  total: d.totalImages ?? prev.total,
+                });
+              }
+              return next;
+            });
+            // Fetch full state to get images array
+            if (d.jobId) void refreshJobFromApi(d.jobId, d.draftDesignId ?? null);
+          } else if (event.type === "mockup.failed") {
+            const d = event.data ?? {};
+            const key = d.draftDesignId ?? d.mockupJobId;
+            setMockupJobsByDesign((current) => {
+              const next = new Map(current);
+              const prev = current.get(key);
+              if (prev) next.set(key, { ...prev, status: "failed", errorMessage: d.errorMessage ?? null });
+              return next;
+            });
+            checkAllDone();
+          }
+        } catch { /* ignore parse errors */ }
+      };
+
+      es.onerror = () => {
+        // SSE error — fall back to one-shot poll
+        if (!closed) {
+          pollFallbackId = setTimeout(() => {
+            const activeJobs = Array.from(mockupJobsByDesign.values()).filter(
+              (job) => job.jobId && !isTerminalMockupJobStatus(job.status),
+            );
+            void Promise.all(activeJobs.map((j) => refreshJobFromApi(j.jobId, j.draftDesignId ?? null)))
+              .then(checkAllDone);
+          }, 1000);
+        }
+      };
+    } catch {
+      // EventSource not available — fallback poll
+      pollFallbackId = setTimeout(() => {
+        const activeJobs = Array.from(mockupJobsByDesign.values()).filter(
+          (job) => job.jobId && !isTerminalMockupJobStatus(job.status),
+        );
+        void Promise.all(activeJobs.map((j) => refreshJobFromApi(j.jobId, j.draftDesignId ?? null)))
+          .then(checkAllDone);
+      }, 2000);
+    }
 
     return () => {
-      cancelled = true;
-      if (timeoutId) clearTimeout(timeoutId);
+      closed = true;
+      es?.close();
+      if (pollFallbackId) clearTimeout(pollFallbackId);
     };
-  }, [draftId, mockupJobsByDesign]);
+  }, [draftId, isGenerating]);
 
   const toggleColor = (id: string) => {
     if (isCustomTemplateDefault && !customAvailabilityByColorId.get(id)) {
@@ -1042,7 +1079,7 @@ export default function Step3PreviewPage() {
 
         {/* LEFT PANEL: COLORS & PLACEMENT */}
         <div className="space-y-6">
-          <div id="mockup-template-selector" className="card" style={{ padding: 16 }}>
+          <div id="mockup-template-selector">
             <div className="flex items-center justify-between gap-3" style={{ marginBottom: 12 }}>
               <div style={{ minWidth: 0 }}>
                 <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Mockup template</h3>
@@ -1117,98 +1154,22 @@ export default function Step3PreviewPage() {
             )}
           </div>
 
-          <div className="card" style={{ padding: 16 }}>
-            <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
-              <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Màu sắc</h3>
-              <span style={{ fontSize: "0.8rem", opacity: 0.6 }}>{selectedColorIds.size}/{storeColors.length}</span>
-            </div>
+          <ColorPicker
+            colors={storeColors}
+            selectedIds={selectedColorIds}
+            onToggle={toggleColor}
+            onSelectAll={selectAllColors}
+            onDeselectAll={deselectAllColors}
+            customAvailabilityByColorId={customAvailabilityByColorId}
+            isCustomTemplate={isCustomTemplateDefault}
+          />
 
-            <div className="flex gap-2 mb-4">
-              <button className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.75rem", flex: 1 }} onClick={selectAllColors}>Chọn hết</button>
-              <button className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.75rem", flex: 1 }} onClick={deselectAllColors}>Bỏ chọn</button>
-            </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 400, overflowY: "auto" }}>
-              {storeColors.map(color => {
-                const selected = selectedColorIds.has(color.id);
-                const missingCustomMockup =
-                  isCustomTemplateDefault && !customAvailabilityByColorId.get(color.id);
-                return (
-                  <div
-                    key={color.id}
-                    onClick={() => toggleColor(color.id)}
-                    title={missingCustomMockup ? "Màu này chưa có mockup custom." : color.name}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 12,
-                      padding: "8px 12px",
-                      borderRadius: "var(--radius-md)",
-                      border: selected ? "1px solid var(--color-wise-green)" : "1px solid var(--border-default)",
-                      backgroundColor: selected ? "rgba(146, 198, 72, 0.05)" : "transparent",
-                      cursor: missingCustomMockup ? "not-allowed" : "pointer",
-                      opacity: missingCustomMockup ? 0.48 : 1,
-                    }}
-                  >
-                    {selected ? (
-                      <CheckSquare size={18} color="var(--color-wise-green)" />
-                    ) : (
-                      <Square size={18} opacity={0.3} />
-                    )}
-                    <div style={{ width: 16, height: 16, borderRadius: "50%", backgroundColor: color.hex, border: "1px solid rgba(0,0,0,0.1)" }} />
-                    <span style={{ fontSize: "0.85rem", fontWeight: 500, flex: 1 }}>{color.name}</span>
-                    {missingCustomMockup && (
-                      <span style={{ fontSize: "0.68rem", fontWeight: 800, color: "#92400e" }}>
-                        Thiếu mockup
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* SIZES PANEL */}
-          {storeSizes.length > 0 && (
-            <div className="card" style={{ padding: 16 }}>
-              <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
-                <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>
-                  <Ruler size={14} style={{ display: "inline", marginRight: 6, opacity: 0.5 }} />
-                  Kích thước
-                </h3>
-                <span style={{ fontSize: "0.8rem", opacity: 0.6 }}>{selectedSizes.size}/{storeSizes.length}</span>
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {storeSizes.map(s => {
-                  const on = selectedSizes.has(s.size);
-                  const disabled = !s.isAvailable;
-                  return (
-                    <button
-                      key={s.size}
-                      type="button"
-                      onClick={() => !disabled && toggleSize(s.size)}
-                      style={{
-                        padding: "5px 10px",
-                        borderRadius: 8,
-                        border: on ? "1px solid var(--color-wise-green)" : "1px solid var(--border-default)",
-                        backgroundColor: disabled ? "rgba(148,163,184,0.08)" : on ? "rgba(159,232,112,0.08)" : "transparent",
-                        cursor: disabled ? "not-allowed" : "pointer",
-                        opacity: disabled ? 0.4 : 1,
-                        fontSize: "0.8rem",
-                        fontWeight: on ? 600 : 400,
-                        transition: "all 0.12s",
-                      }}
-                    >
-                      {s.size}
-                      {s.costDeltaCents > 0 && (
-                        <span style={{ fontSize: "0.65rem", color: "#f59e0b", marginLeft: 3 }}>+${(s.costDeltaCents / 100).toFixed(2)}</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+          <SizePicker
+            sizes={storeSizes}
+            selectedSizes={selectedSizes}
+            onToggle={toggleSize}
+          />
 
           {!isCustomTemplateDefault && (
           <div className="card" style={{ padding: 16 }}>
@@ -1331,154 +1292,15 @@ export default function Step3PreviewPage() {
 
         {/* RIGHT PANEL: LIVE PREVIEW + MOCKUP GALLERY */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {selectedDraftDesigns.length > 1 && (
-            <div className="card" style={{ padding: 14, display: "grid", gap: 12 }}>
-              <div className="flex items-center justify-between gap-3" style={{ minWidth: 0 }}>
-                <div style={{ minWidth: 0 }}>
-                  <h3 style={{ fontWeight: 700, margin: 0, fontSize: "0.95rem" }}>
-                    {selectedDraftDesigns.length} designs
-                  </h3>
-                  <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
-                    Chọn design để xem mockup theo từng listing.
-                  </p>
-                </div>
-                <span className="badge badge-success" style={{ flexShrink: 0, fontSize: "0.65rem" }}>
-                  {overallJobProgress.completed}/{overallJobProgress.total || 0} ảnh
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-                {selectedDraftDesigns.map((entry, index) => {
-                  const state = mockupJobsByDesign.get(entry.id);
-                  const isActive = entry.id === activeDraftDesignId || (!activeDraftDesignId && index === 0);
-                  const thumbUrl = designPreviewUrlsById[entry.designId] ?? null;
-                  const label = entry.design?.name ?? `Design ${index + 1}`;
-                  return (
-                    <button
-                      key={entry.id}
-                      type="button"
-                      className={isActive ? "btn btn-primary" : "btn btn-secondary"}
-                      onClick={() => setActiveDraftDesignId(entry.id)}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 8,
-                        minHeight: 42,
-                        padding: "6px 10px",
-                        flexShrink: 0,
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: 24,
-                          height: 24,
-                          borderRadius: 6,
-                          overflow: "hidden",
-                          backgroundColor: "var(--bg-tertiary)",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          flexShrink: 0,
-                        }}
-                      >
-                        {thumbUrl ? (
-                          <img
-                            src={thumbUrl}
-                            alt=""
-                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                          />
-                        ) : (
-                          <ImageIcon size={12} style={{ opacity: 0.35 }} />
-                        )}
-                      </span>
-                      <span style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {label}
-                      </span>
-                      {state?.status && (
-                        <span className="badge" style={{ fontSize: "0.62rem", opacity: 0.8 }}>
-                          {state.status === "completed"
-                            ? "Hoàn tất"
-                            : state.status === "failed"
-                              ? "Lỗi"
-                              : state.status === "running"
-                                ? "Đang render"
-                                : "Đang chờ"}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {mockupJobsByDesign.size > 0 && (
-            <div className="card" style={{ padding: 16, display: "grid", gap: 12 }}>
-              <div className="flex items-center justify-between gap-3" style={{ minWidth: 0 }}>
-                <div style={{ minWidth: 0 }}>
-                  <h3 style={{ fontWeight: 700, margin: 0, fontSize: "0.95rem" }}>
-                    Đang tạo mockup cho {selectedDraftDesigns.length} designs
-                  </h3>
-                  <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
-                    Tiến độ được theo dõi riêng cho từng design.
-                  </p>
-                </div>
-                <span style={{ fontSize: "0.72rem", opacity: 0.6, whiteSpace: "nowrap" }}>
-                  {overallJobProgress.completed}/{overallJobProgress.total || 0} ảnh
-                </span>
-              </div>
-
-              <div style={{ display: "grid", gap: 12 }}>
-                {selectedDraftDesigns.map((entry, index) => {
-                  const state = mockupJobsByDesign.get(entry.id);
-                  const total = state?.total ?? 0;
-                  const completed = state?.completed ?? 0;
-                  const failed = state?.failed ?? 0;
-                  const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : state?.status === "failed" ? 100 : 0;
-                  const label = entry.design?.name ?? `Design ${index + 1}`;
-                  const statusLabel = state?.status === "completed"
-                    ? "Hoàn tất"
-                    : state?.status === "failed"
-                      ? "Lỗi"
-                      : state?.status === "running"
-                        ? "Đang render"
-                        : "Đang chờ";
-
-                  return (
-                    <div key={entry.id} style={{ display: "grid", gap: 6 }}>
-                      <div className="flex items-center justify-between gap-3" style={{ minWidth: 0 }}>
-                        <div style={{ minWidth: 0 }}>
-                          <strong style={{ display: "block", fontSize: "0.82rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {label}
-                          </strong>
-                          <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55 }}>
-                            {statusLabel}
-                            {total > 0 ? ` · ${completed}/${total} ảnh` : ""}
-                            {failed > 0 ? ` · ${failed} lỗi` : ""}
-                          </p>
-                        </div>
-                        {state?.errorMessage && (
-                          <span style={{ fontSize: "0.72rem", color: "var(--color-danger, #dc2626)", maxWidth: 220, textAlign: "right" }}>
-                            {state.errorMessage}
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ height: 8, borderRadius: 999, backgroundColor: "var(--bg-tertiary)", overflow: "hidden" }}>
-                        <div
-                          style={{
-                            width: `${percent}%`,
-                            height: "100%",
-                            backgroundColor: state?.status === "failed" ? "var(--color-danger, #dc2626)" : "var(--color-wise-green)",
-                            transition: "width 0.2s ease",
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+          <DesignProgressCard
+            designs={selectedDraftDesigns}
+            jobsByDesignId={mockupJobsByDesign}
+            activeDraftDesignId={activeDraftDesignId}
+            onSelectDesign={setActiveDraftDesignId}
+            designPreviewUrls={designPreviewUrlsById}
+            generationStartedAt={generationStartedAt}
+            isCustomTemplate={isCustomTemplateDefault}
+          />
 
           {isCustomTemplateDefault ? (
             draft?.storeId && selectedTemplate ? (
@@ -1841,7 +1663,7 @@ export default function Step3PreviewPage() {
                   currentPreviewPlacement,
                   WIZARD_PRINT_AREA,
                 )}
-                onSave={(regionPx) => {
+                onSave={(regionPx: CanvasRegionPx) => {
                   const nextPlacement = canvasRegionPxToPlacement(
                     regionPx,
                     currentPreviewPlacement,

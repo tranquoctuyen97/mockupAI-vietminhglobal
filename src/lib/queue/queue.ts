@@ -16,9 +16,11 @@ function parseRedisUrl(url: string): ConnectionOptions {
     host: parsed.hostname,
     port: Number.parseInt(parsed.port || "6379", 10),
     password: parsed.password || undefined,
-    // Prevent uncaught error events from crashing the process
+    // lazyConnect: avoids crashing on module load if Redis is temporarily down
     lazyConnect: true,
-    enableOfflineQueue: false,
+    // enableOfflineQueue: true allows ioredis to buffer commands while reconnecting
+    // (during HMR re-evals). BullMQ has its own retry logic on top of this.
+    enableOfflineQueue: true,
     retryStrategy: (times: number) => {
       // Exponential backoff, max 10s between retries
       return Math.min(times * 500, 10_000);

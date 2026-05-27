@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { AlertTriangle, ImagePlus, Loader2, RefreshCw, Truck, Upload, X } from "lucide-react";
+import { AlertTriangle, ImagePlus, Loader2, RefreshCw, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { CanvasPlacementEditor, type CanvasRegionPx } from "@/components/placement/CanvasPlacementEditor";
 import { MockupPreviewSection } from "./MockupPreviewSection";
@@ -489,17 +489,12 @@ export function WizardMockupSourcePanel({
             />
           )}
         </>
-      ) : template.defaultMockupSource === "PRINTIFY" ? (
-        <StatusCard
-          tone="green"
-          icon={<Truck size={18} />}
-          title="Đang dùng Printify"
-          desc="Template này sẽ dùng ảnh mockup do Printify render cho các màu đã chọn."
-          action={<OverrideButton onClick={() => openDraftUpload(null)} />}
-        />
-      ) : (
-        null
-      )}
+      ) : null}
+
+      {/* Override button — shown for both PRINTIFY and CUSTOM modes */}
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <OverrideButton onClick={() => openDraftUpload(null)} />
+      </div>
 
       {placementEditorSource && (
         <div

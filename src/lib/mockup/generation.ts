@@ -3,10 +3,14 @@ import { isMockupFallbackForcedForDev } from "@/lib/config/runtime-controls";
 import { prisma } from "@/lib/db";
 import { resolveCustomMockupSourceSelection } from "@/lib/mockup/custom-source-selection";
 import { resolveEffectivePlacementData } from "@/lib/mockup/plan";
-import { buildVariantColorLookup } from "@/lib/mockup/printify-poll-worker";
-import { getPrintifyMockupQueue } from "@/lib/mockup/queue";
+import {
+  buildCustomMockupImageRows,
+  buildVariantColorLookup,
+} from "@/lib/mockup/printify-poll-worker";
+import { getMockupCompositeQueue, getPrintifyMockupQueue } from "@/lib/mockup/queue";
 import { DEFAULT_PLACEMENT } from "@/lib/placement/types";
 import { createOrUpdatePrintifyProduct, ensurePrintifyImage } from "@/lib/printify/product";
+import { sseChannels } from "@/lib/sse/channel";
 import { formatTemplateMissing, getTemplateReadiness } from "@/lib/stores/template-readiness";
 
 const DEFAULT_PLACEMENT_DATA = {
@@ -49,6 +53,8 @@ export type PreparedMockupGeneration = {
   effectivePlacementData: NonNullable<ReturnType<typeof resolveEffectivePlacementData>>;
   client: Awaited<ReturnType<typeof import("@/lib/printify/account").getClientForStore>>["client"];
   externalShopId: number;
+  /** True when template.defaultMockupSource === "CUSTOM" — skips Printify upload/product/poll */
+  isCustom: boolean;
 };
 
 export async function loadMockupGenerationContext(draftId: string, tenantId: string) {
@@ -157,7 +163,9 @@ export async function prepareMockupGeneration(
     );
   }
 
-  if ((template.defaultMockupSource ?? "PRINTIFY") === "CUSTOM") {
+  const isCustom = (template.defaultMockupSource ?? "PRINTIFY") === "CUSTOM";
+
+  if (isCustom) {
     await validateCustomMockupCoverage(draft, template);
   }
 
@@ -170,7 +178,7 @@ export async function prepareMockupGeneration(
     JSON.stringify(effectivePlacementData),
   ) as Prisma.InputJsonValue;
 
-  if (isMockupFallbackForcedForDev()) {
+  if (!isCustom && isMockupFallbackForcedForDev()) {
     throw new MockupGenerationError(
       "MOCKUP_FALLBACK_FORCE đang bật trong môi trường dev. Tắt env này để tạo Mockup chính thức bằng ảnh thật Printify.",
       409,
@@ -186,22 +194,26 @@ export async function prepareMockupGeneration(
     client,
     externalShopId,
   });
-  const availableColorNames = new Set(
-    Array.from(variantColorLookup.values()).map((value) => value.colorName.trim().toLowerCase()),
-  );
-  const selectedColorNames = draft.store?.colors
-    .filter((color) => draft.enabledColorIds.includes(color.id))
-    .map((color) => color.name) ?? [];
-  const missingColorNames = selectedColorNames.filter(
-    (colorName) => !availableColorNames.has(colorName.trim().toLowerCase()),
-  );
 
-  if (missingColorNames.length > 0) {
-    throw new MockupGenerationError(
-      `Printify catalog không có enabled variant cho màu đã chọn: ${missingColorNames.join(", ")}`,
-      400,
-      "SELECTED_COLOR_HAS_NO_PRINTIFY_VARIANT",
+  // For Printify path only: validate that selected colors exist in Printify catalog
+  if (!isCustom) {
+    const availableColorNames = new Set(
+      Array.from(variantColorLookup.values()).map((value) => value.colorName.trim().toLowerCase()),
     );
+    const selectedColorNames = draft.store?.colors
+      .filter((color) => draft.enabledColorIds.includes(color.id))
+      .map((color) => color.name) ?? [];
+    const missingColorNames = selectedColorNames.filter(
+      (colorName) => !availableColorNames.has(colorName.trim().toLowerCase()),
+    );
+
+    if (missingColorNames.length > 0) {
+      throw new MockupGenerationError(
+        `Printify catalog không có enabled variant cho màu đã chọn: ${missingColorNames.join(", ")}`,
+        400,
+        "SELECTED_COLOR_HAS_NO_PRINTIFY_VARIANT",
+      );
+    }
   }
 
   return {
@@ -211,9 +223,14 @@ export async function prepareMockupGeneration(
     effectivePlacementData,
     client,
     externalShopId,
+    isCustom,
   };
 }
 
+/**
+ * Printify path: upload design, create Printify product, enqueue poll worker.
+ * Used when template.defaultMockupSource === "PRINTIFY" (or unset).
+ */
 export async function createMockupJobForDraftDesign(
   context: MockupGenerationContext,
   prepared: PreparedMockupGeneration,
@@ -285,6 +302,192 @@ export async function createMockupJobForDraftDesign(
     designId: draftDesign.designId,
     designName: draftDesign.design.name,
     status: "running",
+  };
+}
+
+/**
+ * Custom path: skip Printify entirely. Resolve custom mockup sources directly,
+ * create MockupImage rows, enqueue COMPOSITE renders if needed.
+ * Used when template.defaultMockupSource === "CUSTOM".
+ *
+ * Saves 30–90s and 5+ Printify API calls per design.
+ */
+export async function createCustomMockupJobForDraftDesign(
+  context: MockupGenerationContext,
+  prepared: PreparedMockupGeneration,
+  draftDesign: ReturnType<typeof resolvePrimaryDraftDesign>,
+): Promise<BatchMockupJobResult> {
+  const { draft } = context;
+  const template = prepared.template;
+
+  // Build variantColorLookup (1 Printify API call reused from prepare step)
+  const { getClientForStore } = await import("@/lib/printify/account");
+  const { client, externalShopId } = await getClientForStore(draft.storeId!);
+  const variantColorLookup = await buildVariantColorLookup({
+    storeId: draft.storeId!,
+    draftId: draft.id,
+    client,
+    externalShopId,
+  });
+
+  // Resolve custom sources for selected colors
+  const enabledColorSet = new Set(draft.enabledColorIds);
+  const storeColors = draft.store?.colors ?? [];
+  const colorsById = new Map(
+    storeColors
+      .filter((c) => enabledColorSet.has(c.id))
+      .map((c) => [c.id, { name: c.name }]),
+  );
+  const colorIds = [...colorsById.keys()];
+
+  const [draftSources, templateSources] = await Promise.all([
+    prisma.customMockupSource.findMany({
+      where: {
+        scope: "DRAFT",
+        draftId: draft.id,
+        colorId: { in: colorIds },
+        isActive: true,
+        deletedAt: null,
+      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+    }),
+    prisma.customMockupSource.findMany({
+      where: {
+        scope: "TEMPLATE",
+        templateId: template.id,
+        colorId: { in: colorIds },
+        isActive: true,
+        deletedAt: null,
+      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+    }),
+  ]);
+
+  const resolvedSelection = resolveCustomMockupSourceSelection({
+    sources: [...draftSources, ...templateSources],
+    picks: draft.mockupLibraryPicks ?? [],
+  });
+
+  const selectedDraftSources = resolvedSelection.selectedSources.filter((s) => s.scope === "DRAFT");
+  const selectedTemplateSources = resolvedSelection.selectedSources.filter((s) => s.scope === "TEMPLATE");
+
+  const mapSource = (source: typeof draftSources[number]) => ({
+    id: source.id,
+    colorId: source.colorId,
+    label: source.label,
+    view: source.view,
+    sceneType: source.sceneType,
+    renderMode: source.renderMode,
+    outputPath: source.outputPath,
+    isPrimary: source.isPrimary,
+    sortOrder: source.sortOrder,
+  });
+
+  const draftRows = buildCustomMockupImageRows({
+    sources: selectedDraftSources.map(mapSource),
+    colorsById,
+    variantColorLookup,
+    scope: "DRAFT",
+    sortOffset: 0,
+  });
+  const templateRows = buildCustomMockupImageRows({
+    sources: selectedTemplateSources.map(mapSource),
+    colorsById,
+    variantColorLookup,
+    scope: "TEMPLATE",
+    sortOffset: 10000,
+  });
+
+  // Draft rows take priority; template rows fill gaps
+  const draftColorKeys = new Set(
+    draftRows.map((r) => r.colorName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")),
+  );
+  const rows = [
+    ...draftRows,
+    ...templateRows.filter(
+      (r) => !draftColorKeys.has(r.colorName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")),
+    ),
+  ];
+
+  if (rows.length === 0) {
+    throw new MockupGenerationError(
+      "Không tìm thấy custom mockup nào cho các màu đã chọn.",
+      400,
+      "NO_CUSTOM_MOCKUP_ROWS",
+    );
+  }
+
+  const completedCount = rows.filter((r) => r.compositeStatus === "completed").length;
+  const hasPending = completedCount < rows.length;
+
+  // Create the mockup job
+  const mockupJob = await prisma.mockupJob.create({
+    data: {
+      draftId: draft.id,
+      draftDesignId: draftDesign.id,
+      designId: draftDesign.designId,
+      status: hasPending ? "running" : "completed",
+      totalImages: rows.length,
+      completedImages: completedCount,
+      failedImages: 0,
+      placementSnapshot: prepared.placementSnapshot,
+    },
+  });
+
+  // Write image rows
+  await prisma.mockupImage.createMany({
+    data: rows.map((row) => ({ mockupJobId: mockupJob.id, ...row })),
+  });
+
+  // Mark draft mockups as fresh
+  await prisma.wizardDraft.update({
+    where: { id: draft.id },
+    data: { mockupsStale: false, mockupsStaleReason: null },
+  });
+
+  // Enqueue COMPOSITE renders for images that need it
+  const pendingComposites = rows
+    .map((row, i) => ({ row, idx: i }))
+    .filter(({ row }) => row.compositeStatus === "pending");
+
+  if (pendingComposites.length > 0) {
+    const createdImages = await prisma.mockupImage.findMany({
+      where: { mockupJobId: mockupJob.id },
+      select: { id: true, sourceUrl: true, compositeStatus: true },
+      orderBy: { sortOrder: "asc" },
+    });
+    const pendingImages = createdImages.filter((img) => img.compositeStatus === "pending");
+    const compositeQueue = getMockupCompositeQueue();
+    for (const image of pendingImages) {
+      await compositeQueue.add("composite-custom-mockup", {
+        mockupImageId: image.id,
+        sourceUrl: image.sourceUrl,
+        designStoragePath: draftDesign.design.storagePath,
+        placementData: {},
+      });
+    }
+  }
+
+  // Emit SSE progress event so frontend gets real-time update
+  sseChannels.emit(draft.id, {
+    type: "mockup.job.created",
+    data: {
+      jobId: mockupJob.id,
+      draftDesignId: draftDesign.id,
+      designId: draftDesign.designId,
+      totalImages: rows.length,
+      completedImages: completedCount,
+      status: hasPending ? "running" : "completed",
+      source: "custom",
+    },
+  });
+
+  return {
+    jobId: mockupJob.id,
+    draftDesignId: draftDesign.id,
+    designId: draftDesign.designId,
+    designName: draftDesign.design.name,
+    status: hasPending ? "running" : "completed",
   };
 }
 

@@ -13,13 +13,10 @@ import { isFinalBullMqAttempt, shouldSkipMockupImageProcessing } from "./progres
 import { MOCKUP_QUEUE_NAME, type MockupJobPayload } from "./queue";
 import { resolveMockupSourceBuffer } from "./source";
 import { parseMockupSourceUrl } from "./source-url";
+import { sseChannels } from "../sse/channel";
+import { redisConnection } from "@/lib/queue/queue";
 
-const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
 const concurrency = parseInt(process.env.MOCKUP_WORKER_CONCURRENCY || "5", 10);
-
-const connection = {
-  url: redisUrl,
-};
 
 let mockupWorker: Worker<MockupJobPayload> | null = null;
 
@@ -128,7 +125,7 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
       }
     },
     {
-      connection,
+      connection: redisConnection,
       concurrency,
     },
   );
@@ -264,17 +261,37 @@ async function refreshMockupJobStatus(mockupJobId: string): Promise<void> {
       completedImages: true,
       failedImages: true,
       status: true,
+      draftId: true,
+      draftDesignId: true,
     },
   });
   if (!job || job.status !== "running") return;
 
   const finishedImages = job.completedImages + job.failedImages;
+
+  // Emit per-image SSE progress tick so frontend updates immediately
+  if (job.draftId) {
+    sseChannels.emit(job.draftId, {
+      type: "mockup.progress",
+      data: {
+        mockupJobId,
+        draftDesignId: job.draftDesignId ?? null,
+        totalImages: job.totalImages,
+        completedImages: job.completedImages,
+        failedImages: job.failedImages,
+        status: finishedImages >= job.totalImages ? (job.failedImages > 0 ? "failed" : "completed") : "running",
+        source: "composite",
+      },
+    });
+  }
+
   if (finishedImages < job.totalImages) return;
 
+  const finalStatus = job.failedImages > 0 ? "failed" : "completed";
   await prisma.mockupJob.update({
     where: { id: mockupJobId },
     data: {
-      status: job.failedImages > 0 ? "failed" : "completed",
+      status: finalStatus,
       errorMessage: job.failedImages > 0 ? "Some mockup images failed" : null,
     },
   });

@@ -1,13 +1,8 @@
 import { Queue } from "bullmq";
-
-const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+import { redisConnection } from "@/lib/queue/queue";
 
 export const MOCKUP_QUEUE_NAME = "mockup-composite-queue";
 export const PRINTIFY_MOCKUP_QUEUE_NAME = "printify-mockup-poll-queue";
-
-const connection = {
-  url: redisUrl,
-};
 
 export interface PrintifyMockupPollPayload {
   mockupJobId: string;
@@ -27,7 +22,7 @@ const globalForQueue = global as unknown as {
 export function getMockupCompositeQueue(): Queue {
   if (!globalForQueue.mockupQueue) {
     globalForQueue.mockupQueue = new Queue(MOCKUP_QUEUE_NAME, {
-      connection,
+      connection: redisConnection,
       defaultJobOptions: {
         attempts: 3,
         backoff: {
@@ -48,7 +43,7 @@ export function getPrintifyMockupQueue(): Queue<PrintifyMockupPollPayload> {
     globalForQueue.printifyMockupQueue = new Queue<PrintifyMockupPollPayload>(
       PRINTIFY_MOCKUP_QUEUE_NAME,
       {
-        connection,
+        connection: redisConnection,
         defaultJobOptions: {
           attempts: 3,
           backoff: {

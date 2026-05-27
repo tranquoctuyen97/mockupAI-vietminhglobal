@@ -740,6 +740,7 @@ export default function Step5ReviewPage() {
                   src={activeMockupUrl}
                   alt={`${activeMockup.colorName} - ${viewLabel(activeMockup.viewPosition)}`}
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  loading="lazy"
                 />
               ) : (activeDesignStatus === "running" || activeDesignStatus === "pending") ? (
                 <div style={{ textAlign: "center", padding: "0 24px" }}>
@@ -801,7 +802,7 @@ export default function Step5ReviewPage() {
                       style={{ width: 48, height: 48, borderRadius: "var(--radius-sm)", backgroundColor: thumbnailColorHex, border: idx === carouselIdx ? "2px solid var(--color-wise-green)" : "1px solid var(--border-default)", cursor: "pointer", overflow: "hidden", flexShrink: 0 }}
                     >
                       {thumbnailUrl && (
-                        <img src={thumbnailUrl} alt={`${mockup.colorName} ${viewLabel(mockup.viewPosition)}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        <img src={thumbnailUrl} alt={`${mockup.colorName} ${viewLabel(mockup.viewPosition)}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" />
                       )}
                     </div>
                   );

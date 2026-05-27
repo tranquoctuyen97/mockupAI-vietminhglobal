@@ -1622,7 +1622,7 @@ function EditorBlueprintStep({
                     }}
                   >
                     {bp.images?.[0] && (
-                      <img src={bp.images[0]} alt="" style={{ width: 36, height: 36, borderRadius: 4, objectFit: "cover" }} />
+                      <img src={bp.images[0]} alt="" style={{ width: 36, height: 36, borderRadius: 4, objectFit: "cover" }} loading="lazy" />
                     )}
                     <div>
                       <div style={{ fontWeight: value.printifyBlueprintId === bp.id ? 700 : 500, fontSize: "0.85rem" }}>

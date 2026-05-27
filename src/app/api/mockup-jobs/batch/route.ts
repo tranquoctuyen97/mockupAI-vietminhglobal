@@ -3,6 +3,7 @@ import { validateSession } from "@/lib/auth/session";
 import {
   type BatchMockupJobFailure,
   MockupGenerationError,
+  createCustomMockupJobForDraftDesign,
   createMockupJobForDraftDesign,
   loadMockupGenerationContext,
   prepareMockupGeneration,
@@ -30,13 +31,16 @@ export async function POST(request: Request) {
 
     for (const draftDesign of draftDesigns) {
       try {
-        jobs.push(await createMockupJobForDraftDesign(context, prepared, draftDesign));
+        const job = prepared.isCustom
+          ? await createCustomMockupJobForDraftDesign(context, prepared, draftDesign)
+          : await createMockupJobForDraftDesign(context, prepared, draftDesign);
+        jobs.push(job);
       } catch (error) {
         failures.push({
           draftDesignId: draftDesign.id,
           designId: draftDesign.designId,
           designName: draftDesign.design.name,
-          error: error instanceof Error ? error.message : "Unknown Printify error",
+          error: error instanceof Error ? error.message : "Unknown error",
         });
       }
     }
@@ -49,12 +53,12 @@ export async function POST(request: Request) {
         { status: error.status },
       );
     }
-    const message = error instanceof Error ? error.message : "Unknown Printify error";
-    console.error("Printify batch mockup generation failed:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("Batch mockup generation failed:", error);
     return NextResponse.json(
       {
-        error: `Printify không tạo được mockup thật: ${message}`,
-        code: "PRINTIFY_REAL_MOCKUP_FAILED",
+        error: `Không tạo được mockup: ${message}`,
+        code: "MOCKUP_GENERATION_FAILED",
       },
       { status: 502 },
     );

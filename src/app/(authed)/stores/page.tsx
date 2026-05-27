@@ -13,11 +13,14 @@ export default async function StoresPage() {
   const session = await validateSession();
   if (!session) redirect("/login");
 
-  const stores = await listStores(session.tenantId);
-  const canManageStores = await hasFeature(session.tenantId, session.role, "stores");
+  const [stores, canManageStores] = await Promise.all([
+    listStores(session.tenantId),
+    hasFeature(session.tenantId, session.role, "stores"),
+  ]);
 
   // Serialize Date fields for client
-  const serialized = stores.map((s: Record<string, unknown>) => ({
+  // biome-ignore lint: listStores returns Prisma objects with Date fields that need ISO string conversion
+  const serialized = (stores as any[]).map((s) => ({
     ...s,
     createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : s.createdAt,
     lastHealthCheck:
@@ -26,7 +29,7 @@ export default async function StoresPage() {
 
   return (
     <StoresClient
-      initialStores={serialized as never[]}
+      initialStores={serialized}
       canManageStores={canManageStores}
     />
   );

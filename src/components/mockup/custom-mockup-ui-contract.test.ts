@@ -16,7 +16,8 @@ test("wizard mockup source panel uses the new template-default UX", () => {
   assert.match(source, /activeSourceId/);
   assert.match(source, /UploadMockupModal/);
   assert.match(source, /mockup-library-picks/);
-  assert.match(source, /Đang dùng Printify/);
+  // Banner removed — TemplateContextCard shows the source info instead
+  assert.doesNotMatch(source, /Đang dùng Printify/);
 });
 
 test("custom mockup upload modal keeps metadata simple and uses canvas only for draft composite positioning", () => {
@@ -83,11 +84,10 @@ test("wizard printify mode exposes canvas placement editor and keeps custom libr
   const panelSource = read("src/components/mockup/WizardMockupSourcePanel.tsx");
   const canvasSource = read("src/components/placement/CanvasPlacementEditor.tsx");
 
-  assert.match(stepSource, /CanvasPlacementEditor/);
-  assert.match(stepSource, /Chỉnh vị trí design/);
-  assert.match(stepSource, /PRINTIFY_PLACEMENT/);
-  assert.match(stepSource, /CUSTOM_COMPOSITE/);
-  assert.match(panelSource, /Template này sẽ dùng ảnh mockup do Printify render cho các màu đã chọn/);
+  assert.match(panelSource, /CanvasPlacementEditor/);
+  // Printify StatusCard banner removed — TemplateContextCard shows source info
+  assert.doesNotMatch(panelSource, /Template này sẽ dùng ảnh mockup do Printify render cho các màu đã chọn/);
+  // OverrideButton still present and accessible for both modes
   assert.match(panelSource, /Thêm mockup riêng/);
   assert.match(canvasSource, /react-konva/);
   assert.match(canvasSource, /Transformer/);

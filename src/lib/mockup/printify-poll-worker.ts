@@ -8,14 +8,11 @@ import { getMockupCompositeQueue } from "./queue";
 import { cacheRemoteMockupImage } from "./remote-media";
 import { resolveCustomMockupSourceSelection } from "./custom-source-selection";
 import { buildCustomMockupSourceUrl, type MockupSourceType } from "./source-url";
+import { sseChannels } from "../sse/channel";
+import { redisConnection } from "@/lib/queue/queue";
 
-const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
 const concurrency = parseInt(process.env.PRINTIFY_MOCKUP_WORKER_CONCURRENCY || "2", 10);
 const PRINTIFY_MOCKUP_QUEUE_NAME = "printify-mockup-poll-queue";
-
-const connection = {
-  url: redisUrl,
-};
 
 let worker: Worker<PrintifyMockupPollPayload> | null = null;
 
@@ -26,7 +23,7 @@ export function startPrintifyMockupPollWorker(): Worker<PrintifyMockupPollPayloa
     PRINTIFY_MOCKUP_QUEUE_NAME,
     processPrintifyMockupPollJob,
     {
-      connection,
+      connection: redisConnection,
       concurrency,
     },
   );
@@ -194,6 +191,19 @@ export async function processPrintifyMockupPollJob(
       }
     }
 
+    // Emit SSE progress so frontend gets real-time update without polling
+    sseChannels.emit(draftId, {
+      type: "mockup.progress",
+      data: {
+        mockupJobId,
+        draftDesignId: job.data.draftDesignId ?? null,
+        totalImages: rows.length,
+        completedImages: completedImageCount,
+        status: hasPendingImages ? "running" : "completed",
+        source: "printify",
+      },
+    });
+
     return { success: true, imageCount: rows.length };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -204,6 +214,11 @@ export async function processPrintifyMockupPollJob(
           status: "failed",
           errorMessage: message,
         },
+      });
+      // Emit SSE failure so frontend stops waiting
+      sseChannels.emit(draftId, {
+        type: "mockup.failed",
+        data: { mockupJobId, draftDesignId: job.data.draftDesignId ?? null, errorMessage: message },
       });
     } else {
       await prisma.mockupJob.updateMany({
