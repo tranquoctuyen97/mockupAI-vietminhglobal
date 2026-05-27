@@ -287,7 +287,17 @@ export async function listDrafts(tenantId: string) {
       status: { notIn: ["ABANDONED"] },
     },
     orderBy: { updatedAt: "desc" },
-    include: {
+    select: {
+      id: true,
+      currentStep: true,
+      status: true,
+      updatedAt: true,
+      designId: true,
+      storeId: true,
+      templateId: true,
+      enabledColorIds: true,
+      mockupsStale: true,
+      mockupSourceMode: true,
       mockupJobs: {
         select: { id: true, status: true },
       },

@@ -172,6 +172,7 @@ export async function testStoreConnection(storeId: string) {
  */
 export async function listStores(tenantId: string) {
   const stores = await prisma.store.findMany({
+    relationLoadStrategy: "join", // PostgreSQL LATERAL JOIN — 1 query instead of 5
     where: { tenantId },
     include: {
       colors: { orderBy: { sortOrder: "asc" } },
@@ -195,16 +196,23 @@ export async function listStores(tenantId: string) {
       bpPairs.add(`${t.printifyBlueprintId}:${t.printifyPrintProviderId}`);
     }
   }
+  // Enrich template color hex from PrintifyVariantCache
+  // Batch all pairs into a single query instead of N sequential queries
   const cacheHexMap = new Map<string, string>();
-  for (const pair of bpPairs) {
-    const [bpId, ppId] = pair.split(":").map(Number);
-    const cachedColors = await prisma.printifyVariantCache.findMany({
-      where: { blueprintId: bpId, printProviderId: ppId },
-      distinct: ["colorName"],
+  if (bpPairs.size > 0) {
+    const allCached = await prisma.printifyVariantCache.findMany({
+      where: {
+        OR: [...bpPairs].map((pair) => {
+          const [bpId, ppId] = pair.split(":").map(Number);
+          return { blueprintId: bpId, printProviderId: ppId };
+        }),
+      },
       select: { colorName: true, colorHex: true },
     });
-    for (const c of cachedColors) {
-      if (c.colorHex) cacheHexMap.set(c.colorName, c.colorHex);
+    for (const c of allCached) {
+      if (c.colorHex && !cacheHexMap.has(c.colorName)) {
+        cacheHexMap.set(c.colorName, c.colorHex);
+      }
     }
   }
 

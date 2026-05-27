@@ -166,10 +166,10 @@ function StoreConfigContent() {
   const fetchStore = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) setLoading(true);
     try {
-      const res = await fetch("/api/stores");
+      // Fetch single store directly instead of the full list — reduces DB queries from 14 to 8
+      const res = await fetch(`/api/stores/${storeId}`);
       if (res.ok) {
-        const stores = await res.json();
-        const found = stores.find((s: StoreDetail) => s.id === storeId);
+        const found = await res.json();
         setStore(found || null);
         return found;
       }

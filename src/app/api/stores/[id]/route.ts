@@ -1,13 +1,98 @@
 /**
+ * GET  /api/stores/:id — fetch single store with templates + colors
  * DELETE /api/stores/:id — soft delete store
- * POST /api/stores/:id/test-connection — test Shopify + Printify
+ * PATCH  /api/stores/:id — update store preset fields
  */
 
 import { NextResponse } from "next/server";
+import { validateSession } from "@/lib/auth/session";
 import { requireFeature } from "@/lib/auth/guards";
 import { deleteStore, testStoreConnection } from "@/lib/stores/store-service";
+import { getPresetStatusSync } from "@/lib/stores/preset";
+import { enrichColorHex } from "@/lib/printify/color-hex";
 import { logAudit, getRequestInfo } from "@/lib/audit";
 import { prisma } from "@/lib/db";
+
+/**
+ * GET /api/stores/[id]
+ * Fetches a single store with full template + color data.
+ * Used by /stores/[id]/config to avoid loading the entire store list.
+ */
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const session = await validateSession();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = await params;
+
+  const store = await prisma.store.findUnique({
+    where: { id, tenantId: session.tenantId },
+    include: {
+      colors: { orderBy: { sortOrder: "asc" } },
+      templates: {
+        orderBy: { sortOrder: "asc" },
+        include: {
+          colors: {
+            orderBy: { sortOrder: "asc" },
+            include: { color: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!store) {
+    return NextResponse.json({ error: "Store not found" }, { status: 404 });
+  }
+
+  // Enrich template color hex from PrintifyVariantCache (batched — 1 query)
+  const bpPairs = new Set<string>();
+  for (const t of store.templates) {
+    bpPairs.add(`${t.printifyBlueprintId}:${t.printifyPrintProviderId}`);
+  }
+
+  const cacheHexMap = new Map<string, string>();
+  if (bpPairs.size > 0) {
+    const allCached = await prisma.printifyVariantCache.findMany({
+      where: {
+        OR: [...bpPairs].map((pair) => {
+          const [bpId, ppId] = pair.split(":").map(Number);
+          return { blueprintId: bpId, printProviderId: ppId };
+        }),
+      },
+      select: { colorName: true, colorHex: true },
+    });
+    for (const c of allCached) {
+      if (c.colorHex && !cacheHexMap.has(c.colorName)) {
+        cacheHexMap.set(c.colorName, c.colorHex);
+      }
+    }
+  }
+
+  const enrichedTemplates = store.templates.map((t) => ({
+    ...t,
+    colors: t.colors.map((tc) => ({
+      ...tc,
+      color: {
+        ...tc.color,
+        hex: cacheHexMap.get(tc.color.name) || enrichColorHex(tc.color.name, tc.color.hex),
+      },
+    })),
+  }));
+
+  return NextResponse.json({
+    ...store,
+    templates: enrichedTemplates,
+    defaultPriceUsd: Number(store.defaultPriceUsd),
+    presetStatus: getPresetStatusSync(store),
+  });
+}
+
+
 
 export async function DELETE(
   request: Request,

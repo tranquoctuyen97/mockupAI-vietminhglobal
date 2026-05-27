@@ -1,4 +1,5 @@
 import { randomBytes, createHash } from "node:crypto";
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
 
@@ -67,8 +68,13 @@ export async function createSession(
 /**
  * Validate the current session from cookie
  * Returns user data or null if invalid/expired
+ *
+ * Wrapped with React.cache() so that multiple calls within the same SSR
+ * render tree (e.g., (authed)/layout.tsx + admin/layout.tsx + page.tsx)
+ * share a single DB round-trip. Has no effect inside API Route Handlers,
+ * which each run in their own independent request context.
  */
-export async function validateSession() {
+export const validateSession = cache(async function _validateSession() {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
 
@@ -107,7 +113,7 @@ export async function validateSession() {
   }
 
   return session.user;
-}
+});
 
 /**
  * Revoke a specific session

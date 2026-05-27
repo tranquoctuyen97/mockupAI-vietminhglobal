@@ -15,13 +15,12 @@ export default function TokenExpiredBanner() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    fetch("/api/stores")
+    // Use the lightweight expired-check endpoint (3 DB queries) instead of
+    // the full /api/stores list (7 + N queries) — banner only needs expired stores.
+    fetch("/api/stores/expired-check")
       .then((res) => res.json())
-      .then((stores) => {
-        const expired = stores.filter(
-          (s: { status: string }) => s.status === "TOKEN_EXPIRED",
-        );
-        setExpiredStores(expired);
+      .then((data: { expired?: ExpiredStore[] }) => {
+        setExpiredStores(data.expired ?? []);
       })
       .catch(() => {});
   }, []);
