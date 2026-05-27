@@ -48,6 +48,8 @@ interface TemplateDetail {
   printProviderTitle: string;
   enabledVariantIds: number[];
   enabledSizes: string[];
+  // Per-color sizes: { colorName → string[] }. Null = use enabledSizes as global fallback.
+  enabledSizesByColor: Record<string, string[]> | null;
   position: "FRONT" | "BACK" | "SLEEVE";
   defaultPlacement: unknown;
   defaultAspectRatio: string;
@@ -591,6 +593,7 @@ function createEmptyTemplate(sortOrder: number, isDefault = false, name = ""): T
     printProviderTitle: "",
     enabledVariantIds: [],
     enabledSizes: [],
+      enabledSizesByColor: null,
     position: "FRONT",
     defaultPlacement: null,
     defaultAspectRatio: "1:1",
@@ -739,6 +742,7 @@ function TemplatesSection({
 
     if (JSON.stringify(tempTemplateData.enabledVariantIds) !== JSON.stringify(originalTemplate.enabledVariantIds)) return true;
     if (JSON.stringify(tempTemplateData.enabledSizes) !== JSON.stringify(originalTemplate.enabledSizes)) return true;
+    if (JSON.stringify(tempTemplateData.enabledSizesByColor) !== JSON.stringify(originalTemplate.enabledSizesByColor)) return true;
     if (JSON.stringify(tempTemplateData.defaultPlacement) !== JSON.stringify(originalTemplate.defaultPlacement)) return true;
 
     const tempColors = tempTemplateData.colors?.map((tc) => tc.color.name).sort().join(",") ?? "";
@@ -894,6 +898,7 @@ function TemplatesSection({
         printProviderTitle: tempTemplateData.printProviderTitle,
         enabledVariantIds: tempTemplateData.enabledVariantIds,
         enabledSizes: tempTemplateData.enabledSizes,
+        enabledSizesByColor: tempTemplateData.enabledSizesByColor ?? undefined,
         defaultPlacement: tempTemplateData.defaultPlacement,
         colorIds,
         blueprintImageUrl: tempTemplateData.blueprintImageUrl,
@@ -1601,6 +1606,7 @@ function EditorBlueprintStep({
                         printProviderTitle: "",
                         enabledVariantIds: [],
                         enabledSizes: [],
+                        enabledSizesByColor: null,
                         colors: [],
                         defaultPlacement: null,
                       });
@@ -1887,8 +1893,20 @@ function EditorVariantsStep({
     return () => controller.abort();
   }, [fetchSizes]);
 
-  // Propagate changes when colors or sizes toggled
-  const propagateChanges = useCallback((nextColorsSet: Set<string>, nextSizesSet: Set<string>) => {
+  // Per-color sizes map: { colorName → Set<string> }
+  // Auto-fills from enabledSizes[] (global) when enabledSizesByColor is null (legacy templates)
+  const enabledSizesByColorMap = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const colorName of selectedColors) {
+      const colorSizes = value.enabledSizesByColor?.[colorName]
+        ?? value.enabledSizes; // fallback: apply global sizes to all colors
+      map.set(colorName, new Set(colorSizes ?? []));
+    }
+    return map;
+  }, [selectedColors, value.enabledSizesByColor, value.enabledSizes]);
+
+  // Propagate changes when colors or per-color sizes toggled
+  const propagateChanges = useCallback((nextColorsSet: Set<string>, nextSizesByColor: Map<string, Set<string>>) => {
     // 1. Calculate color records list for state
     const nextColors = Array.from(nextColorsSet).map((colorName) => {
       const gp = variantGroups.find((g) => g.color === colorName);
@@ -1904,21 +1922,31 @@ function EditorVariantsStep({
       };
     });
 
-    // 2. Calculate enabledVariantIds matching selected colors AND sizes
+    // 2. Calculate enabledVariantIds — per-color size intersection
     const nextVariantIds = variantGroups
       .filter((g) => nextColorsSet.has(g.color))
       .flatMap((g) =>
         g.variants
           .filter((v) => {
             const sizeOpt = Object.entries(v.options).find(([k]) => k.toLowerCase() === "size")?.[1] || "ONE_SIZE";
-            return nextSizesSet.has(String(sizeOpt));
+            const sizesForThisColor = nextSizesByColor.get(g.color);
+            return sizesForThisColor?.has(String(sizeOpt)) ?? false;
           })
           .map((v) => v.id),
       );
 
+    // 3. Build enabledSizesByColor object
+    const sizesByColorObj: Record<string, string[]> = {};
+    for (const [colorName, sizesSet] of nextSizesByColor) {
+      sizesByColorObj[colorName] = Array.from(sizesSet);
+    }
+    // Union of all sizes (kept in enabledSizes for publish fallback)
+    const allSizes = Array.from(new Set(Array.from(nextSizesByColor.values()).flatMap((s) => Array.from(s))));
+
     onChange({
       colors: nextColors,
-      enabledSizes: Array.from(nextSizesSet),
+      enabledSizes: allSizes,
+      enabledSizesByColor: nextColorsSet.size > 0 ? sizesByColorObj : null,
       enabledVariantIds: nextVariantIds,
     });
   }, [value.id, variantGroups, onChange]);
@@ -1927,20 +1955,44 @@ function EditorVariantsStep({
     const nextColors = new Set(selectedColors);
     if (nextColors.has(color)) {
       nextColors.delete(color);
+      // Remove color from size map too
+      const nextMap = new Map(enabledSizesByColorMap);
+      nextMap.delete(color);
+      propagateChanges(nextColors, nextMap);
     } else {
       nextColors.add(color);
+      // Auto-fill: use the color's available sizes from variantGroups or global enabledSizes
+      const nextMap = new Map(enabledSizesByColorMap);
+      const colorGroup = variantGroups.find((g) => g.color === color);
+      const colorSizes = colorGroup ? new Set(colorGroup.sizes) : new Set(value.enabledSizes ?? []);
+      nextMap.set(color, colorSizes);
+      propagateChanges(nextColors, nextMap);
     }
-    propagateChanges(nextColors, enabledSizes);
   }
 
-  function toggleSize(size: string) {
-    const nextSizes = new Set(enabledSizes);
-    if (nextSizes.has(size)) {
-      nextSizes.delete(size);
+  function toggleSizeForColor(colorName: string, size: string) {
+    const nextMap = new Map(enabledSizesByColorMap);
+    const current = new Set(nextMap.get(colorName) ?? []);
+    if (current.has(size)) {
+      current.delete(size);
     } else {
-      nextSizes.add(size);
+      current.add(size);
     }
-    propagateChanges(selectedColors, nextSizes);
+    nextMap.set(colorName, current);
+    propagateChanges(selectedColors, nextMap);
+  }
+
+  function selectAllSizesForColor(colorName: string) {
+    const colorGroup = variantGroups.find((g) => g.color === colorName);
+    const nextMap = new Map(enabledSizesByColorMap);
+    nextMap.set(colorName, new Set(colorGroup?.sizes ?? sizes.filter((s) => s.isAvailable).map((s) => s.size)));
+    propagateChanges(selectedColors, nextMap);
+  }
+
+  function clearSizesForColor(colorName: string) {
+    const nextMap = new Map(enabledSizesByColorMap);
+    nextMap.set(colorName, new Set());
+    propagateChanges(selectedColors, nextMap);
   }
 
   async function handleRefreshPrices() {
@@ -1999,7 +2051,15 @@ function EditorVariantsStep({
               />
               <button
                 type="button"
-                onClick={() => propagateChanges(new Set(variantGroups.map((g) => g.color)), enabledSizes)}
+                onClick={() => {
+                  const allColorsSet = new Set(variantGroups.map((g) => g.color));
+                  const newMap = new Map<string, Set<string>>();
+                  for (const colorName of allColorsSet) {
+                    const colorGroup = variantGroups.find((g) => g.color === colorName);
+                    newMap.set(colorName, new Set(colorGroup?.sizes ?? []));
+                  }
+                  propagateChanges(allColorsSet, newMap);
+                }}
                 style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "var(--color-wise-green)", fontWeight: 500 }}
               >
                 Chọn tất cả
@@ -2009,7 +2069,7 @@ function EditorVariantsStep({
                   <span style={{ opacity: 0.2 }}>·</span>
                   <button
                     type="button"
-                    onClick={() => propagateChanges(new Set(), enabledSizes)}
+                    onClick={() => propagateChanges(new Set(), new Map())}
                     style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "#94a3b8", fontWeight: 500 }}
                   >
                     Bỏ chọn
@@ -2061,19 +2121,11 @@ function EditorVariantsStep({
         )}
       </div>
 
-      {/* Sizes Section */}
+      {/* Sizes Section — per-color grid */}
       <div>
         <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
           <Ruler size={18} style={{ opacity: 0.5 }} />
-          <h3 style={{ fontWeight: 700, margin: 0 }}>Kích thước</h3>
-          {enabledSizes.size > 0 && (
-            <span
-              className="badge badge-success"
-              style={{ fontSize: "0.72rem", padding: "2px 8px", background: "rgba(159,232,112,0.15)", color: "var(--color-wise-green)" }}
-            >
-              {enabledSizes.size} đã chọn
-            </span>
-          )}
+          <h3 style={{ fontWeight: 700, margin: 0 }}>Kích thước theo màu</h3>
           <div style={{ marginLeft: "auto" }}>
             <button
               onClick={handleRefreshPrices}
@@ -2085,7 +2137,9 @@ function EditorVariantsStep({
             </button>
           </div>
         </div>
-        <p style={{ opacity: 0.5, fontSize: "0.85rem", marginBottom: 12 }}>Chọn kích thước muốn bán.</p>
+        <p style={{ opacity: 0.5, fontSize: "0.85rem", marginBottom: 16 }}>
+          Mỗi màu có bộ size riêng. Size không khả dụng cho màu đó sẽ bị mờ.
+        </p>
 
         {warning && (
           <div
@@ -2104,77 +2158,145 @@ function EditorVariantsStep({
           </div>
         )}
 
-        {loadingSizes ? (
+        {selectedColors.size === 0 ? (
+          <div style={{ padding: 16, opacity: 0.4, fontSize: "0.85rem", textAlign: "center" }}>Chọn ít nhất 1 màu để cấu hình kích thước</div>
+        ) : loadingVariants || loadingSizes ? (
           <div className="flex items-center gap-2" style={{ padding: 20, opacity: 0.5 }}>
-            <Loader2 size={14} className="animate-spin" /> Đang tải kích thước...
+            <Loader2 size={14} className="animate-spin" /> Đang tải...
           </div>
-        ) : sizes.length === 0 ? (
-          <div style={{ padding: 16, opacity: 0.4, fontSize: "0.85rem", textAlign: "center" }}>Không có kích thước</div>
         ) : (
-          <>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <button
-                type="button"
-                onClick={() =>
-                  propagateChanges(selectedColors, new Set(sizes.filter((s) => s.isAvailable).map((s) => s.size)))
-                }
-                style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "var(--color-wise-green)", fontWeight: 500 }}
-              >
-                Chọn tất cả khả dụng
-              </button>
-              {enabledSizes.size > 0 && (
-                <>
-                  <span style={{ opacity: 0.2 }}>·</span>
-                  <button
-                    type="button"
-                    onClick={() => propagateChanges(selectedColors, new Set())}
-                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.75rem", color: "#94a3b8", fontWeight: 500 }}
-                  >
-                    Bỏ chọn
-                  </button>
-                </>
-              )}
-            </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {Array.from(selectedColors).map((colorName) => {
+              // Sizes available for this specific color from catalog
+              const colorGroup = variantGroups.find((g) => g.color === colorName);
+              const colorAvailableSizes = colorGroup ? new Set(colorGroup.sizes) : null;
+              const enabledForColor = enabledSizesByColorMap.get(colorName) ?? new Set<string>();
+              const totalEnabled = enabledForColor.size;
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {sizes.map((s) => {
-                const on = enabledSizes.has(s.size);
-                const disabled = !s.isAvailable;
-                return (
-                  <button
-                    key={s.size}
-                    type="button"
-                    onClick={() => !disabled && toggleSize(s.size)}
-                    className="flex items-center gap-2"
-                    title={disabled ? "Hết hàng tại nhà in này" : `${s.availableColors} màu có sẵn`}
+              return (
+                <div
+                  key={colorName}
+                  style={{
+                    border: "1px solid var(--border-default)",
+                    borderRadius: 12,
+                    overflow: "hidden",
+                  }}
+                >
+                  {/* Color header */}
+                  <div
                     style={{
-                      padding: "8px 16px",
-                      borderRadius: 10,
-                      border: on ? "2px solid var(--color-wise-green)" : "1px solid var(--border-default)",
-                      backgroundColor: disabled ? "rgba(148,163,184,0.08)" : on ? "rgba(159,232,112,0.08)" : "transparent",
-                      cursor: disabled ? "not-allowed" : "pointer",
-                      opacity: disabled ? 0.4 : 1,
-                      fontSize: "0.82rem",
-                      fontWeight: on ? 600 : 400,
-                      transition: "all 0.12s",
-                      textDecoration: disabled ? "line-through" : "none",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "10px 14px",
+                      background: "rgba(255,255,255,0.03)",
+                      borderBottom: "1px solid var(--border-default)",
                     }}
                   >
-                    <span>{s.size}</span>
-                    {s.costDeltaCents > 0 && (
-                      <span style={{ fontSize: "0.7rem", color: "#f59e0b", fontWeight: 600 }}>
-                        +${(s.costDeltaCents / 100).toFixed(2)}
+                    <div
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: 4,
+                        backgroundColor: colorGroup?.colorHex ?? "#ccc",
+                        border: "1px solid rgba(0,0,0,0.12)",
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span style={{ fontWeight: 700, fontSize: "0.88rem", flex: 1 }}>{colorName}</span>
+                    {totalEnabled > 0 && (
+                      <span
+                        style={{
+                          fontSize: "0.7rem",
+                          padding: "2px 8px",
+                          borderRadius: 20,
+                          background: "rgba(159,232,112,0.15)",
+                          color: "var(--color-wise-green)",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {totalEnabled} size
                       </span>
                     )}
-                    {on && !disabled && <CheckCircle2 size={13} style={{ color: "var(--color-wise-green)" }} />}
-                    {disabled && (
-                      <span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: 600 }}>Hết hàng</span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </>
+                    <button
+                      type="button"
+                      onClick={() => selectAllSizesForColor(colorName)}
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.72rem", color: "var(--color-wise-green)", fontWeight: 500 }}
+                    >
+                      Tất cả
+                    </button>
+                    <span style={{ opacity: 0.2 }}>·</span>
+                    <button
+                      type="button"
+                      onClick={() => clearSizesForColor(colorName)}
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.72rem", color: "#94a3b8", fontWeight: 500 }}
+                    >
+                      Bỏ hết
+                    </button>
+                  </div>
+
+                  {/* Sizes grid for this color */}
+                  <div style={{ padding: "12px 14px", display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {sizes.map((s) => {
+                      // A size is unavailable for this color if the color group doesn't include it
+                      const unavailableForColor = colorAvailableSizes != null && !colorAvailableSizes.has(s.size);
+                      const globalUnavailable = !s.isAvailable;
+                      const isDisabled = globalUnavailable || unavailableForColor;
+                      const on = enabledForColor.has(s.size);
+
+                      return (
+                        <button
+                          key={s.size}
+                          type="button"
+                          onClick={() => !isDisabled && toggleSizeForColor(colorName, s.size)}
+                          title={
+                            unavailableForColor
+                              ? `${colorName} không có size ${s.size}`
+                              : globalUnavailable
+                                ? "Hết hàng tại nhà in này"
+                                : `${s.availableColors} màu có sẵn`
+                          }
+                          style={{
+                            padding: "7px 14px",
+                            borderRadius: 10,
+                            border: on ? "2px solid var(--color-wise-green)" : "1px solid var(--border-default)",
+                            backgroundColor: isDisabled
+                              ? "rgba(148,163,184,0.06)"
+                              : on
+                                ? "rgba(159,232,112,0.08)"
+                                : "transparent",
+                            cursor: isDisabled ? "not-allowed" : "pointer",
+                            opacity: isDisabled ? 0.35 : 1,
+                            fontSize: "0.82rem",
+                            fontWeight: on ? 600 : 400,
+                            transition: "all 0.12s",
+                            textDecoration: globalUnavailable ? "line-through" : "none",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                          }}
+                        >
+                          <span>{s.size}</span>
+                          {s.costDeltaCents > 0 && (
+                            <span style={{ fontSize: "0.68rem", color: "#f59e0b", fontWeight: 600 }}>
+                              +${(s.costDeltaCents / 100).toFixed(2)}
+                            </span>
+                          )}
+                          {on && !isDisabled && <CheckCircle2 size={12} style={{ color: "var(--color-wise-green)" }} />}
+                          {unavailableForColor && (
+                            <span style={{ fontSize: "0.62rem", color: "#94a3b8" }}>N/A</span>
+                          )}
+                          {globalUnavailable && !unavailableForColor && (
+                            <span style={{ fontSize: "0.62rem", color: "#ef4444", fontWeight: 600 }}>Hết</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>

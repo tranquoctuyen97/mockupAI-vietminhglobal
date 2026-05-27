@@ -66,6 +66,8 @@ interface DraftData {
   selectedColors: SelectedColor[] | null;
   enabledColorIds: string[] | null;
   enabledSizes: string[] | null;
+  // Per-color sizes: { colorName → string[] }. Null = use enabledSizes as fallback.
+  enabledSizesByColor: Record<string, string[]> | null;
   design?: {
     id: string;
     name: string;
@@ -94,6 +96,7 @@ interface DraftData {
       defaultPlacement?: unknown;
       enabledVariantIds?: number[];
       enabledSizes?: string[];
+      enabledSizesByColor?: Record<string, string[]> | null;
     }>;
   } | null;
   placementOverride: unknown | null;

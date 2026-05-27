@@ -155,17 +155,22 @@ export async function prepareMockupGeneration(
     throw new MockupGenerationError("No colors selected", 400);
   }
 
-  const templateColorIds = new Set(template.colors.map((entry) => entry.colorId));
-  const invalidColorIds = draft.enabledColorIds.filter((colorId) => !templateColorIds.has(colorId));
-  if (invalidColorIds.length > 0) {
-    throw new MockupGenerationError(
-      "Một hoặc nhiều màu đã chọn không thuộc template hiện tại. Hãy chọn lại template/màu.",
-      400,
-      "COLOR_NOT_IN_TEMPLATE",
-    );
-  }
-
   const isCustom = (template.defaultMockupSource ?? "PRINTIFY") === "CUSTOM";
+
+  // For PRINTIFY templates, colors must be in template_colors.
+  // For CUSTOM templates, colors link via CustomMockupSource — skip this check;
+  // validateCustomMockupCoverage handles color coverage instead.
+  if (!isCustom) {
+    const templateColorIds = new Set(template.colors.map((entry) => entry.colorId));
+    const invalidColorIds = draft.enabledColorIds.filter((colorId) => !templateColorIds.has(colorId));
+    if (invalidColorIds.length > 0) {
+      throw new MockupGenerationError(
+        "Một hoặc nhiều màu đã chọn không thuộc template hiện tại. Hãy chọn lại template/màu.",
+        400,
+        "COLOR_NOT_IN_TEMPLATE",
+      );
+    }
+  }
 
   if (isCustom) {
     await validateCustomMockupCoverage(draft, template);
@@ -367,6 +372,16 @@ export async function createCustomMockupJobForDraftDesign(
   const selectedDraftSources = resolvedSelection.selectedSources.filter((s) => s.scope === "DRAFT");
   const selectedTemplateSources = resolvedSelection.selectedSources.filter((s) => s.scope === "TEMPLATE");
 
+  // Skip COMPOSITE sources that have no compositeRegionPx for DRAFT scope —
+  // users must explicitly set a position for their own mockups.
+  // TEMPLATE scope sources with null region are allowed through: the worker will
+  // auto-compute a default center region from the actual image dimensions.
+  // FINAL-mode sources are always renderable (they use outputPath directly).
+  const isRenderableSource = (source: typeof draftSources[number]) =>
+    source.renderMode !== "COMPOSITE" ||
+    Boolean(source.compositeRegionPx) ||
+    source.scope === "TEMPLATE";
+
   const mapSource = (source: typeof draftSources[number]) => ({
     id: source.id,
     colorId: source.colorId,
@@ -380,14 +395,14 @@ export async function createCustomMockupJobForDraftDesign(
   });
 
   const draftRows = buildCustomMockupImageRows({
-    sources: selectedDraftSources.map(mapSource),
+    sources: selectedDraftSources.filter(isRenderableSource).map(mapSource),
     colorsById,
     variantColorLookup,
     scope: "DRAFT",
     sortOffset: 0,
   });
   const templateRows = buildCustomMockupImageRows({
-    sources: selectedTemplateSources.map(mapSource),
+    sources: selectedTemplateSources.filter(isRenderableSource).map(mapSource),
     colorsById,
     variantColorLookup,
     scope: "TEMPLATE",
@@ -555,14 +570,23 @@ async function validateCustomMockupCoverage(draft: MockupGenerationContext["draf
     );
   }
 
-  const missingPlacementSources = resolvedSelection.selectedSources.filter(
-    (source) => source.renderMode === "COMPOSITE" && !source.compositeRegionPx,
-  );
-  if (missingPlacementSources.length > 0) {
+  // For each selected color, check if it has at least one COMPOSITE source with a region.
+  // Sources without compositeRegionPx are skipped during rendering, so they're only a problem
+  // when they're the ONLY source available for that color.
+  const colorIds = [...new Set(resolvedSelection.selectedSources.map((s) => s.colorId))];
+  const colorsWithNoValidRegion = colorIds.filter((colorId) => {
+    const sourcesForColor = resolvedSelection.selectedSources.filter(
+      (s) => s.colorId === colorId && s.renderMode === "COMPOSITE",
+    );
+    if (sourcesForColor.length === 0) return false; // No COMPOSITE sources = OK (FINAL mode)
+    return sourcesForColor.every((s) => !s.compositeRegionPx);
+  });
+
+  if (colorsWithNoValidRegion.length > 0) {
     const missingPlacementColorNames = [
       ...new Set(
-        missingPlacementSources
-          .map((source) => draft.store?.colors.find((color) => color.id === source.colorId)?.name)
+        colorsWithNoValidRegion
+          .map((colorId) => draft.store?.colors.find((color) => color.id === colorId)?.name)
           .filter((name): name is string => Boolean(name)),
       ),
     ];
@@ -572,7 +596,7 @@ async function validateCustomMockupCoverage(draft: MockupGenerationContext["draf
       "CUSTOM_MOCKUP_MISSING_REGION",
       {
         missingColorNames: missingPlacementColorNames,
-        missingSourceIds: missingPlacementSources.map((source) => source.id),
+        missingColorIds: colorsWithNoValidRegion,
       },
     );
   }

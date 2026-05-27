@@ -22,7 +22,7 @@ import { DEFAULT_PLACEMENT, type PlacementData } from "@/lib/placement/types";
 import { getClientForStore } from "@/lib/printify/account";
 import { PrintifyApiError, PrintifyNotFoundError } from "@/lib/printify/client";
 import { createOrUpdatePrintifyProduct, ensurePrintifyImage } from "@/lib/printify/product";
-import { buildVariantPayload, ensureVariantCostCache } from "@/lib/printify/variant-catalog";
+import { buildVariantPayload, computeVariantMatrixPerColor, ensureVariantCostCache } from "@/lib/printify/variant-catalog";
 import { ShopifyClient } from "@/lib/shopify/client";
 import { sseChannels } from "@/lib/sse/channel";
 import { getStorage } from "@/lib/storage/local-disk";
@@ -442,20 +442,55 @@ export async function runPrintifyStage(
         const selectedColorNames: string[] = storeColors
           .filter((c: any) => enabledColorIdSet.has(c.id))
           .map((c: any) => c.name);
-        const selectedSizes = draft.enabledSizes || [];
 
-        // 4. Build payload — if no sizes selected, use all available sizes from cache
-        const effectiveSizes =
-          selectedSizes.length > 0
-            ? selectedSizes
-            : [...new Set(cachedVariants.filter((v) => v.isAvailable).map((v) => v.size))];
+        // 4. Per-color sizes or global fallback
+        const sizesByColor = draft.enabledSizesByColor as Record<string, string[]> | null;
+        const hasSizesByColor = sizesByColor && Object.keys(sizesByColor).length > 0;
+
+        let effectiveVariantIds: number[];
+        if (hasSizesByColor) {
+          // Per-color mode: each color uses its own size list
+          effectiveVariantIds = computeVariantMatrixPerColor(
+            cachedVariants,
+            selectedColorNames,
+            sizesByColor!,
+            draft.enabledSizes ?? [],
+          );
+        } else {
+          // Legacy global mode
+          const selectedSizes = draft.enabledSizes || [];
+          const effectiveSizes =
+            selectedSizes.length > 0
+              ? selectedSizes
+              : [...new Set(cachedVariants.filter((v) => v.isAvailable).map((v) => v.size))];
+          effectiveVariantIds = cachedVariants
+            .filter((v) => {
+              const lowerColor = v.colorName.trim().toLowerCase();
+              const colorOk = selectedColorNames.some((c) => c.trim().toLowerCase() === lowerColor);
+              return v.isAvailable && colorOk && effectiveSizes.includes(v.size);
+            })
+            .map((v) => v.variantId);
+        }
+
+        // 5. Build payload with computed variant IDs determining enabled state
+        const effectiveSizesForPayload = hasSizesByColor
+          ? [...new Set(Object.values(sizesByColor!).flat())]
+          : (draft.enabledSizes?.length > 0
+            ? draft.enabledSizes
+            : [...new Set(cachedVariants.filter((v) => v.isAvailable).map((v) => v.size))]);
 
         printifyVariantsPayload = buildVariantPayload(
           cachedVariants,
           selectedColorNames,
-          effectiveSizes,
+          effectiveSizesForPayload,
           baseRetailPriceUSD,
         );
+        // Override is_enabled based on exact per-color computation
+        const enabledSet = new Set(effectiveVariantIds);
+        printifyVariantsPayload = printifyVariantsPayload.map((p) => ({
+          ...p,
+          is_enabled: enabledSet.has(p.id),
+        }));
       }
     } catch (err) {
       console.warn(

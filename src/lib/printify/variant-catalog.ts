@@ -268,6 +268,43 @@ export function computeVariantMatrix(
 }
 
 /**
+ * Per-color variant matrix computation.
+ *
+ * Each color has its own set of enabled sizes via `enabledSizesByColor`.
+ * Falls back to `fallbackSizes` (global list) when a color has no entry in the map.
+ *
+ * Key matching is case-insensitive to handle minor casing differences between
+ * store config and Printify catalog data.
+ */
+export function computeVariantMatrixPerColor(
+  variants: CachedVariant[],
+  selectedColorNames: string[],
+  enabledSizesByColor: Record<string, string[]>,
+  fallbackSizes: string[] = [],
+): number[] {
+  const colorSet = new Set(selectedColorNames.map((c) => c.trim().toLowerCase()));
+
+  // Build a lowercase-keyed lookup for the size map
+  const lowerSizesMap = new Map<string, Set<string>>();
+  for (const [colorName, sizes] of Object.entries(enabledSizesByColor)) {
+    lowerSizesMap.set(colorName.trim().toLowerCase(), new Set(sizes));
+  }
+  const fallbackSizeSet = new Set(fallbackSizes);
+
+  return variants
+    .filter((v) => {
+      if (!v.isAvailable) return false;
+      const lowerColor = v.colorName.trim().toLowerCase();
+      if (!colorSet.has(lowerColor)) return false;
+
+      // Per-color sizes, with fallback to global list
+      const sizesForColor = lowerSizesMap.get(lowerColor) ?? fallbackSizeSet;
+      return sizesForColor.has(v.size);
+    })
+    .map((v) => v.variantId);
+}
+
+/**
  * Build full variants array for Printify product payload (includes computed retail price, sku, status).
  * `baseRetailPriceUSD` is mapped to the lowest-cost available size.
  */

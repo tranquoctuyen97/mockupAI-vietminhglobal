@@ -23,6 +23,7 @@ import {
   AlertTriangle,
   Image as ImageIcon,
   ArrowUpCircle,
+  ArrowRight,
   SlidersHorizontal,
   X,
 } from "lucide-react";
@@ -69,6 +70,8 @@ type WizardTemplateOption = {
   defaultMockupSource: "PRINTIFY" | "CUSTOM";
   enabledVariantIds: number[];
   enabledSizes: string[];
+  // Per-color sizes: { colorName → string[] } | null
+  enabledSizesByColor: Record<string, string[]> | null;
   defaultPlacement: unknown | null;
   readiness: {
     ready: boolean;
@@ -152,9 +155,9 @@ export default function Step3PreviewPage() {
   const [showSlowMockupWarning, setShowSlowMockupWarning] = useState(false);
   const [hasTriggeredBatchRender, setHasTriggeredBatchRender] = useState(false);
 
-  // Size selection state
+  // Per-color size selection: colorId → Set<size>
   const [storeSizes, setStoreSizes] = useState<Array<{ size: string; costDeltaCents: number; isAvailable: boolean }>>([]);
-  const [selectedSizes, setSelectedSizes] = useState<Set<string>>(new Set());
+  const [sizesByColorId, setSizesByColorId] = useState<Map<string, Set<string>>>(new Map());
   const [error, setError] = useState("");
   const [retryNonce, setRetryNonce] = useState(0);
   const [userRole, setUserRole] = useState<string | null>(null);
@@ -299,14 +302,40 @@ export default function Step3PreviewPage() {
 
         // Apply template size filter to fetched size data
         const templateEnabledSizes: string[] = activeTemplate?.enabledSizes ?? [];
+        const sizesByColor: Record<string, string[]> | null =
+          (activeTemplate?.enabledSizesByColor ?? null) as Record<string, string[]> | null;
         const availableSizes = ((sizeData?.sizes ?? [])).filter((s: any) =>
           templateEnabledSizes.length === 0 || templateEnabledSizes.includes(s.size),
         );
         setStoreSizes(availableSizes);
-        const draftSizes: string[] = ((draft as any)?.enabledSizes ?? []).filter((size: string) =>
-          templateEnabledSizes.length === 0 || templateEnabledSizes.includes(size),
-        );
-        setSelectedSizes(new Set(draftSizes.length > 0 ? draftSizes : templateEnabledSizes));
+
+        // Init per-color sizes from draft or template
+        const draftSizesByColor = (draft as any)?.enabledSizesByColor as Record<string, string[]> | null;
+        const draftFlatSizes: string[] = (draft as any)?.enabledSizes ?? [];
+
+        const initSizesByColorId = new Map<string, Set<string>>();
+        for (const color of enabledColors) {
+          let sizesForColor: string[];
+          if (draftSizesByColor?.[color.name]) {
+            // Per-color from draft
+            sizesForColor = draftSizesByColor[color.name].filter((s) =>
+              templateEnabledSizes.length === 0 || templateEnabledSizes.includes(s),
+            );
+          } else if (sizesByColor?.[color.name]) {
+            // Per-color from template
+            sizesForColor = sizesByColor[color.name];
+          } else if (draftFlatSizes.length > 0) {
+            // Legacy flat fallback from draft
+            sizesForColor = draftFlatSizes.filter((s) =>
+              templateEnabledSizes.length === 0 || templateEnabledSizes.includes(s),
+            );
+          } else {
+            // Template global fallback
+            sizesForColor = templateEnabledSizes;
+          }
+          initSizesByColorId.set(color.id, new Set(sizesForColor));
+        }
+        setSizesByColorId(initSizesByColorId);
         setLoading(false);
       })
       .catch((err) => {
@@ -522,10 +551,24 @@ export default function Step3PreviewPage() {
     setMockupJobsByDesign(new Map());
 
     const enabledColorIds = Array.from(selectedColorIds);
+
+    // Build enabledSizesByColor (colorName → string[]) from sizesByColorId (colorId → Set<size>)
+    const enabledSizesByColor: Record<string, string[]> = {};
+    for (const color of storeColors) {
+      if (selectedColorIds.has(color.id)) {
+        enabledSizesByColor[color.name] = Array.from(sizesByColorId.get(color.id) ?? []);
+      }
+    }
+    // Union of all sizes for legacy enabledSizes field
+    const allEnabledSizes = Array.from(
+      new Set(Object.values(enabledSizesByColor).flat()),
+    );
+
     await updateDraft({
       templateId: selectedTemplate.id,
       enabledColorIds,
-      enabledSizes: Array.from(selectedSizes),
+      enabledSizes: allEnabledSizes,
+      enabledSizesByColor,
       placementOverride: placementOverride || undefined,
     });
     await saveDraftImmediately();
@@ -600,7 +643,8 @@ export default function Step3PreviewPage() {
     saveDraftImmediately,
     selectedColorIds,
     selectedMissingCustomColors,
-    selectedSizes,
+    sizesByColorId,
+    storeColors,
     selectedTemplate,
     updateDraft,
   ]);
@@ -833,12 +877,31 @@ export default function Step3PreviewPage() {
     updateDraft({ enabledColorIds: [] });
   };
 
-  const toggleSize = (size: string) => {
-    const next = new Set(selectedSizes);
-    if (next.has(size)) next.delete(size);
-    else next.add(size);
-    setSelectedSizes(next);
-    updateDraft({ enabledSizes: Array.from(next) });
+  const toggleSize = (colorId: string, size: string) => {
+    setSizesByColorId((prev) => {
+      const next = new Map(prev);
+      const current = new Set(next.get(colorId) ?? []);
+      if (current.has(size)) current.delete(size);
+      else current.add(size);
+      next.set(colorId, current);
+      return next;
+    });
+  };
+
+  const selectAllSizes = (colorId: string) => {
+    setSizesByColorId((prev) => {
+      const next = new Map(prev);
+      next.set(colorId, new Set(storeSizes.filter((s) => s.isAvailable).map((s) => s.size)));
+      return next;
+    });
+  };
+
+  const clearAllSizes = (colorId: string) => {
+    setSizesByColorId((prev) => {
+      const next = new Map(prev);
+      next.set(colorId, new Set());
+      return next;
+    });
   };
 
   const handleTemplateChange = async (templateId: string) => {
@@ -856,13 +919,28 @@ export default function Step3PreviewPage() {
         return Boolean(color.hasCustomMockup || (color.customMockupCount ?? 0) > 0);
       })
       .map((color) => color.id);
-    const nextSizes = nextTemplate.enabledSizes ?? [];
+    const globalFallbackSizes = nextTemplate.enabledSizes ?? [];
+
+    const nextSizes: Record<string, string[]> = {};
+    const nextSizesByColorId = new Map<string, Set<string>>();
+    for (const colorId of nextColorIds) {
+      const colorObj = nextTemplate.colors.find((c) => c.id === colorId);
+      if (colorObj) {
+        const colorSizes =
+          (nextTemplate.enabledSizesByColor as Record<string, string[]> | null)?.[colorObj.name]
+          ?? globalFallbackSizes;
+        nextSizesByColorId.set(colorId, new Set(colorSizes));
+        nextSizes[colorObj.name] = colorSizes;
+      }
+    }
+    // Compute global flat list for legacy enabledSizes field
+    const nextGlobalSizes = Array.from(new Set(Object.values(nextSizes).flat()));
 
     setTemplate(nextTemplate);
     setTemplateWarning("");
     setStoreColors(nextTemplate.colors.filter((color) => color.enabled !== false));
     setSelectedColorIds(new Set(nextColorIds));
-    setSelectedSizes(new Set(nextSizes));
+    setSizesByColorId(nextSizesByColorId);
     setPlacementOverride(null);
     setPreviewColorIdx(0);
     setLivePreviewView("front");
@@ -876,7 +954,8 @@ export default function Step3PreviewPage() {
     await updateDraft({
       templateId: nextTemplate.id,
       enabledColorIds: nextColorIds,
-      enabledSizes: nextSizes,
+      enabledSizes: nextGlobalSizes,
+      enabledSizesByColor: nextSizes,
       enabledVariantIdsOverride: [],
       placementOverride: null,
     });
@@ -1218,8 +1297,13 @@ export default function Step3PreviewPage() {
 
           <SizePicker
             sizes={storeSizes}
-            selectedSizes={selectedSizes}
+            selectedColors={storeColors
+              .filter((c) => selectedColorIds.has(c.id))
+              .map((c) => ({ id: c.id, name: c.name, hex: c.hex }))}
+            sizesByColorId={sizesByColorId}
             onToggle={toggleSize}
+            onSelectAll={selectAllSizes}
+            onClearAll={clearAllSizes}
           />
 
           {!isCustomTemplateDefault && (
@@ -1546,7 +1630,7 @@ export default function Step3PreviewPage() {
                 </div>
               )}
 
-              {draft?.storeId && selectedTemplate && (
+              {isCustomTemplateDefault && draft?.storeId && selectedTemplate && (
                 <WizardMockupSourcePanel
                   draftId={draftId as string}
                   storeId={draft.storeId}
@@ -1565,17 +1649,36 @@ export default function Step3PreviewPage() {
                     {resultsSectionTitle}
                     {selectedDraftDesigns.length > 1 ? ` · ${activeDesignTabLabel}` : ""}
                   </h3>
-                  <button
-                    data-generate-mockups
-                    className={`btn flex items-center gap-2 px-4 py-2 rounded font-medium ${canGenerateMockups ? "btn-primary" : ""}`}
-                    onClick={handleGenerate}
-                    disabled={!canGenerateMockups}
-                    style={!canGenerateMockups ? { backgroundColor: "var(--bg-tertiary)", color: "var(--color-text)", opacity: 0.5, cursor: "not-allowed" } : {}}
-                  >
-                    {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-                    {generateButtonLabel}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      data-generate-mockups
+                      className={`btn flex items-center gap-2 px-4 py-2 rounded font-medium ${allMockupImages.length > 0 ? "btn-secondary" : canGenerateMockups ? "btn-primary" : ""}`}
+                      onClick={handleGenerate}
+                      disabled={!canGenerateMockups}
+                      style={!canGenerateMockups ? { backgroundColor: "var(--bg-tertiary)", color: "var(--color-text)", opacity: 0.5, cursor: "not-allowed" } : {}}
+                    >
+                      {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                      {generateButtonLabel}
+                    </button>
+                    {allMockupImages.length > 0 && !isGenerating && (
+                      <button
+                        className="btn btn-primary flex items-center gap-2"
+                        onClick={async () => {
+                          if (draft) {
+                            const store = useWizardStore.getState();
+                            store.updateDraft({ currentStep: Math.max(draft.currentStep, 4) });
+                            await store.saveDraftImmediately();
+                          }
+                          router.push(`/wizard/${draftId}/step-4`);
+                        }}
+                      >
+                        Tiếp theo
+                        <ArrowRight size={14} />
+                      </button>
+                    )}
+                  </div>
                 </div>
+
 
                 {showSlowMockupWarning && isGenerating && overallJobProgress.total === 0 && (
                   <div

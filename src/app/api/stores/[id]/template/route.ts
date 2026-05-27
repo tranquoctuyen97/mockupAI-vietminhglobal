@@ -21,6 +21,8 @@ const TemplatePatchSchema = z.object({
   printProviderTitle: z.string().optional(),
   enabledVariantIds: z.array(z.number().int().positive()).optional(),
   enabledSizes: z.array(z.string()).optional(),
+  // Per-color sizes: { colorName → string[] }
+  enabledSizesByColor: z.record(z.string(), z.array(z.string())).optional(),
   defaultPlacement: PlacementDataSchema.optional(),
   defaultAspectRatio: z.string().optional(),
   storePresetSnapshot: z.any().optional(),
@@ -104,6 +106,9 @@ export async function PATCH(
         printProviderTitle: data.printProviderTitle ?? "",
         enabledVariantIds: data.enabledVariantIds ?? [],
         enabledSizes: data.enabledSizes ?? [],
+        enabledSizesByColor: data.enabledSizesByColor
+          ? (data.enabledSizesByColor as Prisma.InputJsonValue)
+          : undefined,
         defaultPlacement: data.defaultPlacement
           ? (data.defaultPlacement as Prisma.InputJsonValue)
           : undefined,
@@ -128,6 +133,7 @@ export async function PATCH(
   if (data.printProviderTitle !== undefined) updateData.printProviderTitle = data.printProviderTitle;
   if (data.enabledVariantIds !== undefined) updateData.enabledVariantIds = data.enabledVariantIds;
   if (data.enabledSizes !== undefined) updateData.enabledSizes = data.enabledSizes;
+  if (data.enabledSizesByColor !== undefined) updateData.enabledSizesByColor = data.enabledSizesByColor as Prisma.InputJsonValue;
   if (data.defaultPlacement !== undefined) updateData.defaultPlacement = data.defaultPlacement as Prisma.InputJsonValue;
   if (data.defaultAspectRatio !== undefined) updateData.defaultAspectRatio = data.defaultAspectRatio;
   if (data.storePresetSnapshot !== undefined) updateData.storePresetSnapshot = data.storePresetSnapshot;

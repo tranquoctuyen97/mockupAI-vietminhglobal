@@ -95,10 +95,14 @@ export async function compositeImageOnCustomMockup(
   region: CustomCompositeRegion,
   outputPath: string,
 ): Promise<void> {
-  const designWidth = Math.max(1, Math.round(region.width));
-  const designHeight = Math.max(1, Math.round(region.height));
-  const left = Math.max(0, Math.round(region.x));
-  const top = Math.max(0, Math.round(region.y));
+  // Get actual mockup dimensions to clamp region safely
+  const { width: mockupW = 9999, height: mockupH = 9999 } = await sharp(mockupBuffer).metadata();
+
+  const left = Math.max(0, Math.min(Math.round(region.x), mockupW - 1));
+  const top  = Math.max(0, Math.min(Math.round(region.y), mockupH - 1));
+  // Clamp design size to not exceed remaining space after offset
+  const designWidth  = Math.max(1, Math.min(Math.round(region.width),  mockupW - left));
+  const designHeight = Math.max(1, Math.min(Math.round(region.height), mockupH - top));
 
   let design = sharp(designBuffer)
     .resize(designWidth, designHeight, {

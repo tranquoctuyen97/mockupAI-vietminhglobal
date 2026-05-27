@@ -1,6 +1,7 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { type Job, Worker } from "bullmq";
+import sharp from "sharp";
 import { prisma } from "../db";
 import { DEFAULT_PLACEMENT, type Placement } from "../placement/types";
 import { getStorage } from "../storage/local-disk";
@@ -55,9 +56,9 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
             where: { id: parsed.sourceId },
             select: {
               compositeRegionPx: true,
+              scope: true,
             },
           });
-          const region = coerceCustomCompositeRegion(source.compositeRegionPx);
 
           // Per-image render path: COMPOSITE output goes to MockupImage.compositeUrl, not CustomMockupSource.outputPath
           const image = await prisma.mockupImage.findUniqueOrThrow({
@@ -68,8 +69,34 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
           const outputPath = storage.resolvePath(outputKey);
           await mkdir(dirname(outputPath), { recursive: true });
 
+          // Fetch source buffer first — needed for both composite and default region fallback
           const sourceBuffer = await resolveMockupSourceBuffer(sourceUrl);
           const designBuffer = await readFile(storage.resolvePath(designStoragePath));
+
+          // Resolve composite region: use stored value, or auto-compute default center when null.
+          // Auto-default applies to TEMPLATE sources (user hasn't set position yet);
+          // DRAFT sources with null region should have been filtered in generation, but we handle
+          // them gracefully here too using the same formula as UI defaultRegion().
+          let region: CustomCompositeRegion;
+          if (source.compositeRegionPx) {
+            region = coerceCustomCompositeRegion(source.compositeRegionPx);
+          } else {
+            const meta = await sharp(sourceBuffer).metadata();
+            const w = meta.width ?? 1000;
+            const h = meta.height ?? 1000;
+            const rW = Math.max(1, Math.round(w * 0.42));
+            const rH = Math.max(1, Math.round(h * 0.28));
+            region = {
+              x: Math.max(0, Math.round((w - rW) / 2)),
+              y: Math.max(0, Math.round((h - rH) / 2)),
+              width: rW,
+              height: rH,
+              rotationDeg: 0,
+            };
+            console.log(
+              `[MockupWorker] No compositeRegionPx for source ${parsed.sourceId} (scope=${source.scope}), using default center region ${JSON.stringify(region)}`,
+            );
+          }
 
           await compositeImageOnCustomMockup(sourceBuffer, designBuffer, region, outputPath);
 

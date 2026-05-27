@@ -110,6 +110,8 @@ export async function GET(
       defaultMockupSource: template.defaultMockupSource,
       enabledVariantIds: template.enabledVariantIds,
       enabledSizes: template.enabledSizes,
+      // Per-color size map; null means use enabledSizes as global fallback
+      enabledSizesByColor: (template.enabledSizesByColor ?? null) as Record<string, string[]> | null,
       defaultPlacement: template.defaultPlacement,
       readiness: {
         ready: readiness.ready,

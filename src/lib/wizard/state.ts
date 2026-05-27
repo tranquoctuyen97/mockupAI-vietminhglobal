@@ -18,6 +18,8 @@ export interface DraftPatch {
   templateId?: string | null;
   enabledColorIds?: string[];
   enabledSizes?: string[];
+  // Per-color sizes: { colorName → string[] }
+  enabledSizesByColor?: Record<string, string[]> | null;
   enabledVariantIdsOverride?: number[];
   placementOverride?: unknown | null;
   aiContent?: unknown | null;
@@ -32,6 +34,7 @@ const draftPatchKeys = [
   "templateId",
   "enabledColorIds",
   "enabledSizes",
+  "enabledSizesByColor",
   "enabledVariantIdsOverride",
   "placementOverride",
   "aiContent",
@@ -204,6 +207,12 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
           ? sanitized.placementOverride === null
             ? Prisma.JsonNull
             : (sanitized.placementOverride as Prisma.InputJsonValue)
+          : undefined,
+        // Per-color size map
+        enabledSizesByColor: sanitized.enabledSizesByColor !== undefined
+          ? sanitized.enabledSizesByColor === null
+            ? Prisma.JsonNull
+            : (sanitized.enabledSizesByColor as Prisma.InputJsonValue)
           : undefined,
         aiContent: sanitized.aiContent !== undefined
           ? sanitized.aiContent === null

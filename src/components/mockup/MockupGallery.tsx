@@ -461,7 +461,7 @@ export function MockupGallery({
                       >
                         <AlertTriangle size={20} style={{ margin: "0 auto" }} />
                         <strong style={{ fontSize: "0.68rem", lineHeight: 1.25 }}>
-                          Tạo ảnh ghép thất bại · vùng vượt ngoài ảnh · kiểm tra pixel
+                          {img.compositeError ?? "Tạo ảnh ghép thất bại · kiểm tra vị trí design"}
                         </strong>
                         <div className="flex items-center justify-center gap-1">
                           <button

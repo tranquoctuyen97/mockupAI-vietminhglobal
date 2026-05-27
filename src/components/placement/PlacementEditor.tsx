@@ -58,21 +58,42 @@ export function PlacementEditor({
 }: Props) {
   const rectRef = useRef<any>(null);
   const trRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState(false);
   const [designImg, setDesignImg] = useState<HTMLImageElement | null>(null);
 
+  // Measure actual container width so Stage never overflows (fixes visual misalignment)
+  const [containerWidth, setContainerWidth] = useState<number>(canvasWidth);
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w && w > 0) setContainerWidth(w);
+    });
+    observer.observe(containerRef.current);
+    // Initial measurement
+    const w = containerRef.current.getBoundingClientRect().width;
+    if (w > 0) setContainerWidth(w);
+    return () => observer.disconnect();
+  }, []);
+
+  // Scale Stage proportionally if container is narrower than requested canvasWidth
+  const scale = Math.min(1, containerWidth / canvasWidth);
+  const effectiveWidth = Math.round(canvasWidth * scale);
+  const effectiveHeight = Math.round(canvasHeight * scale);
+
   // Compute scale: fit print area into canvas with padding
-  const padding = 40;
-  const scaleX = (canvasWidth - padding * 2) / printArea.widthMm;
-  const scaleY = (canvasHeight - padding * 2) / printArea.heightMm;
+  const padding = 40 * scale;
+  const scaleX = (effectiveWidth - padding * 2) / printArea.widthMm;
+  const scaleY = (effectiveHeight - padding * 2) / printArea.heightMm;
   const mmPerPx = Math.min(scaleX, scaleY);
 
   const toPx = (mm: number) => mm * mmPerPx;
   const toMm = (px: number) => px / mmPerPx;
 
   // Print area rect position (centered)
-  const paX = (canvasWidth - toPx(printArea.widthMm)) / 2;
-  const paY = (canvasHeight - toPx(printArea.heightMm)) / 2;
+  const paX = (effectiveWidth - toPx(printArea.widthMm)) / 2;
+  const paY = (effectiveHeight - toPx(printArea.heightMm)) / 2;
 
   // Design rect absolute position in canvas coordinates
   const designPxX = paX + toPx(placement.xMm);
@@ -113,6 +134,7 @@ export function PlacementEditor({
     const newX = toMm(e.target.x() - paX);
     const newY = toMm(e.target.y() - paY);
     onChange({ ...placement, xMm: Math.round(newX * 10) / 10, yMm: Math.round(newY * 10) / 10 });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [placement, onChange, paX, paY]);
 
   const handleTransformEnd = useCallback(() => {
@@ -139,12 +161,14 @@ export function PlacementEditor({
       heightMm: Math.round(newH * 10) / 10,
       rotationDeg: Math.round(rotation * 10) / 10,
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [placement, onChange, paX, paY]);
 
   return (
+    <div ref={containerRef} style={{ width: "100%" }}>
     <Stage
-      width={canvasWidth}
-      height={canvasHeight}
+      width={effectiveWidth}
+      height={effectiveHeight}
       onMouseDown={(e) => {
         if (e.target === e.target.getStage()) setSelected(false);
       }}
@@ -269,11 +293,12 @@ export function PlacementEditor({
         <Text
           x={paX}
           y={paY - 16}
-          text={`Vùng in: ${printArea.widthMm}×${printArea.heightMm} mm`}
+          text={`Vùng in: ${printArea.widthMm}\u00d7${printArea.heightMm} mm`}
           fontSize={10}
           fill="#888"
         />
       </Layer>
     </Stage>
+    </div>
   );
 }

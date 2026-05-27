@@ -95,6 +95,13 @@ export function parseCompositeRegionPx(value: unknown): CompositeRegionPx | null
     ) {
       return null;
     }
+    // Validate region stays within image bounds
+    if (
+      region.x + region.width > imageWidth ||
+      region.y + region.height > imageHeight
+    ) {
+      return null;
+    }
     region.imageWidth = imageWidth;
     region.imageHeight = imageHeight;
   }

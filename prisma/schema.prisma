@@ -275,6 +275,8 @@ model StoreMockupTemplate {
   // Phase 6.10 — Template-level preset fields
   enabledVariantIds       Int[]            @default([]) @map("enabled_variant_ids")
   enabledSizes            String[]         @default([]) @map("enabled_sizes")
+  // Per-color size selection: { "Black": ["S","M","L"], "Heather Red": ["S","M"] }
+  enabledSizesByColor     Json?            @map("enabled_sizes_by_color")
   defaultPlacement        Json?            @map("default_placement")
   defaultAspectRatio      String           @default("1:1") @map("default_aspect_ratio")
   storePresetSnapshot     Json?            @map("store_preset_snapshot")
@@ -474,6 +476,8 @@ model WizardDraft {
   // Phase 6.10: new fields
   enabledColorIds           String[]    @default([]) @map("enabled_color_ids")
   enabledSizes              String[]    @default([]) @map("enabled_sizes")
+  // Per-color size selection: { colorName → string[] }. Null = use enabledSizes as fallback.
+  enabledSizesByColor       Json?       @map("enabled_sizes_by_color")
   placementOverride         Json?       @map("placement_override")
   printifyDraftProductId    String?     @map("printify_draft_product_id")
   printifyImageId           String?     @map("printify_image_id")

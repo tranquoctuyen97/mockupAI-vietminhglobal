@@ -131,9 +131,12 @@ export function MultiViewPlacementEditor({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: compact ? "200px minmax(360px,1fr) 270px" : "220px minmax(460px,1fr) 300px",
-          gap: compact ? 12 : 18,
+          gridTemplateColumns: compact
+            ? "180px 1fr 240px"
+            : "200px 1fr 260px",
+          gap: compact ? 10 : 16,
           alignItems: "stretch",
+          minWidth: 0,
         }}
       >
         <div className="card" style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -215,8 +218,8 @@ export function MultiViewPlacementEditor({
               bgColor={bgColor}
               bgImageUrl={mockupUrlsByView?.[activeView] ?? undefined}
               designUrl={designUrl ?? undefined}
-              canvasWidth={compact ? 460 : 560}
-              canvasHeight={compact ? 500 : 560}
+              canvasWidth={compact ? 400 : 500}
+              canvasHeight={compact ? 440 : 520}
             />
           ) : (
             <div

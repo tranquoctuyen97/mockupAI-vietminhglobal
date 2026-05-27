@@ -274,10 +274,18 @@ export function buildCustomMockupImageRows(input: {
 }): MockupImageRow[] {
   const rows: MockupImageRow[] = [];
   const sortOffset = input.sortOffset ?? 0;
+  // Deduplicate: skip subsequent sources for the same (colorId, view) pair.
+  // This prevents double renders when a user accidentally uploaded multiple
+  // mockup sources for the same color+view slot.
+  const seen = new Set<string>();
 
   for (const source of [...input.sources].sort((a, b) => a.sortOrder - b.sortOrder)) {
     const color = input.colorsById.get(source.colorId);
     if (!color) continue;
+
+    const dedupeKey = `${source.colorId}|${source.view}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
 
     rows.push({
       printifyMockupId: `custom:${source.id}`,
@@ -417,9 +425,11 @@ async function buildCustomRowsForDraft(input: {
     isPrimary: source.isPrimary,
     sortOrder: source.sortOrder,
   });
+  const isRenderableSource = (source: typeof draftSources[number]) =>
+    source.renderMode !== "COMPOSITE" || Boolean(source.compositeRegionPx);
 
   const draftRows = buildCustomMockupImageRows({
-    sources: selectedDraftSources.map(mapSource),
+    sources: selectedDraftSources.filter(isRenderableSource).map(mapSource),
     colorsById,
     variantColorLookup: input.variantColorLookup,
     scope: "DRAFT",
@@ -427,7 +437,7 @@ async function buildCustomRowsForDraft(input: {
   });
 
   const templateRows = buildCustomMockupImageRows({
-    sources: selectedTemplateSources.map(mapSource),
+    sources: selectedTemplateSources.filter(isRenderableSource).map(mapSource),
     colorsById,
     variantColorLookup: input.variantColorLookup,
     scope: "TEMPLATE",
