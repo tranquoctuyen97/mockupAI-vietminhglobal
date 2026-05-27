@@ -258,10 +258,9 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
     return tx.wizardDraft.findUniqueOrThrow({
       where: { id },
       include: {
-        draftDesigns: draftDesignsWithRelationsInclude,
-        mockupJobs: {
-          orderBy: { createdAt: "asc" as const },
-          include: { images: { orderBy: { sortOrder: "asc" as const } } },
+        draftDesigns: {
+          orderBy: { sortOrder: "asc" },
+          include: { design: true },
         },
       },
     });
