@@ -1079,6 +1079,10 @@ export default function Step3PreviewPage() {
     (activeDraftDesignId
       ? selectedDraftDesigns.find((entry) => entry.id === activeDraftDesignId) ?? null
       : null) ?? selectedDraftDesigns[0] ?? null;
+  // Lấy preview URL theo design tab đang active (sửa bug: trước đây luôn dùng design đầu tiên)
+  const activeDesignPreviewUrl = activeDesignTab?.designId
+    ? designPreviewUrlsById[activeDesignTab.designId] ?? null
+    : primaryDesignPreviewUrl;
   const activeDesignTabIndex = activeDesignTab
     ? selectedDraftDesigns.findIndex((entry) => entry.id === activeDesignTab.id)
     : -1;
@@ -1444,7 +1448,7 @@ export default function Step3PreviewPage() {
                 draftId={draftId as string}
                 templateId={selectedTemplate.id}
                 selectedColors={storeColors.filter((c) => selectedColorIds.has(c.id))}
-                designImageUrl={primaryDesignPreviewUrl}
+                designImageUrl={activeDesignPreviewUrl}
                 mockupImages={activeMockupImages}
                 onGenerate={handleGenerate}
                 isGenerating={isGenerating}
@@ -1547,7 +1551,7 @@ export default function Step3PreviewPage() {
                   {previewColor && currentPreviewPlacement ? (
                     <LivePreview
                       colorHex={previewColor.hex}
-                      designUrl={primaryDesignPreviewUrl}
+                      designUrl={activeDesignPreviewUrl}
                       placement={currentPreviewPlacement}
                       placementsByView={placementsByView}
                       availableViews={livePreviewViews}
@@ -1637,7 +1641,7 @@ export default function Step3PreviewPage() {
                   templateId={selectedTemplate.id}
                   enabledColorIds={Array.from(selectedColorIds)}
                   storeColors={storeColors}
-                  designImageUrl={primaryDesignPreviewUrl}
+                  designImageUrl={activeDesignPreviewUrl}
                   onRegenerate={handleGenerate}
                   onRemoveColor={removeColorFromListing}
                 />
@@ -1838,7 +1842,7 @@ export default function Step3PreviewPage() {
             {currentPreviewPlacement ? (
               <CanvasPlacementEditor
                 backgroundImageUrl={canvasBackgroundImageUrl}
-                designImageUrl={primaryDesignPreviewUrl}
+                designImageUrl={activeDesignPreviewUrl}
                 imageWidth={SVG_VIEWBOX_W}
                 imageHeight={SVG_VIEWBOX_H}
                 mode={canvasEditorMode}

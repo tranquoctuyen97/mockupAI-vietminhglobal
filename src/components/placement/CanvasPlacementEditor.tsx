@@ -26,6 +26,7 @@ interface CanvasPlacementEditorProps {
   onChange?: (regionPx: CanvasRegionPx) => void;
   onReset?: () => void;
   showSaveButton?: boolean;
+  showManualInputs?: boolean;
 }
 
 export function CanvasPlacementEditor({
@@ -39,6 +40,7 @@ export function CanvasPlacementEditor({
   onChange,
   onReset,
   showSaveButton = true,
+  showManualInputs = true,
 }: CanvasPlacementEditorProps) {
   const nodeRef = useRef<any>(null);
   const transformerRef = useRef<any>(null);
@@ -326,9 +328,48 @@ export function CanvasPlacementEditor({
           flexWrap: "wrap",
         }}
       >
-        <span style={{ fontSize: "0.74rem", color: "var(--text-muted)", fontWeight: 800 }}>
-          x {region.x}px · y {region.y}px · {region.width}x{region.height}px · {region.rotationDeg}°
-        </span>
+        {showManualInputs ? (
+          <div className="flex items-center gap-2" style={{ flexWrap: "wrap", flex: 1 }}>
+            {([
+              { label: "X", key: "x" as const, min: -imageWidth, max: imageWidth },
+              { label: "Y", key: "y" as const, min: -imageHeight, max: imageHeight },
+              { label: "W", key: "width" as const, min: 1, max: imageWidth },
+              { label: "H", key: "height" as const, min: 1, max: imageHeight },
+              { label: "°", key: "rotationDeg" as const, min: -360, max: 360 },
+            ] as const).map(({ label, key, min, max }) => (
+              <label key={key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.74rem", color: "var(--text-muted)" }}>
+                <span style={{ fontWeight: 800, minWidth: 14 }}>{label}</span>
+                <input
+                  type="number"
+                  value={region[key]}
+                  min={min}
+                  max={max}
+                  step={1}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val)) {
+                      applyRegion({ ...region, [key]: val });
+                    }
+                  }}
+                  style={{
+                    width: key === "rotationDeg" ? 54 : 64,
+                    padding: "3px 6px",
+                    fontSize: "0.74rem",
+                    borderRadius: 6,
+                    border: "1px solid var(--border-default)",
+                    background: "var(--bg-secondary)",
+                    color: "var(--text-primary)",
+                    textAlign: "right",
+                  }}
+                />
+              </label>
+            ))}
+          </div>
+        ) : (
+          <span style={{ fontSize: "0.74rem", color: "var(--text-muted)", fontWeight: 800 }}>
+            x {region.x}px · y {region.y}px · {region.width}x{region.height}px · {region.rotationDeg}°
+          </span>
+        )}
         <div className="flex items-center gap-2">
           <button className="btn btn-secondary" type="button" onClick={centerEditor}>
             Căn giữa
