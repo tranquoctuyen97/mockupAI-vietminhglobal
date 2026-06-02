@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
   allowedDevOrigins: ["*.ngrok-free.dev"],
+  experimental: {
+    proxyClientMaxBodySize: '100mb',
+  },
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "images-api.printify.com" },

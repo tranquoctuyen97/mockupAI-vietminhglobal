@@ -18,7 +18,7 @@ export const runtime = "nodejs";
 // Disable Next.js body parser — formidable handles multipart
 export const dynamic = "force-dynamic";
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB — khớp giới hạn Printify
 const ALLOWED_TYPES = ["image/png", "image/jpeg"];
 
 /**
@@ -34,26 +34,31 @@ async function requestToIncoming(request: Request): Promise<IncomingMessage> {
   });
 
   const readable = new Readable({
-    async read() {
-      if (!body) {
-        this.push(null);
-        return;
-      }
-      const reader = body.getReader();
+    read() {
+      // no-op — data được pump từ bên ngoài
+    },
+  });
+
+  // Pump data từ Web ReadableStream sang Node Readable (tạo reader 1 lần)
+  if (body) {
+    const reader = body.getReader();
+    (async () => {
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
-            this.push(null);
+            readable.push(null);
             break;
           }
-          this.push(Buffer.from(value));
+          readable.push(Buffer.from(value));
         }
       } catch {
-        this.push(null);
+        readable.push(null);
       }
-    },
-  });
+    })();
+  } else {
+    readable.push(null);
+  }
 
   // Attach headers to the readable stream (formidable needs them)
   Object.assign(readable, {
@@ -172,14 +177,15 @@ export async function POST(request: Request) {
   } catch (error: unknown) {
     console.error("[Upload] Error:", error);
 
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code: number }).code === formidable.errors.biggerThanTotalMaxFileSize
-    ) {
+    const errorCode =
+      error && typeof error === "object" && "code" in error
+        ? (error as { code: number }).code
+        : null;
+
+    // 1009 = biggerThanTotalMaxFileSize, 1012 = malformedMultipart (stream bị cắt)
+    if (errorCode === 1009 || errorCode === 1012) {
       return NextResponse.json(
-        { error: "File quá lớn (tối đa 20MB)" },
+        { error: "File quá lớn (tối đa 100MB)" },
         { status: 413 },
       );
     }

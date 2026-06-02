@@ -34,8 +34,8 @@ export default function UploadDesignPage() {
       setError("Chỉ chấp nhận PNG hoặc JPG");
       return;
     }
-    if (f.size > 20 * 1024 * 1024) {
-      setError("File quá lớn (tối đa 20MB)");
+    if (f.size > 100 * 1024 * 1024) {
+      setError("File quá lớn (tối đa 100MB)");
       return;
     }
     setFile(f);
@@ -76,7 +76,19 @@ export default function UploadDesignPage() {
         method: "POST",
         body: formData,
       });
-      const data = await res.json();
+
+      // Parse JSON — xử lý trường hợp server crash trả HTML thay vì JSON
+      let data: { error?: string };
+      try {
+        data = await res.json();
+      } catch {
+        if (res.status === 413) {
+          setError("File quá lớn. Vui lòng chọn file nhỏ hơn 100MB.");
+        } else {
+          setError(`Upload thất bại (lỗi server ${res.status}). Vui lòng thử lại.`);
+        }
+        return;
+      }
 
       if (!res.ok) {
         setError(data.error || "Upload thất bại");
@@ -85,7 +97,7 @@ export default function UploadDesignPage() {
 
       setResult(data);
     } catch {
-      setError("Không thể kết nối server");
+      setError("Không thể kết nối server. Kiểm tra kết nối mạng và thử lại.");
     } finally {
       setUploading(false);
     }
@@ -229,7 +241,7 @@ export default function UploadDesignPage() {
                   Kéo thả file vào đây hoặc click để chọn
                 </p>
                 <p style={{ opacity: 0.5, fontSize: "0.8rem", margin: 0 }}>
-                  PNG, JPG · Tối đa 20MB
+                  PNG, JPG · Tối đa 100MB
                 </p>
               </>
             )}
