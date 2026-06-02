@@ -78,7 +78,7 @@ export default function UploadDesignPage() {
       });
 
       // Parse JSON — xử lý trường hợp server crash trả HTML thay vì JSON
-      let data: { error?: string };
+      let data: any;
       try {
         data = await res.json();
       } catch {
