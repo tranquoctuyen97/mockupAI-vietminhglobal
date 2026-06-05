@@ -384,7 +384,7 @@ export default function Step5ContentPage() {
               <button
                 className="btn btn-primary"
                 onClick={handleSaveManual}
-                disabled={saving || !content.title.trim() || !content.description.trim()}
+                disabled={saving || !content.title.trim()}
                 style={{ fontSize: "0.8rem" }}
               >
                 {saving ? <Loader2 size={14} className="animate-spin" /> : null}

@@ -296,4 +296,47 @@ describe("buildChecklist", () => {
     assert.equal(checklist.mockupsMatchColors, true);
     assert.equal(checklist.readyToPublish, true);
   });
+
+  it("marks contentComplete when only title is provided (description and tags optional)", async () => {
+    const checklist = await buildChecklist(
+      legacyDraftWithMockups(
+        makeImages([
+          {
+            colorName: "Royal Blue",
+            included: true,
+            compositeUrl: "https://images-api.printify.com/mockup/blue.png",
+            sourceUrl: "https://images-api.printify.com/mockup/blue.png",
+          },
+          {
+            colorName: "Gold",
+            included: true,
+            compositeUrl: "https://images-api.printify.com/mockup/gold.png",
+            sourceUrl: "https://images-api.printify.com/mockup/gold.png",
+          },
+        ]),
+      ),
+    );
+
+    // Override aiContent to only have title
+    const draft = legacyDraftWithMockups(
+      makeImages([
+        {
+          colorName: "Royal Blue",
+          included: true,
+          compositeUrl: "https://images-api.printify.com/mockup/blue.png",
+          sourceUrl: "https://images-api.printify.com/mockup/blue.png",
+        },
+        {
+          colorName: "Gold",
+          included: true,
+          compositeUrl: "https://images-api.printify.com/mockup/gold.png",
+          sourceUrl: "https://images-api.printify.com/mockup/gold.png",
+        },
+      ]),
+    );
+    draft.aiContent = { title: "My Product" };
+    const titleOnlyChecklist = await buildChecklist(draft);
+    assert.equal(titleOnlyChecklist.contentComplete, true);
+    assert.equal(titleOnlyChecklist.readyToPublish, true);
+  });
 });

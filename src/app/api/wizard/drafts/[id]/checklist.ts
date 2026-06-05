@@ -52,9 +52,7 @@ export async function buildChecklist(draft: any) {
     tags?: string[];
   } | null;
   const contentComplete = Boolean(
-    content?.title?.trim() &&
-    content?.description?.trim() &&
-    (content?.tags?.length ?? 0) > 0,
+    content?.title?.trim(),
   );
 
   let placementValid = true;

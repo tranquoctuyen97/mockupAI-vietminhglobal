@@ -650,7 +650,7 @@ export default function Step5ReviewPage() {
             />
             <ChecklistItem
               ok={localChecklist.contentComplete}
-              label="Nội dung đầy đủ (title, description, tags)"
+              label="Nội dung đầy đủ (title)"
               linkLabel="Fix ở Content"
               linkHref={`/wizard/${draftId}/step-4`}
             />
