@@ -4,6 +4,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { validateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 
@@ -40,7 +41,7 @@ export async function PUT(
   if (override == null) {
     await prisma.wizardDraft.update({
       where: { id: draftId },
-      data: { priceBySizeOverride: null },
+      data: { priceBySizeOverride: Prisma.DbNull },
     });
     return NextResponse.json({ ok: true, priceBySizeOverride: null });
   }
