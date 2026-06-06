@@ -480,6 +480,8 @@ model WizardDraft {
   // Per-color size selection: { colorName → string[] }. Null = use enabledSizes as fallback.
   enabledSizesByColor       Json?       @map("enabled_sizes_by_color")
   placementOverride         Json?       @map("placement_override")
+  // Per-size retail price override: { sizeName → priceUSD }. Null = auto-calculate (base + costDelta).
+  priceBySizeOverride       Json?       @map("price_by_size_override")
   printifyDraftProductId    String?     @map("printify_draft_product_id")
   printifyImageId           String?     @map("printify_image_id")
   // Custom mockup source mode

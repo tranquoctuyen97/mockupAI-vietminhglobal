@@ -189,6 +189,24 @@ export async function createOrUpdatePrintifyProduct(input: {
     visibleMockupCount: payload.visible_mockups?.length ?? 0,
   }, null, 2));
 
+  // Defensive cap: Printify hard limit is 100 enabled variants per product.
+  // If more are enabled (e.g. due to large catalog merge), disable overflow.
+  const MAX_ENABLED_PER_PRODUCT = 100;
+  if (enabledCount > MAX_ENABLED_PER_PRODUCT) {
+    console.warn(
+      `[Printify] Capping enabled variants from ${enabledCount} to ${MAX_ENABLED_PER_PRODUCT}`,
+    );
+    let seen = 0;
+    for (const v of payloadVariants) {
+      if (v.is_enabled) {
+        seen++;
+        if (seen > MAX_ENABLED_PER_PRODUCT) {
+          (v as any).is_enabled = false;
+        }
+      }
+    }
+  }
+
   const product = input.productId
     ? await input.client.updateProduct(input.shopId, input.productId, payload)
     : await input.client.createProduct(input.shopId, payload);

@@ -2158,6 +2158,34 @@ function EditorVariantsStep({
           </div>
         )}
 
+        {/* Printify variant limit warning */}
+        {(() => {
+          const totalEnabledVariants = Array.from(enabledSizesByColorMap.values())
+            .reduce((sum, sizesSet) => sum + sizesSet.size, 0);
+          if (totalEnabledVariants > 100) {
+            return (
+              <div
+                className="flex items-center gap-2"
+                style={{
+                  padding: "8px 14px",
+                  marginBottom: 12,
+                  borderRadius: 8,
+                  background: "rgba(239,68,68,0.08)",
+                  border: "1px solid rgba(239,68,68,0.25)",
+                  fontSize: "0.82rem",
+                }}
+              >
+                <AlertTriangle size={14} style={{ color: "#ef4444", flexShrink: 0 }} />
+                <span>
+                  Bạn đang chọn <strong>{totalEnabledVariants}</strong> tổ hợp màu/size, vượt giới hạn <strong>100</strong> của Printify.
+                  Chỉ 100 biến thể đầu tiên sẽ được bật trên sản phẩm. Hãy giảm bớt màu hoặc size để tất cả tổ hợp đều hiển thị trên shop.
+                </span>
+              </div>
+            );
+          }
+          return null;
+        })()}
+
         {selectedColors.size === 0 ? (
           <div style={{ padding: 16, opacity: 0.4, fontSize: "0.85rem", textAlign: "center" }}>Chọn ít nhất 1 màu để cấu hình kích thước</div>
         ) : loadingVariants || loadingSizes ? (

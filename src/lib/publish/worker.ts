@@ -479,11 +479,14 @@ export async function runPrintifyStage(
             ? draft.enabledSizes
             : [...new Set(cachedVariants.filter((v) => v.isAvailable).map((v) => v.size))]);
 
+        const priceBySizeOverride = draft.priceBySizeOverride as Record<string, number> | null;
+
         printifyVariantsPayload = buildVariantPayload(
           cachedVariants,
           selectedColorNames,
           effectiveSizesForPayload,
           baseRetailPriceUSD,
+          priceBySizeOverride,
         );
         // Override is_enabled based on exact per-color computation
         const enabledSet = new Set(effectiveVariantIds);

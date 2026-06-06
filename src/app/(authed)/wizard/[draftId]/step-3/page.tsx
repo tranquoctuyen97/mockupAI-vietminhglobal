@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useWizardStore } from "@/lib/wizard/use-wizard-store";
+import { useAuthedUser } from "@/lib/auth/user-context";
 
 import { isTerminalMockupJobStatus } from "@/lib/mockup/job-sync";
 import { MOCKUP_JOB_SOFT_WAIT_MS } from "@/lib/mockup/job-timeout";
@@ -160,7 +161,10 @@ export default function Step3PreviewPage() {
   const [sizesByColorId, setSizesByColorId] = useState<Map<string, Set<string>>>(new Map());
   const [error, setError] = useState("");
   const [retryNonce, setRetryNonce] = useState(0);
-  const [userRole, setUserRole] = useState<string | null>(null);
+  const authedUser = useAuthedUser();
+  const userRole = authedUser?.role ?? null;
+  // Ref guard to prevent re-computation of design previews
+  const designPreviewRef = useRef<string | null>(null);
   const selectedTemplate = template;
   const selectedTemplateReady = Boolean(selectedTemplate?.readiness.ready);
   const isCustomTemplateDefault = selectedTemplate?.defaultMockupSource === "CUSTOM";
@@ -201,12 +205,7 @@ export default function Step3PreviewPage() {
     template: "Template",
   };
 
-  useEffect(() => {
-    fetch("/api/auth/me")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => setUserRole(data?.role ?? null))
-      .catch(() => setUserRole(null));
-  }, []);
+  // userRole is now provided via AuthedUserProvider context from layout — no /api/auth/me fetch needed
 
   useEffect(() => {
     if (!draftId) {
@@ -260,6 +259,9 @@ export default function Step3PreviewPage() {
   }, [draft?.id, draftPlacementOverrideKey]);
 
   // Combined wizard-config + parallel sizes fetch — eliminates sequential waterfall
+  // AbortController prevents processing stale responses (e.g. when deps change mid-flight).
+  // In React StrictMode dev, the first invocation's response is discarded via signal.aborted
+  // check, and only the second (real) invocation's response is applied to state.
   useEffect(() => {
     if (!draft || draft.id !== draftId) return;
     if (!draft.storeId) {
@@ -268,21 +270,28 @@ export default function Step3PreviewPage() {
       return;
     }
 
-    setLoading(true);
     const storeId = draft.storeId;
+
+    setLoading(true);
+    const controller = new AbortController();
 
     // Fire wizard-config + sizes in parallel (not sequential)
     Promise.all([
-      fetch(`/api/stores/${storeId}/wizard-config`).then((r) => {
+      fetch(`/api/stores/${storeId}/wizard-config`, { signal: controller.signal }).then((r) => {
         if (!r.ok) throw new Error("Failed to fetch wizard config");
         return r.json();
       }),
-      fetch(`/api/stores/${storeId}/sizes`).then((r) => {
+      fetch(`/api/stores/${storeId}/sizes`, { signal: controller.signal }).then((r) => {
         if (!r.ok) return null;
         return r.json();
-      }).catch(() => null),
+      }).catch((err) => {
+        if (err?.name === "AbortError") throw err;
+        return null;
+      }),
     ])
       .then(([config, sizeData]) => {
+        if (controller.signal.aborted) return;
+
         const nextTemplates: WizardTemplateOption[] = Array.isArray(config.templates)
           ? config.templates
           : [];
@@ -339,10 +348,15 @@ export default function Step3PreviewPage() {
         setLoading(false);
       })
       .catch((err) => {
+        if (err?.name === "AbortError") return;
         console.error(err);
         setError("Không tải được cấu hình wizard. Vui lòng thử lại.");
         setLoading(false);
       });
+
+    return () => {
+      controller.abort();
+    };
   // draft?.templateId intentionally excluded from deps — handleTemplateChange uses
   // retryNonce to force a refetch after template switch. Including templateId causes
   // a double-run that races with saveDraftImmediately and can revert the selection.
@@ -402,37 +416,34 @@ export default function Step3PreviewPage() {
     setActiveDraftDesignId((current) => getActiveDraftDesignId(selectedDraftDesignIds, current));
   }, [selectedDraftDesignIds]);
 
+  // Compute design preview URLs from draft data — no extra /api/designs/ fetches needed.
+  // The getDraft() response already includes design.previewPath for each draftDesign.
+  // URL pattern: /api/files/{previewPath} (from LocalDiskStorage.getPublicUrl)
   useEffect(() => {
     if (selectedDraftDesignIds.length === 0) {
       setDesignPreviewUrlsById({});
       return;
     }
 
-    let cancelled = false;
+    // Stable key to prevent re-computation on every render
+    const key = selectedDraftDesignIds.join(",");
+    if (designPreviewRef.current === key) return;
+    designPreviewRef.current = key;
 
-    const loadDesignPreviews = async () => {
-      const entries = await Promise.all(
-        selectedDraftDesigns.map(async (entry) => {
-          try {
-            const res = await fetch(`/api/designs/${entry.designId}`);
-            if (!res.ok) return [entry.designId, null] as const;
-            const data = await res.json();
-            return [entry.designId, data?.previewUrl ?? data?.originalUrl ?? null] as const;
-          } catch {
-            return [entry.designId, null] as const;
-          }
-        }),
-      );
+    const entries: Array<[string, string | null]> = selectedDraftDesigns.map((entry) => {
+      const previewPath = entry.design?.previewPath;
+      const designData = (entry as any).design;
+      const storagePath = designData?.storagePath;
+      // Prefer previewPath (WebP thumbnail), fallback to storagePath (original)
+      const url = previewPath
+        ? `/api/files/${previewPath}`
+        : storagePath
+          ? `/api/files/${storagePath}`
+          : null;
+      return [entry.designId, url];
+    });
 
-      if (cancelled) return;
-      setDesignPreviewUrlsById(Object.fromEntries(entries));
-    };
-
-    void loadDesignPreviews();
-
-    return () => {
-      cancelled = true;
-    };
+    setDesignPreviewUrlsById(Object.fromEntries(entries));
   }, [selectedDraftDesignIds, selectedDraftDesigns]);
 
   useEffect(() => {

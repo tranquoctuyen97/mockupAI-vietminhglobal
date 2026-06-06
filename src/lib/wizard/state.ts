@@ -84,6 +84,7 @@ export async function createDraft(tenantId: string) {
 
 export async function getDraft(id: string, tenantId: string) {
   return prisma.wizardDraft.findFirst({
+    relationLoadStrategy: "join", // PostgreSQL LATERAL JOIN — 1 query instead of N+1
     where: { id, tenantId },
     include: {
       design: true,

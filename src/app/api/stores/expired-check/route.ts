@@ -19,5 +19,7 @@ export async function GET() {
     select: { id: true, name: true, shopifyDomain: true },
   });
 
-  return Response.json({ expired });
+  return Response.json({ expired }, {
+    headers: { "Cache-Control": "private, max-age=30" },
+  });
 }

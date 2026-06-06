@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import {
   getDraftDesignIdsFromDraft,
   useWizardStore,
@@ -26,24 +26,27 @@ export default function Step2DesignPage() {
     .map((id) => designs.find((design) => design.id === id))
     .filter((design): design is Design => Boolean(design));
 
-  const fetchDesigns = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ limit: "50" });
-      if (search) params.set("q", search);
-      const res = await fetch(`/api/designs?${params}`);
-      const data = await res.json();
-      if (res.ok) setDesigns(data.designs);
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false);
-    }
-  }, [search]);
-
   useEffect(() => {
-    fetchDesigns();
-  }, [fetchDesigns]);
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    (async () => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({ limit: "50" });
+        if (search) params.set("q", search);
+        const res = await fetch(`/api/designs?${params}`, { signal });
+        const data = await res.json();
+        if (!signal.aborted && res.ok) setDesigns(data.designs);
+      } catch {
+        // ignore (AbortError or network error)
+      } finally {
+        if (!signal.aborted) setLoading(false);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [search]);
 
   function handleToggleDesign(designId: string) {
     const selected = getDraftDesignIdsFromDraft(useWizardStore.getState().draft);

@@ -174,16 +174,24 @@ function defaultPublishState(): PublishDesignState {
 
 export default function Step5ReviewPage() {
   const { draftId } = useParams<{ draftId: string }>();
-  const { draft, setDraft, setChecklist } = useWizardStore();
+  const { draft, checklist: storeChecklist } = useWizardStore();
 
-  const [loading, setLoading] = useState(true);
+  // Derive loading from zustand — layout already loads the draft
+  const loading = !draft || draft.id !== draftId;
   const [price, setPrice] = useState("24.99");
   const [sizes, setSizes] = useState<SizeOption[]>([]);
-  const [localChecklist, setLocalChecklist] = useState<Checklist | null>(null);
+  // Use checklist from zustand store (loaded by layout's loadDraft)
+  const localChecklist = (storeChecklist as Checklist | null) ?? null;
   const [activeDesignId, setActiveDesignId] = useState<string | null>(null);
   const [carouselIdx, setCarouselIdx] = useState(0);
   const [publishing, setPublishing] = useState(false);
   const [publishStateByDesignId, setPublishStateByDesignId] = useState<Record<string, PublishDesignState>>({});
+
+  // Per-size price override state
+  const [priceBySizeOverride, setPriceBySizeOverride] = useState<Record<string, string>>({});
+  const [savedPriceOverride, setSavedPriceOverride] = useState<Record<string, number> | null>(null);
+  const [priceOverrideDirty, setPriceOverrideDirty] = useState(false);
+  const [savingPriceOverride, setSavingPriceOverride] = useState(false);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const listingIdToDesignIdRef = useRef<Map<string, string>>(new Map());
@@ -242,36 +250,11 @@ export default function Step5ReviewPage() {
     [selectedDraftDesigns],
   );
 
-  useEffect(() => {
-    if (!draftId) return;
+  // Draft + checklist are loaded by layout's loadDraft → no re-fetch needed here.
+  // Sync checklist to zustand if present.
+  // (Removed: independent fetch(drafts/${id}) that caused 3× duplicate calls)
 
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const res = await fetch(`/api/wizard/drafts/${draftId}`);
-        const data = await res.json();
-        if (!res.ok) return;
-        if (cancelled) return;
-
-        const { checklist, ...freshDraft } = data;
-        setDraft(freshDraft);
-        if (checklist) setLocalChecklist(checklist);
-      } catch {
-        // ignore
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [draftId, setDraft]);
-
-  useEffect(() => {
-    if (localChecklist) setChecklist(localChecklist);
-  }, [localChecklist, setChecklist]);
+  // Checklist is already in zustand store from layout loadDraft — no sync needed.
 
   useEffect(() => {
     setActiveDesignId((current) => getActiveDraftDesignId(selectedDraftDesignIds, current));
@@ -283,31 +266,71 @@ export default function Step5ReviewPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!draft || draft.id !== draftId) return;
+  // Stable scalar deps to avoid cascade re-fetches when draft object reference changes.
+  // Previously depended on [draft, draftId] → triggered 3× pricing + 3× sizes calls.
+  const stableStoreId = draft?.storeId ?? null;
+  const stableTemplateId = draft?.templateId ?? null;
+  const stableProductType = draft?.template?.blueprintTitle ?? draft?.store?.template?.blueprintTitle ?? (draft as any)?.productType ?? null;
 
-    const productType = draft.template?.blueprintTitle ?? draft.store?.template?.blueprintTitle ?? draft.productType;
-    if (productType) {
-      fetch("/api/admin/pricing-templates")
-        .then((response) => response.json())
+  // Try to use bundled data from ?expand=pricing,sizes (set by layout for step-5)
+  const { expandedPricing, expandedSizes } = useWizardStore();
+
+  useEffect(() => {
+    if (!stableStoreId || !draftId || loading) return;
+
+    // If pricing was bundled by layout, use it directly — no API call needed
+    if (expandedPricing?.basePriceUsd) {
+      setPrice(expandedPricing.basePriceUsd.toFixed(2));
+    } else if (stableProductType) {
+      // Fallback: fetch pricing separately (e.g. navigated directly to step-5)
+      const controller = new AbortController();
+      fetch("/api/admin/pricing-templates", { signal: controller.signal })
+        .then((r) => r.json())
         .then((data) => {
+          if (controller.signal.aborted) return;
           if (data.templates) {
-            const match = data.templates.find((candidate: any) => candidate.productType === productType);
+            const match = data.templates.find((c: any) => c.productType === stableProductType);
             if (match) setPrice(match.basePriceUsd.toFixed(2));
           }
         })
         .catch(() => {});
+      return () => controller.abort();
+    }
+  }, [draftId, stableStoreId, stableProductType, expandedPricing, loading]);
+
+  useEffect(() => {
+    if (!stableStoreId || !draftId || loading) return;
+
+    // If sizes were bundled by layout, use them directly — no API call needed
+    if (expandedSizes && expandedSizes.length > 0) {
+      setSizes(expandedSizes as SizeOption[]);
+      return;
     }
 
-    if (draft.storeId) {
-      fetch(`/api/stores/${draft.storeId}/sizes`)
-        .then((response) => response.json())
-        .then((data) => {
-          if (data.sizes) setSizes(data.sizes);
-        })
-        .catch(() => {});
+    // Fallback: fetch sizes separately
+    const controller = new AbortController();
+    fetch(`/api/stores/${stableStoreId}/sizes`, { signal: controller.signal })
+      .then((r) => r.json())
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        if (data.sizes) setSizes(data.sizes);
+      })
+      .catch(() => {});
+
+    return () => controller.abort();
+  }, [draftId, stableStoreId, stableTemplateId, expandedSizes, loading]);
+
+  // Initialize per-size price override from draft (only when draft is loaded)
+  const stablePriceBySizeOverride = draft?.priceBySizeOverride as Record<string, number> | null;
+  useEffect(() => {
+    if (!stablePriceBySizeOverride || Object.keys(stablePriceBySizeOverride).length === 0) return;
+    const asStrings: Record<string, string> = {};
+    for (const [k, v] of Object.entries(stablePriceBySizeOverride)) {
+      asStrings[k] = v.toFixed(2);
     }
-  }, [draft, draftId]);
+    setPriceBySizeOverride(asStrings);
+    setSavedPriceOverride(stablePriceBySizeOverride);
+  }, [stablePriceBySizeOverride]);
 
   const activeDesign = useMemo(() => {
     return (
@@ -941,32 +964,123 @@ export default function Step5ReviewPage() {
                   </div>
                 </div>
 
-                {sizes.length > 0 && draft?.enabledSizes && draft.enabledSizes.length > 0 && (
-                  <div style={{ backgroundColor: "var(--bg-tertiary)", borderRadius: "var(--radius-sm)", overflow: "hidden", border: "1px solid var(--border-default)" }}>
-                    <table style={{ width: "100%", fontSize: "0.8rem", textAlign: "left", borderCollapse: "collapse" }}>
-                      <thead style={{ backgroundColor: "rgba(0,0,0,0.02)", borderBottom: "1px solid var(--border-default)" }}>
-                        <tr>
-                          <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Size</th>
-                          <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Cost</th>
-                          <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Retail Price</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sizes.filter((size) => draft.enabledSizes?.includes(size.size)).map((size, index) => {
-                          const baseVal = parseFloat(price) || 0;
-                          const retail = baseVal + size.costDeltaCents / 100;
-                          return (
-                            <tr key={size.size} style={{ borderBottom: index === (draft.enabledSizes?.length ?? 0) - 1 ? "none" : "1px solid var(--border-default)" }}>
-                              <td style={{ padding: "8px 12px", fontWeight: 500 }}>{size.size}</td>
-                              <td style={{ padding: "8px 12px", opacity: 0.7 }}>${(size.costCents / 100).toFixed(2)}</td>
-                              <td style={{ padding: "8px 12px", fontWeight: 600 }}>${retail.toFixed(2)}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                {sizes.length > 0 && draft?.enabledSizes && draft.enabledSizes.length > 0 && (() => {
+                  const enabledSizeList = sizes.filter((s) => draft.enabledSizes?.includes(s.size));
+                  const hasOverrides = Object.keys(priceBySizeOverride).length > 0;
+
+                  const handleSavePriceOverride = async () => {
+                    if (!draftId) return;
+                    setSavingPriceOverride(true);
+                    try {
+                      const override: Record<string, number> = {};
+                      for (const [k, v] of Object.entries(priceBySizeOverride)) {
+                        const parsed = parseFloat(v);
+                        if (Number.isFinite(parsed) && parsed >= 1) override[k] = parsed;
+                      }
+                      const res = await fetch(`/api/wizard/drafts/${draftId}/price-override`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ priceBySizeOverride: Object.keys(override).length > 0 ? override : null }),
+                      });
+                      if (res.ok) {
+                        setSavedPriceOverride(Object.keys(override).length > 0 ? override : null);
+                        setPriceOverrideDirty(false);
+                      }
+                    } catch { /* ignore */ }
+                    setSavingPriceOverride(false);
+                  };
+
+                  const handleResetPriceOverride = async () => {
+                    if (!draftId) return;
+                    setPriceBySizeOverride({});
+                    setSavingPriceOverride(true);
+                    try {
+                      const res = await fetch(`/api/wizard/drafts/${draftId}/price-override`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ priceBySizeOverride: null }),
+                      });
+                      if (res.ok) {
+                        setSavedPriceOverride(null);
+                        setPriceOverrideDirty(false);
+                      }
+                    } catch { /* ignore */ }
+                    setSavingPriceOverride(false);
+                  };
+
+                  return (
+                    <div style={{ backgroundColor: "var(--bg-tertiary)", borderRadius: "var(--radius-sm)", overflow: "hidden", border: "1px solid var(--border-default)" }}>
+                      <table style={{ width: "100%", fontSize: "0.8rem", textAlign: "left", borderCollapse: "collapse" }}>
+                        <thead style={{ backgroundColor: "rgba(0,0,0,0.02)", borderBottom: "1px solid var(--border-default)" }}>
+                          <tr>
+                            <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Size</th>
+                            <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Cost</th>
+                            <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Retail Price</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {enabledSizeList.map((size, index) => {
+                            const baseVal = parseFloat(price) || 0;
+                            const autoRetail = baseVal + size.costDeltaCents / 100;
+                            const overrideVal = priceBySizeOverride[size.size];
+                            const displayVal = overrideVal ?? autoRetail.toFixed(2);
+                            const isOverridden = overrideVal != null;
+                            return (
+                              <tr key={size.size} style={{ borderBottom: index === enabledSizeList.length - 1 ? "none" : "1px solid var(--border-default)" }}>
+                                <td style={{ padding: "8px 12px", fontWeight: 500 }}>{size.size}</td>
+                                <td style={{ padding: "8px 12px", opacity: 0.7 }}>${(size.costCents / 100).toFixed(2)}</td>
+                                <td style={{ padding: "4px 8px" }}>
+                                  <div className="flex items-center gap-1">
+                                    <span style={{ opacity: 0.5, fontSize: "0.75rem" }}>$</span>
+                                    <input
+                                      type="text"
+                                      className="input"
+                                      value={displayVal}
+                                      onChange={(e) => {
+                                        const next = e.target.value;
+                                        if (/^\d*\.?\d{0,2}$/.test(next)) {
+                                          setPriceBySizeOverride((prev) => ({ ...prev, [size.size]: next }));
+                                          setPriceOverrideDirty(true);
+                                        }
+                                      }}
+                                      style={{
+                                        maxWidth: 80,
+                                        padding: "4px 6px",
+                                        fontSize: "0.8rem",
+                                        fontWeight: isOverridden ? 700 : 400,
+                                        borderColor: isOverridden ? "var(--color-accent)" : undefined,
+                                      }}
+                                    />
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      <div className="flex items-center gap-2" style={{ padding: "8px 12px", borderTop: "1px solid var(--border-default)", justifyContent: "flex-end" }}>
+                        {hasOverrides && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={handleResetPriceOverride}
+                            disabled={savingPriceOverride}
+                            style={{ fontSize: "0.75rem" }}
+                          >
+                            ↺ Reset
+                          </button>
+                        )}
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={handleSavePriceOverride}
+                          disabled={!priceOverrideDirty || savingPriceOverride}
+                          style={{ fontSize: "0.75rem" }}
+                        >
+                          {savingPriceOverride ? "Đang lưu..." : "Lưu giá"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -982,6 +1096,14 @@ export default function Step5ReviewPage() {
               <br />• Sizes: {selectedSizesCount} size
               <br />• Mockups: {activeMockups.length} ảnh cho design đang chọn
               <br />• Base Price: ${formatPriceDisplay(price)}
+              {savedPriceOverride && Object.keys(savedPriceOverride).length > 0 && (() => {
+                const vals = Object.values(savedPriceOverride);
+                const minP = Math.min(...vals);
+                const maxP = Math.max(...vals);
+                return minP !== maxP
+                  ? <><br />• Price range: ${minP.toFixed(2)} – ${maxP.toFixed(2)}</>
+                  : null;
+              })()}
             </div>
           </div>
 

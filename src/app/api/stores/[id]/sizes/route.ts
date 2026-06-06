@@ -74,6 +74,8 @@ export async function GET(
     return NextResponse.json({
       sizes,
       enabledSizes,
+    }, {
+      headers: { "Cache-Control": "private, max-age=120" },
     });
   } catch (err) {
     // Fallback: return catalog-based sizes without cost data
@@ -106,6 +108,8 @@ export async function GET(
       pricing: "unavailable",
       warning:
         "Không lấy được giá Printify. Variants vẫn dùng được, nhưng size delta sẽ = $0.",
+    }, {
+      headers: { "Cache-Control": "private, max-age=120" },
     });
   }
 }

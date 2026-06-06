@@ -15,7 +15,9 @@ export async function GET() {
     orderBy: { productType: "asc" },
   });
 
-  return NextResponse.json({ templates });
+  return NextResponse.json({ templates }, {
+    headers: { "Cache-Control": "private, max-age=60" },
+  });
 }
 
 export async function PUT(request: Request) {

@@ -108,6 +108,7 @@ interface DraftData {
   mockupJobs: MockupJob[];
   mockupsStale?: boolean;
   mockupsStaleReason?: string | null;
+  priceBySizeOverride?: Record<string, number> | null;
 }
 
 export function getDraftDesignIdsFromDraft(
@@ -130,13 +131,16 @@ export interface ChecklistData {
 interface WizardStore {
   draft: DraftData | null;
   checklist: ChecklistData | null;
+  // Step-5 bundled data from ?expand=pricing,sizes
+  expandedPricing: { basePriceUsd: number; productType: string } | null;
+  expandedSizes: Array<{ size: string; costCents: number; costDeltaCents: number }> | null;
   loading: boolean;
   saving: boolean;
   saveTimer: ReturnType<typeof setTimeout> | null;
 
   pendingPatch: Record<string, unknown>;
 
-  loadDraft: (id: string) => Promise<void>;
+  loadDraft: (id: string, expand?: string) => Promise<void>;
   updateDraft: (patch: Record<string, unknown>) => Promise<void>;
   saveDraftImmediately: () => Promise<void>;
   setDraft: (draft: DraftData) => void;
@@ -178,29 +182,59 @@ function areDraftValuesEqual(currentValue: unknown, nextValue: unknown): boolean
   return false;
 }
 
-export const useWizardStore = create<WizardStore>((set, get) => ({
+export const useWizardStore = create<WizardStore>((set, get) => {
+  // In-flight dedup: prevents concurrent loadDraft calls for the same ID
+  // (e.g. React StrictMode double-invoke) from making duplicate API requests.
+  let inFlightLoad: { id: string; promise: Promise<void> } | null = null;
+
+  return {
   draft: null,
   checklist: null,
+  expandedPricing: null,
+  expandedSizes: null,
   loading: false,
   saving: false,
   saveTimer: null,
   pendingPatch: {},
 
-  loadDraft: async (id: string) => {
-    set({ loading: true });
-    try {
-      const res = await fetch(`/api/wizard/drafts/${id}`);
-      if (res.ok) {
-        const data = await res.json();
-        // GET /api/wizard/drafts/:id now includes checklist (Phase 6.9)
-        const { checklist, ...draft } = data;
-        set({ draft, checklist: checklist ?? null, loading: false });
-      } else {
-        set({ loading: false });
-      }
-    } catch {
-      set({ loading: false });
+  loadDraft: async (id: string, expand?: string) => {
+    // Dedup key includes expand to distinguish slim vs expanded loads
+    const dedupKey = expand ? `${id}:${expand}` : id;
+    // If already loading this exact draft+expand combo, wait for the existing request
+    if (inFlightLoad?.id === dedupKey) {
+      return inFlightLoad.promise;
     }
+
+    const promise = (async () => {
+      set({ loading: true });
+      try {
+        const url = expand
+          ? `/api/wizard/drafts/${id}?expand=${encodeURIComponent(expand)}`
+          : `/api/wizard/drafts/${id}`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          // GET /api/wizard/drafts/:id now includes checklist (Phase 6.9)
+          const { checklist, pricing, sizes, ...draft } = data;
+          set({
+            draft,
+            checklist: checklist ?? null,
+            expandedPricing: pricing ?? null,
+            expandedSizes: sizes?.sizes ?? null,
+            loading: false,
+          });
+        } else {
+          set({ loading: false });
+        }
+      } catch {
+        set({ loading: false });
+      } finally {
+        if (inFlightLoad?.id === dedupKey) inFlightLoad = null;
+      }
+    })();
+
+    inFlightLoad = { id: dedupKey, promise };
+    return promise;
   },
 
   updateDraft: async (patch: Record<string, unknown>) => {
@@ -277,4 +311,4 @@ export const useWizardStore = create<WizardStore>((set, get) => ({
     );
     set({ draft: { ...draft, mockupJobs: jobs } });
   },
-}));
+};});

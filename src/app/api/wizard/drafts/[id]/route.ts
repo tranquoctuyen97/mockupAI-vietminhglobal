@@ -1,5 +1,6 @@
 /**
  * GET    /api/wizard/drafts/:id — Get draft + readiness checklist
+ *        ?expand=pricing,sizes — Bundle extra data for step-5 (eliminates 2 API calls)
  * PATCH  /api/wizard/drafts/:id — Update draft (auto-save) + trigger regen if stale
  * DELETE /api/wizard/drafts/:id — Delete draft
  */
@@ -27,10 +28,63 @@ export async function GET(
     return NextResponse.json({ error: "Draft not found" }, { status: 404 });
   }
 
-  // Build pre-publish checklist
-  const checklist = await buildChecklist(draft);
+  // Parse ?expand=pricing,sizes for step-5 data bundling
+  const url = new URL(request.url);
+  const expandParam = url.searchParams.get("expand") ?? "";
+  const expandSet = new Set(expandParam.split(",").map((s) => s.trim()).filter(Boolean));
 
-  return NextResponse.json({ ...draft, checklist });
+  // Run checklist + expansions in parallel
+  const [checklist, pricingData, sizesData] = await Promise.all([
+    buildChecklist(draft),
+
+    // Expand: pricing template matching the draft's product type
+    expandSet.has("pricing")
+      ? (async () => {
+          const productType =
+            draft.template?.blueprintTitle ??
+            (draft.store?.templates?.find((t) => t.isDefault)?.blueprintTitle) ??
+            null;
+          if (!productType) return null;
+          return prisma.productPricingTemplate.findFirst({
+            where: { tenantId: session.tenantId, productType },
+          });
+        })()
+      : Promise.resolve(undefined),
+
+    // Expand: sizes with cost data from variant cache
+    expandSet.has("sizes") && draft.storeId
+      ? (async () => {
+          try {
+            const { getClientForStore } = await import("@/lib/printify/account");
+            const { ensureVariantCostCache, groupSizes } = await import("@/lib/printify/variant-catalog");
+
+            const template =
+              draft.template ??
+              draft.store?.templates?.find((t) => t.isDefault) ??
+              null;
+            if (!template) return null;
+
+            const { client, externalShopId } = await getClientForStore(draft.storeId!);
+            const variants = await ensureVariantCostCache({
+              client,
+              shopId: externalShopId,
+              blueprintId: template.printifyBlueprintId,
+              printProviderId: template.printifyPrintProviderId,
+            });
+            return { sizes: groupSizes(variants) };
+          } catch (err) {
+            console.error(`[GET drafts/${id}] sizes expand failed:`, err);
+            return null;
+          }
+        })()
+      : Promise.resolve(undefined),
+  ]);
+
+  const response: Record<string, unknown> = { ...draft, checklist };
+  if (pricingData !== undefined) response.pricing = pricingData;
+  if (sizesData !== undefined) response.sizes = sizesData;
+
+  return NextResponse.json(response);
 }
 
 export async function PATCH(

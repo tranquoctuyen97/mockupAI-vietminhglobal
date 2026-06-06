@@ -24,7 +24,9 @@ export async function GET() {
   }
 
   const stores = await listStores(session.tenantId);
-  return NextResponse.json(stores);
+  return NextResponse.json(stores, {
+    headers: { "Cache-Control": "private, max-age=30" },
+  });
 }
 
 export async function POST(request: Request) {

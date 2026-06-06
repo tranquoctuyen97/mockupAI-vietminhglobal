@@ -25,6 +25,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import TokenExpiredBanner from "@/components/TokenExpiredBanner";
+import { AuthedUserProvider } from "@/lib/auth/user-context";
 
 interface NavItemConfig {
   label: string;
@@ -199,7 +200,9 @@ export default function AuthedShell({
             <ArrowLeft size={16} style={{ color: "var(--color-wise-dark-green)" }} />
           </Link>
         </aside>
-        <main className="flex-1 min-w-0 h-full">{children}</main>
+        <main className="flex-1 min-w-0 h-full">
+          <AuthedUserProvider role={userRole}>{children}</AuthedUserProvider>
+        </main>
       </div>
     );
   }
@@ -367,7 +370,7 @@ export default function AuthedShell({
         {/* Page content */}
         <div className="p-6 lg:p-8 max-w-7xl">
           <TokenExpiredBanner />
-          {children}
+          <AuthedUserProvider role={userRole}>{children}</AuthedUserProvider>
         </div>
       </main>
     </div>

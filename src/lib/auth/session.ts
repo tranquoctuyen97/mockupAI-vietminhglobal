@@ -66,6 +66,45 @@ export async function createSession(
 }
 
 /**
+ * In-memory session cache — eliminates redundant DB round-trips when
+ * multiple API Route Handlers fire in parallel on the same page load.
+ * React.cache() only deduplicates within a single SSR render tree;
+ * Route Handlers each run in their own request context so it has no effect.
+ *
+ * TTL: 5 seconds — short enough that logout/status changes propagate quickly,
+ * long enough to cover the burst of 2-6 concurrent API calls per page.
+ */
+const SESSION_CACHE_TTL_MS = 5_000;
+const SESSION_CACHE_CLEANUP_INTERVAL_MS = 30_000;
+
+interface CachedSession {
+  user: {
+    id: string;
+    tenantId: string;
+    email: string;
+    role: string;
+    status: string;
+    mustChangePassword: boolean;
+  };
+  expiresAt: number;
+}
+
+const sessionCache = new Map<string, CachedSession>();
+
+// Periodic cleanup to prevent memory leaks from expired entries
+if (typeof globalThis !== "undefined") {
+  const cleanupKey = "__sessionCacheCleanup";
+  if (!(globalThis as any)[cleanupKey]) {
+    (globalThis as any)[cleanupKey] = setInterval(() => {
+      const now = Date.now();
+      for (const [key, entry] of sessionCache) {
+        if (entry.expiresAt <= now) sessionCache.delete(key);
+      }
+    }, SESSION_CACHE_CLEANUP_INTERVAL_MS);
+  }
+}
+
+/**
  * Validate the current session from cookie
  * Returns user data or null if invalid/expired
  *
@@ -73,6 +112,9 @@ export async function createSession(
  * render tree (e.g., (authed)/layout.tsx + admin/layout.tsx + page.tsx)
  * share a single DB round-trip. Has no effect inside API Route Handlers,
  * which each run in their own independent request context.
+ *
+ * The in-memory sessionCache above covers the Route Handler case —
+ * parallel API calls within a 5s window share the same DB result.
  */
 export const validateSession = cache(async function _validateSession() {
   const cookieStore = await cookies();
@@ -81,6 +123,12 @@ export const validateSession = cache(async function _validateSession() {
   if (!token) return null;
 
   const tokenHash = hashToken(token);
+
+  // Check in-memory cache first
+  const cached = sessionCache.get(tokenHash);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.user;
+  }
 
   const session = await prisma.session.findUnique({
     where: { tokenHash },
@@ -111,6 +159,12 @@ export const validateSession = cache(async function _validateSession() {
     await prisma.session.delete({ where: { id: session.id } });
     return null;
   }
+
+  // Cache the result
+  sessionCache.set(tokenHash, {
+    user: session.user,
+    expiresAt: Date.now() + SESSION_CACHE_TTL_MS,
+  });
 
   return session.user;
 });

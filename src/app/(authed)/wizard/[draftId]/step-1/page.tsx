@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useWizardStore } from "@/lib/wizard/use-wizard-store";
 import {
   Store as StoreIcon,
@@ -25,22 +25,27 @@ export default function Step1StorePage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
-  const fetchStores = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/stores");
-      const data = await res.json();
-      if (res.ok) setStores(Array.isArray(data) ? data : data.stores || []);
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    fetchStores();
-  }, [fetchStores]);
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/stores", { signal });
+        const data = await res.json();
+        if (!signal.aborted && res.ok) {
+          setStores(Array.isArray(data) ? data : data.stores || []);
+        }
+      } catch {
+        // ignore (AbortError or network error)
+      } finally {
+        if (!signal.aborted) setLoading(false);
+      }
+    })();
+
+    return () => controller.abort();
+  }, []);
 
   const filtered = stores.filter((s) => {
     if (!search.trim()) return true;

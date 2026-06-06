@@ -142,5 +142,7 @@ export async function GET(
     sortOrder: c.sortOrder,
   }));
 
-  return NextResponse.json({ templates, colors });
+  return NextResponse.json({ templates, colors }, {
+    headers: { "Cache-Control": "private, max-age=30" },
+  });
 }

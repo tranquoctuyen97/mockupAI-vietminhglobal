@@ -42,8 +42,12 @@ export default function WizardLayout({
   const { draft, loading, saving, loadDraft, checklist } = useWizardStore();
 
   useEffect(() => {
-    if (draftId) loadDraft(draftId);
-  }, [draftId, loadDraft]);
+    if (!draftId) return;
+    // When on step-5, bundle pricing + sizes data into the draft response
+    // to eliminate 2 extra API calls from the review page.
+    const isStep5 = pathname.includes("step-5");
+    loadDraft(draftId, isStep5 ? "pricing,sizes" : undefined);
+  }, [draftId, loadDraft, pathname]);
 
   // Determine current step from URL
   const currentStepMatch = pathname.match(/step-(\d)/);

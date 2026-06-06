@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { AlertTriangle, ImagePlus, Loader2, RefreshCw, Upload, X } from "lucide-react";
 import { toast } from "sonner";
@@ -64,6 +64,8 @@ export function WizardMockupSourcePanel({
   const [placementEditorImageSize, setPlacementEditorImageSize] = useState<{ width: number; height: number } | null>(null);
   const [lockedUploadColorId, setLockedUploadColorId] = useState<string | null>(null);
   const [dismissedTemplateWarning, setDismissedTemplateWarning] = useState(false);
+  // AbortController ref: cancels stale mockup-sources fetches on unmount/re-render
+  const abortRef = useRef<AbortController | null>(null);
 
   const selectedColors = useMemo(() => {
     if (template?.selectedColors.length) return template.selectedColors;
@@ -83,12 +85,25 @@ export function WizardMockupSourcePanel({
     ];
   }, [selectedColors, template]);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (force = false) => {
+    // If force (user action), abort any in-flight request first
+    if (force && abortRef.current) {
+      abortRef.current.abort();
+    }
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     try {
-      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources`);
+      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources`, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
       if (!res.ok) throw new Error("Failed to fetch");
       const data = (await res.json()) as SourcesResponse;
+      if (controller.signal.aborted) return;
+
       const nextDraftSources = (data.draftSources ?? []).map(normalizeSource);
       const nextTemplateSources = (data.eligibleTemplateSources ?? []).map(normalizeSource);
       const nextSourceIds = new Set([...nextDraftSources, ...nextTemplateSources].map((source) => source.id));
@@ -100,15 +115,21 @@ export function WizardMockupSourcePanel({
         data.primarySourceId && nextSourceIds.has(data.primarySourceId) ? data.primarySourceId : null,
       );
       setTemplateChangedWarning(Boolean(data.templateChangedWarning));
-    } catch {
+    } catch (err: unknown) {
+      if ((err as Error)?.name === "AbortError") return;
       toast.error("Không tải được nguồn mockup");
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) {
+        setLoading(false);
+      }
     }
   }, [draftId]);
 
   useEffect(() => {
     void loadData();
+    return () => {
+      abortRef.current?.abort();
+    };
   }, [loadData]);
 
   useEffect(() => {
@@ -173,7 +194,7 @@ export function WizardMockupSourcePanel({
       toast.success("Đã lưu vị trí design");
       setPlacementEditorSource(null);
       setPlacementEditorImageSize(null);
-      await loadData();
+      await loadData(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không lưu được vùng ghép");
     }
@@ -217,7 +238,7 @@ export function WizardMockupSourcePanel({
     setUploadOpen(false);
     setEditingSource(null);
     setLockedUploadColorId(null);
-    await loadData();
+    await loadData(true);
   }
 
   async function deleteDraftSource(sourceId: string) {
@@ -237,7 +258,7 @@ export function WizardMockupSourcePanel({
       });
       if (!res.ok) throw new Error();
       toast.success("Template đã chuyển sang Printify");
-      await loadData();
+      await loadData(true);
     } catch {
       toast.error("Không thể đổi template sang Printify");
     }
@@ -624,7 +645,7 @@ export function WizardMockupSourcePanel({
                 setUploadOpen(false);
                 setEditingSource(null);
                 toast.success("Đã xóa mockup riêng");
-                await loadData();
+                await loadData(true);
               }
             : undefined
         }
