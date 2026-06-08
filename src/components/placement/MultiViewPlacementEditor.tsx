@@ -49,6 +49,7 @@ interface MultiViewPlacementEditorProps {
   title?: string;
   description?: string;
   compact?: boolean;
+  printArea?: { widthMm: number; heightMm: number; safeMarginMm: number };
 }
 
 export function MultiViewPlacementEditor({
@@ -60,7 +61,9 @@ export function MultiViewPlacementEditor({
   title = "Placement",
   description = "Cấu hình vị trí in cho từng mặt sản phẩm.",
   compact = false,
+  printArea: printAreaProp,
 }: MultiViewPlacementEditorProps) {
+  const effectivePrintArea = printAreaProp ?? DEFAULT_PRINT_AREA;
   const placementData = useMemo(() => normalizePlacementData(value, true), [value]);
   const enabledViews = getEnabledViews(placementData);
   const [activeView, setActiveView] = useState<ViewKey>(enabledViews[0] ?? "front");
@@ -78,7 +81,7 @@ export function MultiViewPlacementEditor({
 
   const activePlacement = getPlacementForView(placementData, activeView);
   const activePresets = PLACEMENT_PRESETS.filter((preset) => preset.view === activeView);
-  const validation = activePlacement ? validatePlacement(activePlacement, DEFAULT_PRINT_AREA) : null;
+  const validation = activePlacement ? validatePlacement(activePlacement, effectivePrintArea) : null;
 
   function commit(next: PlacementData) {
     onChange(normalizePlacementData(next, false));
@@ -212,7 +215,7 @@ export function MultiViewPlacementEditor({
         <div className="card" style={{ padding: 14, minHeight: compact ? 500 : 560 }}>
           {activePlacement ? (
             <LazyPlacementEditor
-              printArea={DEFAULT_PRINT_AREA}
+              printArea={effectivePrintArea}
               placement={activePlacement}
               onChange={updateActivePlacement}
               bgColor={bgColor}

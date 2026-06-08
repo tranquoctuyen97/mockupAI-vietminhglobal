@@ -872,13 +872,14 @@ model PlacementPreset {
 
 model BlueprintPrintArea {
   id                  String            @id @default(cuid())
-  printifyBlueprintId Int               @unique @map("printify_blueprint_id")
+  printifyBlueprintId Int               @map("printify_blueprint_id")
   position            PlacementPosition @default(FRONT)
   widthMm             Float             @map("width_mm")
   heightMm            Float             @map("height_mm")
   safeMarginMm        Float             @default(3) @map("safe_margin_mm")
   syncedAt            DateTime          @default(now()) @map("synced_at")
 
+  @@unique([printifyBlueprintId, position])
   @@map("blueprint_print_areas")
 }
 

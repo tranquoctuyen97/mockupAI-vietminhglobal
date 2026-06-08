@@ -9,6 +9,7 @@ import {
 } from "@/lib/mockup/printify-poll-worker";
 import { getMockupCompositeQueue, getPrintifyMockupQueue } from "@/lib/mockup/queue";
 import { DEFAULT_PLACEMENT } from "@/lib/placement/types";
+import { getClientForStore } from "@/lib/printify/account";
 import { createOrUpdatePrintifyProduct, ensurePrintifyImage } from "@/lib/printify/product";
 import { sseChannels } from "@/lib/sse/channel";
 import { formatTemplateMissing, getTemplateReadiness } from "@/lib/stores/template-readiness";
@@ -193,7 +194,6 @@ export async function prepareMockupGeneration(
     );
   }
 
-  const { getClientForStore } = await import("@/lib/printify/account");
   const { client, externalShopId } = await getClientForStore(draft.storeId!);
   const variantColorLookup = await buildVariantColorLookup({
     storeId: draft.storeId!,

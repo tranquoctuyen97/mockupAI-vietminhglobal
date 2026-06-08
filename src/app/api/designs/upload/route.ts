@@ -12,6 +12,7 @@ import { logAudit } from "@/lib/audit";
 import formidable from "formidable";
 import { readFile, unlink } from "node:fs/promises";
 import { IncomingMessage } from "node:http";
+import { Readable } from "node:stream";
 
 export const runtime = "nodejs";
 
@@ -25,8 +26,6 @@ const ALLOWED_TYPES = ["image/png", "image/jpeg"];
  * Convert Web Request to Node IncomingMessage for formidable
  */
 async function requestToIncoming(request: Request): Promise<IncomingMessage> {
-  const { Readable } = await import("node:stream");
-
   const body = request.body;
   const headers: Record<string, string> = {};
   request.headers.forEach((value, key) => {

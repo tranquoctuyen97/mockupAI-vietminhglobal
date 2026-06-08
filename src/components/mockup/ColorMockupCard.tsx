@@ -140,6 +140,8 @@ interface ColorMockupCardProps {
   onUploadClick: () => void;         // parent opens upload modal for this color
   onPlacementSaved: () => void;      // refresh after saving placement
   onDeselectColor?: () => void;      // toggle color off in sidebar
+  /** Dynamic print area in image pixels. Falls back to 70% of image when absent. */
+  printAreaPx?: { x: number; y: number; width: number; height: number } | null;
 }
 
 export function ColorMockupCard({
@@ -151,6 +153,7 @@ export function ColorMockupCard({
   onUploadClick,
   onPlacementSaved,
   onDeselectColor,
+  printAreaPx: printAreaPxProp,
 }: ColorMockupCardProps) {
   const state = getCardState(source, generatedOutputUrl);
   const [placementOpen, setPlacementOpen] = useState(false);
@@ -433,10 +436,16 @@ export function ColorMockupCard({
               imageWidth={imageSize.width}
               imageHeight={imageSize.height}
               mode="CUSTOM_COMPOSITE"
+              printAreaPx={printAreaPxProp ?? {
+                x: Math.round(imageSize.width * 0.15),
+                y: Math.round(imageSize.height * 0.15),
+                width: Math.round(imageSize.width * 0.7),
+                height: Math.round(imageSize.height * 0.7),
+              }}
               initialRegionPx={
                 source?.compositeRegionPx
                   ? { ...source.compositeRegionPx, imageWidth: imageSize.width, imageHeight: imageSize.height }
-                  : { x: imageSize.width * 0.15, y: imageSize.height * 0.15, width: imageSize.width * 0.7, height: imageSize.height * 0.7, rotationDeg: 0, imageWidth: imageSize.width, imageHeight: imageSize.height }
+                  : { x: 0, y: 0, width: imageSize.width, height: imageSize.height, rotationDeg: 0, imageWidth: imageSize.width, imageHeight: imageSize.height }
               }
               onSave={savePlacement}
               showSaveButton

@@ -601,6 +601,12 @@ export function WizardMockupSourcePanel({
                 imageWidth={placementEditorImageSize.width}
                 imageHeight={placementEditorImageSize.height}
                 mode="CUSTOM_COMPOSITE"
+                printAreaPx={{
+                  x: Math.round(placementEditorImageSize.width * 0.15),
+                  y: Math.round(placementEditorImageSize.height * 0.15),
+                  width: Math.round(placementEditorImageSize.width * 0.7),
+                  height: Math.round(placementEditorImageSize.height * 0.7),
+                }}
                 initialRegionPx={placementEditorInitialRegion}
                 onSave={(regionPx) => {
                   void savePlacementRegion(regionPx);

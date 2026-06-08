@@ -5,6 +5,7 @@
 import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { getClientForStore } from "@/lib/printify/account";
 
 import { runPrintifyStage } from "@/lib/publish/worker";
 import { getStorage } from "@/lib/storage/local-disk";
@@ -80,7 +81,6 @@ export async function POST(
   let printifyApiKey: string;
   let externalShopId: number;
   try {
-    const { getClientForStore } = await import("@/lib/printify/account");
     const result = await getClientForStore(listing.storeId!);
     printifyApiKey = (result.client as any).apiKey;
     externalShopId = result.externalShopId;

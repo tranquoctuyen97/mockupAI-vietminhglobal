@@ -9,6 +9,8 @@ import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { getDraft, updateDraft, deleteDraft } from "@/lib/wizard/state";
 import { prisma } from "@/lib/db";
+import { getClientForStore } from "@/lib/printify/account";
+import { ensureVariantCostCache, groupSizes } from "@/lib/printify/variant-catalog";
 import { hasActiveMockupJob, regenerateMockupsForDraft } from "@/lib/mockup/regenerate";
 import { buildChecklist } from "./checklist";
 
@@ -55,8 +57,7 @@ export async function GET(
     expandSet.has("sizes") && draft.storeId
       ? (async () => {
           try {
-            const { getClientForStore } = await import("@/lib/printify/account");
-            const { ensureVariantCostCache, groupSizes } = await import("@/lib/printify/variant-catalog");
+
 
             const template =
               draft.template ??

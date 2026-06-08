@@ -66,6 +66,7 @@ type WizardTemplateOption = {
   name: string;
   isDefault: boolean;
   sortOrder: number;
+  printifyBlueprintId: number | null;
   blueprintTitle: string;
   printProviderTitle: string;
   defaultMockupSource: "PRINTIFY" | "CUSTOM";
@@ -126,7 +127,7 @@ type DesignJobState = {
   errorMessage: string | null;
 };
 
-const WIZARD_PRINT_AREA = { ...DEFAULT_PRINT_AREA, safeMarginMm: 12.7 };
+const FALLBACK_PRINT_AREA = { ...DEFAULT_PRINT_AREA, safeMarginMm: 12.7 };
 
 export default function Step3PreviewPage() {
   const { draftId } = useParams<{ draftId: string }>();
@@ -142,6 +143,10 @@ export default function Step3PreviewPage() {
   const [designPreviewUrlsById, setDesignPreviewUrlsById] = useState<Record<string, string | null>>({});
   const [previewColorIdx, setPreviewColorIdx] = useState(0);
   const [livePreviewView, setLivePreviewView] = useState<ViewKey>("front");
+
+  // Dynamic print area from Printify (fetched per blueprint)
+  const [dynamicPrintArea, setDynamicPrintArea] = useState<{ widthMm: number; heightMm: number; safeMarginMm: number } | null>(null);
+  const WIZARD_PRINT_AREA = dynamicPrintArea ?? FALLBACK_PRINT_AREA;
 
   // Local state for UI
   const [selectedColorIds, setSelectedColorIds] = useState<Set<string>>(new Set());
@@ -362,6 +367,25 @@ export default function Step3PreviewPage() {
   // a double-run that races with saveDraftImmediately and can revert the selection.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.id, draft?.storeId, draftId, retryNonce]);
+
+  // Fetch dynamic print area when template changes
+  useEffect(() => {
+    const bpId = template?.printifyBlueprintId;
+    if (!bpId) { setDynamicPrintArea(null); return; }
+    let cancelled = false;
+    fetch(`/api/blueprint/${bpId}/print-area?position=${livePreviewView.toUpperCase()}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (cancelled || !data?.printArea) return;
+        setDynamicPrintArea({
+          widthMm: data.printArea.widthMm,
+          heightMm: data.printArea.heightMm,
+          safeMarginMm: data.printArea.safeMarginMm ?? 12.7,
+        });
+      })
+      .catch(() => { /* fallback to FALLBACK_PRINT_AREA */ });
+    return () => { cancelled = true; };
+  }, [template?.printifyBlueprintId, livePreviewView]);
 
   const selectedDraftDesigns = useMemo<DraftDesignEntry[]>(() => {
     const childRows = (draft?.draftDesigns ?? []) as DraftDesignEntry[];
@@ -1023,6 +1047,45 @@ export default function Step3PreviewPage() {
     setRetryNonce((value) => value + 1);
   };
 
+  // Print area pixel bounds (SVG coords) — drives the teal frame in CanvasPlacementEditor
+  // Must be before early returns to satisfy React hooks ordering rules.
+  // Dynamic: compute SVG dimensions from mm using reference scale (280px ↔ 406.4mm baseline)
+  const printAreaPxForEditor = useMemo(() => {
+    const REF_MM_TO_SVG = PRINT_AREA_SVG_HEIGHT / DEFAULT_PRINT_AREA.heightMm; // ≈ 0.689
+    const paH = Math.round(Math.min(WIZARD_PRINT_AREA.heightMm * REF_MM_TO_SVG, SVG_VIEWBOX_H * 0.65));
+    const paW = Math.round(Math.min(WIZARD_PRINT_AREA.widthMm * REF_MM_TO_SVG, SVG_VIEWBOX_W * 0.65));
+    return {
+      x: Math.round(PRINT_AREA_CENTER_X - paW / 2),
+      y: Math.round(PRINT_AREA_CENTER_Y - paH / 2),
+      width: paW,
+      height: paH,
+    };
+  }, [WIZARD_PRINT_AREA.widthMm, WIZARD_PRINT_AREA.heightMm]);
+
+  // Print area in image pixels for CUSTOM_COMPOSITE mode (1000×1000 mockup images).
+  // Uses mm dimensions to compute aspect-correct pixel region, centered on upper-chest.
+  const printAreaPxForCustom = useMemo(() => {
+    const IMG_SIZE = 1000; // standard custom mockup image dimension
+    // Max print area = 80% of image, centered; aspect ratio from mm
+    const paAspect = WIZARD_PRINT_AREA.widthMm / WIZARD_PRINT_AREA.heightMm;
+    const maxW = IMG_SIZE * 0.8;
+    const maxH = IMG_SIZE * 0.8;
+    let paW: number, paH: number;
+    if (paAspect > maxW / maxH) {
+      paW = Math.round(maxW);
+      paH = Math.round(maxW / paAspect);
+    } else {
+      paH = Math.round(maxH);
+      paW = Math.round(maxH * paAspect);
+    }
+    return {
+      x: Math.round((IMG_SIZE - paW) / 2),
+      y: Math.round((IMG_SIZE - paH) / 2),
+      width: paW,
+      height: paH,
+    };
+  }, [WIZARD_PRINT_AREA.widthMm, WIZARD_PRINT_AREA.heightMm]);
+
   if (loading) {
     return (
       <div>
@@ -1076,6 +1139,7 @@ export default function Step3PreviewPage() {
   const canvasBackgroundImageUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
     generateShirtSvg(selectedLivePreviewView, previewColor?.hex ?? bgColor),
   )}`;
+
 
   const updatePlacementOverride = (next: PlacementData | null) => {
     const normalized = next ? normalizePlacementData(next, false) : null;
@@ -1476,6 +1540,7 @@ export default function Step3PreviewPage() {
                   router.push(`/wizard/${draftId}/step-4`);
                 }}
                 onDeselectColor={(colorId) => toggleColor(colorId)}
+                printAreaPx={printAreaPxForCustom}
               />
 
               {/* Kết quả mockup — gallery grid gộp tất cả designs */}
@@ -1857,6 +1922,7 @@ export default function Step3PreviewPage() {
                 imageWidth={SVG_VIEWBOX_W}
                 imageHeight={SVG_VIEWBOX_H}
                 mode={canvasEditorMode}
+                printAreaPx={printAreaPxForEditor}
                 initialRegionPx={placementToCanvasRegionPx(
                   currentPreviewPlacement,
                   WIZARD_PRINT_AREA,
@@ -1902,7 +1968,7 @@ export default function Step3PreviewPage() {
 
 function placementToCanvasRegionPx(
   placement: Placement,
-  printArea: typeof WIZARD_PRINT_AREA,
+  printArea: { widthMm: number; heightMm: number; safeMarginMm: number },
 ): CanvasRegionPx {
   const { paSvgX, paSvgY, mmToSvg } = getPrintAreaSvgMetrics(printArea);
   return {
@@ -1919,7 +1985,7 @@ function placementToCanvasRegionPx(
 function canvasRegionPxToPlacement(
   regionPx: CanvasRegionPx,
   basePlacement: Placement,
-  printArea: typeof WIZARD_PRINT_AREA,
+  printArea: { widthMm: number; heightMm: number; safeMarginMm: number },
 ): Placement {
   const { paSvgX, paSvgY, mmToSvg } = getPrintAreaSvgMetrics(printArea);
   return {
@@ -1932,10 +1998,11 @@ function canvasRegionPxToPlacement(
   };
 }
 
-function getPrintAreaSvgMetrics(printArea: typeof WIZARD_PRINT_AREA) {
-  const printAreaAspect = printArea.widthMm / printArea.heightMm;
-  const paSvgH = PRINT_AREA_SVG_HEIGHT;
-  const paSvgW = paSvgH * printAreaAspect;
+function getPrintAreaSvgMetrics(printArea: { widthMm: number; heightMm: number; safeMarginMm: number }) {
+  // Dynamic: compute SVG dimensions from mm using reference scale
+  const REF_MM_TO_SVG = PRINT_AREA_SVG_HEIGHT / DEFAULT_PRINT_AREA.heightMm;
+  const paSvgH = Math.min(printArea.heightMm * REF_MM_TO_SVG, SVG_VIEWBOX_H * 0.65);
+  const paSvgW = Math.min(printArea.widthMm * REF_MM_TO_SVG, SVG_VIEWBOX_W * 0.65);
   const paSvgX = PRINT_AREA_CENTER_X - paSvgW / 2;
   const paSvgY = PRINT_AREA_CENTER_Y - paSvgH / 2;
   const mmToSvg = paSvgH / printArea.heightMm;

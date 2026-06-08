@@ -216,6 +216,12 @@ export function UploadMockupModal({
             imageWidth={value.imageWidth}
             imageHeight={value.imageHeight}
             mode="CUSTOM_COMPOSITE"
+            printAreaPx={{
+              x: Math.round(value.imageWidth * 0.15),
+              y: Math.round(value.imageHeight * 0.15),
+              width: Math.round(value.imageWidth * 0.7),
+              height: Math.round(value.imageHeight * 0.7),
+            }}
             initialRegionPx={value.compositeRegionPx ?? defaultCanvasRegion(value.imageWidth, value.imageHeight)}
             onChange={(region) => update({ compositeRegionPx: toUploadCompositeRegion(region) })}
             onSave={(region) => update({ compositeRegionPx: toUploadCompositeRegion(region) })}

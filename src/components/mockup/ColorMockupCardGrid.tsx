@@ -78,6 +78,8 @@ interface ColorMockupCardGridProps {
   hasRenderedMockups: boolean;
   onNextStep: () => Promise<void>;
   onDeselectColor?: (colorId: string) => void;
+  /** Dynamic print area in image pixel coordinates */
+  printAreaPx?: { x: number; y: number; width: number; height: number } | null;
 }
 
 export function ColorMockupCardGrid({
@@ -92,6 +94,7 @@ export function ColorMockupCardGrid({
   hasRenderedMockups,
   onNextStep,
   onDeselectColor,
+  printAreaPx,
 }: ColorMockupCardGridProps) {
   const [loading, setLoading] = useState(true);
   const [sources, setSources] = useState<SourcesResponse | null>(null);
@@ -251,6 +254,7 @@ export function ColorMockupCardGrid({
             onUploadClick={() => { setUploadColorId(color.id); setUploadOpen(true); }}
             onPlacementSaved={loadSources}
             onDeselectColor={onDeselectColor ? () => onDeselectColor(color.id) : undefined}
+            printAreaPx={printAreaPx}
           />
         ))}
       </div>

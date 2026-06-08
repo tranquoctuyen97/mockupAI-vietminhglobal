@@ -127,6 +127,36 @@ async function _buildVariantCostCache(input: {
   );
   const catalogVariants = catalogResponse.variants;
 
+  // ── Sync print area from placeholders (first variant) ──
+  if (catalogVariants.length > 0) {
+    const firstVariant = catalogVariants[0];
+    if (firstVariant.placeholders?.length) {
+      const DPI = 300;
+      const PX_TO_MM = 25.4 / DPI;
+      for (const ph of firstVariant.placeholders) {
+        if (!ph.width || !ph.height) continue;
+        const widthMm = Math.round(ph.width * PX_TO_MM * 10) / 10;
+        const heightMm = Math.round(ph.height * PX_TO_MM * 10) / 10;
+        const position = ph.position.toUpperCase() as any;
+        try {
+          await prisma.blueprintPrintArea.upsert({
+            where: {
+              printifyBlueprintId_position: {
+                printifyBlueprintId: blueprintId,
+                position,
+              },
+            },
+            create: { printifyBlueprintId: blueprintId, position, widthMm, heightMm },
+            update: { widthMm, heightMm, syncedAt: new Date() },
+          });
+        } catch (e) {
+          console.warn(`[variant-cache] Failed to sync print area for blueprint ${blueprintId} / ${ph.position}:`, e);
+        }
+      }
+      console.log(`[variant-cache] Synced print area for blueprint ${blueprintId}: ${firstVariant.placeholders.length} positions`);
+    }
+  }
+
   if (catalogVariants.length === 0) {
     throw new Error(
       `No variants found for blueprint ${blueprintId} / provider ${printProviderId}`,

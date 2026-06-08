@@ -84,13 +84,14 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
             const meta = await sharp(sourceBuffer).metadata();
             const w = meta.width ?? 1000;
             const h = meta.height ?? 1000;
-            const rW = Math.max(1, Math.round(w * 0.42));
-            const rH = Math.max(1, Math.round(h * 0.28));
+            // Fallback: fit a square into the shorter side at 90%, centered.
+            // Matches the UI's auto-fit sentinel behavior for unknown design aspect ratios.
+            const side = Math.round(Math.min(w, h) * 0.9);
             region = {
-              x: Math.max(0, Math.round((w - rW) / 2)),
-              y: Math.max(0, Math.round((h - rH) / 2)),
-              width: rW,
-              height: rH,
+              x: Math.round((w - side) / 2),
+              y: Math.round((h - side) / 2),
+              width: side,
+              height: side,
               rotationDeg: 0,
             };
             console.log(

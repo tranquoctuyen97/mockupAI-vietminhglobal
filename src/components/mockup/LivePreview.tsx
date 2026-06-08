@@ -94,10 +94,10 @@ export function LivePreview({
   const innerCollar = darken(colorHex, 0.25);
 
   // Compute print area dimensions in SVG coords based on physical mm
-  // Maintain aspect ratio of physical print area
-  const printAreaAspect = printArea.widthMm / printArea.heightMm;
-  const paSvgH = PRINT_AREA_SVG_HEIGHT;
-  const paSvgW = paSvgH * printAreaAspect;
+  // Dynamic: use reference scale (280px ↔ 406.4mm baseline) to size proportionally
+  const REF_MM_TO_SVG = PRINT_AREA_SVG_HEIGHT / 406.4; // baseline scale
+  const paSvgH = Math.min(printArea.heightMm * REF_MM_TO_SVG, SVG_VIEWBOX_H * 0.65);
+  const paSvgW = Math.min(printArea.widthMm * REF_MM_TO_SVG, SVG_VIEWBOX_W * 0.65);
   const paSvgX = PRINT_AREA_CENTER_X - paSvgW / 2;
   const paSvgY = PRINT_AREA_CENTER_Y - paSvgH / 2;
 

@@ -12,7 +12,7 @@
  *   );
  */
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Stage, Layer, Rect, Text, Transformer, Image as KonvaImage } from "react-konva";
 import type { Placement } from "@/lib/placement/types";
 
@@ -120,6 +120,29 @@ export function PlacementEditor({
     return () => { img.onload = null; };
   }, [bgImageUrl]);
 
+  // Pre-compute bgImage draw dimensions — Dreamship-style: contain-fit into full canvas
+  const bgDraw = useMemo(() => {
+    if (!bgImage) return null;
+    const imgW = bgImage.naturalWidth || bgImage.width;
+    const imgH = bgImage.naturalHeight || bgImage.height;
+    const imgAspect = imgW / imgH;
+    const cvAspect = effectiveWidth / effectiveHeight;
+    let drawW: number, drawH: number;
+    if (imgAspect > cvAspect) {
+      drawW = effectiveWidth;
+      drawH = effectiveWidth / imgAspect;
+    } else {
+      drawH = effectiveHeight;
+      drawW = effectiveHeight * imgAspect;
+    }
+    return {
+      x: (effectiveWidth - drawW) / 2,
+      y: (effectiveHeight - drawH) / 2,
+      width: drawW,
+      height: drawH,
+    };
+  }, [bgImage, effectiveWidth, effectiveHeight]);
+
   // Load design image
   useEffect(() => {
     if (!designUrl) { setDesignImg(null); return; }
@@ -179,13 +202,13 @@ export function PlacementEditor({
         <Rect x={0} y={0} width={canvasWidth} height={canvasHeight} fill="#f5f5f5" />
 
         {/* Mockup background image OR solid color fallback */}
-        {bgImage ? (
+        {bgImage && bgDraw ? (
           <KonvaImage
             image={bgImage}
-            x={paX}
-            y={paY}
-            width={toPx(printArea.widthMm)}
-            height={toPx(printArea.heightMm)}
+            x={bgDraw.x}
+            y={bgDraw.y}
+            width={bgDraw.width}
+            height={bgDraw.height}
             listening={false}
           />
         ) : (
@@ -199,16 +222,16 @@ export function PlacementEditor({
           />
         )}
 
-        {/* Print area dashed outline (always visible) */}
+        {/* Print area dashed outline — Dreamship-style teal */}
         <Rect
           x={paX}
           y={paY}
           width={toPx(printArea.widthMm)}
           height={toPx(printArea.heightMm)}
-          stroke="#bbb"
-          strokeWidth={1}
-          dash={[6, 3]}
-          cornerRadius={4}
+          stroke="rgba(0, 188, 212, 0.65)"
+          strokeWidth={2}
+          dash={[8, 4]}
+          cornerRadius={0}
         />
 
         {/* Safe margin */}
@@ -233,6 +256,10 @@ export function PlacementEditor({
             height={designPxH}
             rotation={placement.rotationDeg}
             draggable={!readOnly}
+            dragBoundFunc={readOnly ? undefined : (pos) => ({
+              x: Math.max(paX, Math.min(paX + toPx(printArea.widthMm) - (rectRef.current?.width() * (rectRef.current?.scaleX?.() ?? 1) || designPxW), pos.x)),
+              y: Math.max(paY, Math.min(paY + toPx(printArea.heightMm) - (rectRef.current?.height() * (rectRef.current?.scaleY?.() ?? 1) || designPxH), pos.y)),
+            })}
             onClick={() => !readOnly && setSelected(true)}
             onTap={() => !readOnly && setSelected(true)}
             onDragEnd={handleDragEnd}
@@ -252,6 +279,10 @@ export function PlacementEditor({
               strokeWidth={2}
               cornerRadius={4}
               draggable={!readOnly}
+              dragBoundFunc={readOnly ? undefined : (pos) => ({
+                x: Math.max(paX, Math.min(paX + toPx(printArea.widthMm) - (rectRef.current?.width() * (rectRef.current?.scaleX?.() ?? 1) || designPxW), pos.x)),
+                y: Math.max(paY, Math.min(paY + toPx(printArea.heightMm) - (rectRef.current?.height() * (rectRef.current?.scaleY?.() ?? 1) || designPxH), pos.y)),
+              })}
               onClick={() => !readOnly && setSelected(true)}
               onTap={() => !readOnly && setSelected(true)}
               onDragEnd={handleDragEnd}
@@ -271,7 +302,7 @@ export function PlacementEditor({
           </>
         )}
 
-        {/* Transformer (8 handles) */}
+        {/* Transformer — Dreamship-style: 8 handles (4 corners + 4 edges) */}
         {selected && !readOnly && (
           <Transformer
             ref={trRef}
@@ -280,11 +311,18 @@ export function PlacementEditor({
               "middle-left", "middle-right",
               "bottom-left", "bottom-center", "bottom-right",
             ]}
-            rotateEnabled={true}
+            rotateEnabled={false}
+            keepRatio={false}
             boundBoxFunc={(oldBox, newBox) => {
-              const minSize = 10 * mmPerPx; // 10mm minimum
+              const minSize = 10 * mmPerPx;
               if (newBox.width < minSize || newBox.height < minSize) return oldBox;
-              return newBox;
+              // Cap at print area boundary
+              const paW = toPx(printArea.widthMm);
+              const paH = toPx(printArea.heightMm);
+              const clamped = { ...newBox };
+              if (clamped.width > paW) clamped.width = paW;
+              if (clamped.height > paH) clamped.height = paH;
+              return clamped;
             }}
           />
         )}

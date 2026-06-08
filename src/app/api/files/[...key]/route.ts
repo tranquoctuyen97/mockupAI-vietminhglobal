@@ -7,7 +7,7 @@
 import { NextResponse } from "next/server";
 import { getStorage } from "@/lib/storage/local-disk";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 
 export const runtime = "nodejs";
@@ -39,7 +39,6 @@ export async function GET(
     const contentType = MIME_MAP[ext] || "application/octet-stream";
 
     // Read file and return as response
-    const { readFile } = await import("node:fs/promises");
     const buffer = await readFile(absPath);
 
     return new NextResponse(buffer, {

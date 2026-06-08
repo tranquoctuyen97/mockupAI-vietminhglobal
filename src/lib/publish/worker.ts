@@ -259,7 +259,6 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
     let printifyApiKey: string | null = null;
     let externalShopId: number | null = null;
     try {
-      const { getClientForStore } = await import("@/lib/printify/account");
       const result = await getClientForStore(store.id);
       printifyApiKey = (result.client as any).apiKey; // access private field for worker
       externalShopId = result.externalShopId;
@@ -658,7 +657,6 @@ async function publishExistingPrintifyDraftProduct(input: {
   }>;
   placementData: PlacementData;
 }): Promise<{ printifyProductId: string }> {
-  const { getClientForStore } = await import("@/lib/printify/account");
   const { client, externalShopId } = await getClientForStore(input.storeId);
   const imageId = await ensurePrintifyImage({
     client,

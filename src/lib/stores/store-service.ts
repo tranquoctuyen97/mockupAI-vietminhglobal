@@ -4,6 +4,7 @@
 
 import { prisma } from "@/lib/db";
 import { encrypt, decrypt } from "@/lib/crypto/envelope";
+import { PrintifyClient } from "@/lib/printify/client";
 import { ShopifyClient } from "@/lib/shopify/client";
 import { getPresetStatusSync } from "@/lib/stores/preset";
 import { enrichColorHex } from "@/lib/printify/color-hex";
@@ -133,7 +134,6 @@ export async function testStoreConnection(storeId: string) {
   let printifyResult: { ok: boolean; error?: string } = { ok: true };
   if (store.printifyShop && store.printifyShop.account.status === "ACTIVE") {
     try {
-      const { PrintifyClient } = await import("@/lib/printify/client");
       const apiKey = decrypt(store.printifyShop.account.apiKeyEncrypted);
       const client = new PrintifyClient(apiKey);
       printifyResult = await client.testConnection();

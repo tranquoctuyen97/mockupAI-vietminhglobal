@@ -1,5 +1,5 @@
 import { createWriteStream } from "node:fs";
-import { access, mkdir, readFile, unlink } from "node:fs/promises";
+import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -28,7 +28,6 @@ export class LocalDiskStorage implements StorageProvider {
   async putBuffer(key: string, buffer: Buffer, _mime?: string): Promise<void> {
     const filePath = this.resolvePath(key);
     await mkdir(dirname(filePath), { recursive: true });
-    const { writeFile } = await import("node:fs/promises");
     await writeFile(filePath, buffer);
   }
 

@@ -691,32 +691,41 @@ function TemplatesSection({
   }, [pendingMockups]);
 
   // Build mockup URLs by view for placement preview
-  // Uses first available mockup (from pending or existing) and applies to ALL views
+  // Both modes: always try blueprintImageUrl as fallback background
   const mockupUrlsByView = useMemo<Record<string, string | null>>(() => {
-    if (!tempTemplateData || tempTemplateData.defaultMockupSource !== "CUSTOM") return {};
-    const firstColorName = tempTemplateData.colors?.[0]?.color?.name?.toLowerCase();
-    if (!firstColorName) return {};
+    if (!tempTemplateData) return {};
 
     const placementData = normalizePlacementData(tempTemplateData.defaultPlacement, false);
     const views = getEnabledViews(placementData);
+    const blueprintUrl = tempTemplateData.blueprintImageUrl || null;
 
-    // Find best mockup URL: try first color pending, then iterate all colors
-    let bestUrl: string | null = null;
-    const pendingFirst = pendingMockups.get(firstColorName);
-    if (pendingFirst) {
-      bestUrl = pendingFirst.previewUrl;
-    } else {
-      for (const c of tempTemplateData.colors) {
-        const p = pendingMockups.get(c.color.name.toLowerCase());
-        if (p) { bestUrl = p.previewUrl; break; }
+    // CUSTOM mode: try pending uploads first, then fallback to blueprintImageUrl
+    if (tempTemplateData.defaultMockupSource === "CUSTOM") {
+      const firstColorName = tempTemplateData.colors?.[0]?.color?.name?.toLowerCase();
+      let bestUrl: string | null = null;
+      if (firstColorName) {
+        const pendingFirst = pendingMockups.get(firstColorName);
+        if (pendingFirst) {
+          bestUrl = pendingFirst.previewUrl;
+        } else {
+          for (const c of tempTemplateData.colors) {
+            const p = pendingMockups.get(c.color.name.toLowerCase());
+            if (p) { bestUrl = p.previewUrl; break; }
+          }
+        }
       }
+      // Fallback to blueprintImageUrl if no pending uploads
+      const url = bestUrl || blueprintUrl;
+      if (!url) return {};
+      const result: Record<string, string | null> = {};
+      for (const view of views) result[view] = url;
+      return result;
     }
 
-    // Apply same URL to all views
+    // Printify mode: use blueprint image as background
+    if (!blueprintUrl) return {};
     const result: Record<string, string | null> = {};
-    for (const view of views) {
-      result[view] = bestUrl;
-    }
+    for (const view of views) result[view] = blueprintUrl;
     return result;
   }, [tempTemplateData, pendingMockups]);
 
@@ -2353,6 +2362,26 @@ function EditorPlacementStep({
 
   const bgColor = value.colors?.[0]?.color?.hex || "#EEEEEE";
 
+  // Fetch dynamic print area from Printify sync
+  const [dynamicPrintArea, setDynamicPrintArea] = useState<{ widthMm: number; heightMm: number; safeMarginMm: number } | null>(null);
+  useEffect(() => {
+    const bpId = value.printifyBlueprintId;
+    if (!bpId) { setDynamicPrintArea(null); return; }
+    let cancelled = false;
+    fetch(`/api/blueprint/${bpId}/print-area`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (cancelled || !data?.printArea) return;
+        setDynamicPrintArea({
+          widthMm: data.printArea.widthMm,
+          heightMm: data.printArea.heightMm,
+          safeMarginMm: data.printArea.safeMarginMm ?? 3,
+        });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [value.printifyBlueprintId]);
+
   return (
     <div>
       <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
@@ -2368,6 +2397,7 @@ function EditorPlacementStep({
         onChange={setPlacementData}
         bgColor={bgColor}
         mockupUrlsByView={mockupUrlsByView}
+        printArea={dynamicPrintArea ?? undefined}
         title="Placement mặc định của store"
         description="Bật các vị trí in store sẽ dùng khi tạo listing. Wizard sẽ kế thừa preset này."
       />
