@@ -8,7 +8,8 @@ import {
   buildVariantColorLookup,
 } from "@/lib/mockup/printify-poll-worker";
 import { getMockupCompositeQueue, getPrintifyMockupQueue } from "@/lib/mockup/queue";
-import { DEFAULT_PLACEMENT } from "@/lib/placement/types";
+import { buildListingReadyPlacementData } from "@/lib/placement/auto-place";
+import { DEFAULT_PLACEMENT, DEFAULT_PRINT_AREA } from "@/lib/placement/types";
 import { getClientForStore } from "@/lib/printify/account";
 import { createOrUpdatePrintifyProduct, ensurePrintifyImage } from "@/lib/printify/product";
 import { sseChannels } from "@/lib/sse/channel";
@@ -129,7 +130,10 @@ export async function prepareMockupGeneration(
   }
 
   if (!template) {
-    throw new MockupGenerationError("Store chưa có Blueprint. Vào Store Settings để cấu hình.", 400);
+    throw new MockupGenerationError(
+      "Store chưa có Blueprint. Vào Store Settings để cấu hình.",
+      400,
+    );
   }
 
   const readiness = getTemplateReadiness(template);
@@ -163,7 +167,9 @@ export async function prepareMockupGeneration(
   // validateCustomMockupCoverage handles color coverage instead.
   if (!isCustom) {
     const templateColorIds = new Set(template.colors.map((entry) => entry.colorId));
-    const invalidColorIds = draft.enabledColorIds.filter((colorId) => !templateColorIds.has(colorId));
+    const invalidColorIds = draft.enabledColorIds.filter(
+      (colorId) => !templateColorIds.has(colorId),
+    );
     if (invalidColorIds.length > 0) {
       throw new MockupGenerationError(
         "Một hoặc nhiều màu đã chọn không thuộc template hiện tại. Hãy chọn lại template/màu.",
@@ -181,7 +187,20 @@ export async function prepareMockupGeneration(
     draft.placementOverride,
     template.defaultPlacement,
   );
-  const effectivePlacementData = placementData ?? DEFAULT_PLACEMENT_DATA;
+  // Fallback chain: draft override → template default → listing-ready ratio
+  // default (artwork only, not the print area) → legacy fixed default.
+  const primaryDesign = draft.draftDesigns[0]?.design ?? draft.design ?? null;
+  const ratioDefault = primaryDesign
+    ? buildListingReadyPlacementData({
+        design: { widthPx: primaryDesign.width, heightPx: primaryDesign.height },
+        printArea: DEFAULT_PRINT_AREA,
+        template: {
+          blueprintTitle: template.blueprintTitle,
+          blueprintBrand: template.blueprintBrand,
+        },
+      })
+    : null;
+  const effectivePlacementData = placementData ?? ratioDefault ?? DEFAULT_PLACEMENT_DATA;
   const placementSnapshot = JSON.parse(
     JSON.stringify(effectivePlacementData),
   ) as Prisma.InputJsonValue;
@@ -207,9 +226,10 @@ export async function prepareMockupGeneration(
     const availableColorNames = new Set(
       Array.from(variantColorLookup.values()).map((value) => value.colorName.trim().toLowerCase()),
     );
-    const selectedColorNames = draft.store?.colors
-      .filter((color) => draft.enabledColorIds.includes(color.id))
-      .map((color) => color.name) ?? [];
+    const selectedColorNames =
+      draft.store?.colors
+        .filter((color) => draft.enabledColorIds.includes(color.id))
+        .map((color) => color.name) ?? [];
     const missingColorNames = selectedColorNames.filter(
       (colorName) => !availableColorNames.has(colorName.trim().toLowerCase()),
     );
@@ -335,9 +355,7 @@ export async function createCustomMockupJobForDraftDesign(
   const enabledColorSet = new Set(draft.enabledColorIds);
   const storeColors = draft.store?.colors ?? [];
   const colorsById = new Map(
-    storeColors
-      .filter((c) => enabledColorSet.has(c.id))
-      .map((c) => [c.id, { name: c.name }]),
+    storeColors.filter((c) => enabledColorSet.has(c.id)).map((c) => [c.id, { name: c.name }]),
   );
   const colorIds = [...colorsById.keys()];
 
@@ -370,19 +388,21 @@ export async function createCustomMockupJobForDraftDesign(
   });
 
   const selectedDraftSources = resolvedSelection.selectedSources.filter((s) => s.scope === "DRAFT");
-  const selectedTemplateSources = resolvedSelection.selectedSources.filter((s) => s.scope === "TEMPLATE");
+  const selectedTemplateSources = resolvedSelection.selectedSources.filter(
+    (s) => s.scope === "TEMPLATE",
+  );
 
   // Skip COMPOSITE sources that have no compositeRegionPx for DRAFT scope —
   // users must explicitly set a position for their own mockups.
   // TEMPLATE scope sources with null region are allowed through: the worker will
   // auto-compute a default center region from the actual image dimensions.
   // FINAL-mode sources are always renderable (they use outputPath directly).
-  const isRenderableSource = (source: typeof draftSources[number]) =>
+  const isRenderableSource = (source: (typeof draftSources)[number]) =>
     source.renderMode !== "COMPOSITE" ||
     Boolean(source.compositeRegionPx) ||
     source.scope === "TEMPLATE";
 
-  const mapSource = (source: typeof draftSources[number]) => ({
+  const mapSource = (source: (typeof draftSources)[number]) => ({
     id: source.id,
     colorId: source.colorId,
     label: source.label,
@@ -411,12 +431,25 @@ export async function createCustomMockupJobForDraftDesign(
 
   // Draft rows take priority; template rows fill gaps
   const draftColorKeys = new Set(
-    draftRows.map((r) => r.colorName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")),
+    draftRows.map((r) =>
+      r.colorName
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, ""),
+    ),
   );
   const rows = [
     ...draftRows,
     ...templateRows.filter(
-      (r) => !draftColorKeys.has(r.colorName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")),
+      (r) =>
+        !draftColorKeys.has(
+          r.colorName
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, ""),
+        ),
     ),
   ];
 
@@ -502,7 +535,10 @@ export async function createCustomMockupJobForDraftDesign(
   };
 }
 
-async function validateCustomMockupCoverage(draft: MockupGenerationContext["draft"], template: NonNullable<MockupGenerationContext["draft"]["template"]>) {
+async function validateCustomMockupCoverage(
+  draft: MockupGenerationContext["draft"],
+  template: NonNullable<MockupGenerationContext["draft"]["template"]>,
+) {
   const selectedColorIds = new Set(draft.enabledColorIds);
   const [draftSources, templateSources] = await Promise.all([
     prisma.customMockupSource.findMany({
@@ -552,7 +588,9 @@ async function validateCustomMockupCoverage(draft: MockupGenerationContext["draf
     );
   }
 
-  const coveredColorIds = new Set(resolvedSelection.selectedSources.map((source) => source.colorId));
+  const coveredColorIds = new Set(
+    resolvedSelection.selectedSources.map((source) => source.colorId),
+  );
   const missingCustomColors = (draft.store?.colors ?? []).filter(
     (color) => selectedColorIds.has(color.id) && !coveredColorIds.has(color.id),
   );

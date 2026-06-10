@@ -334,7 +334,7 @@ describe("buildChecklist", () => {
         },
       ]),
     );
-    draft.aiContent = { title: "My Product" };
+    draft.aiContent = { title: "My Product" } as typeof draft.aiContent;
     const titleOnlyChecklist = await buildChecklist(draft);
     assert.equal(titleOnlyChecklist.contentComplete, true);
     assert.equal(titleOnlyChecklist.readyToPublish, true);
