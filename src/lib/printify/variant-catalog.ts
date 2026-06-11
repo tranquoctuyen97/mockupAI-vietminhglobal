@@ -13,8 +13,22 @@
  *   3. Merge all cost data, cache in PrintifyVariantCache, delete all dummies.
  */
 
+import { PlacementPosition } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import type { PrintifyClient, PrintifyProductOption, PrintifyProductResponse } from "./client";
+
+// Map Printify API position strings → Prisma PlacementPosition enum values.
+// Printify uses "neck", "left_sleeve", "right_sleeve" but our Prisma enum
+// uses NECK_LABEL, SLEEVE_LEFT, SLEEVE_RIGHT. Simple .toUpperCase() is wrong.
+// Exported so tests can verify the mapping independently.
+export const PRINTIFY_POSITION_TO_ENUM: Partial<Record<string, PlacementPosition>> = {
+  front: PlacementPosition.FRONT,
+  back: PlacementPosition.BACK,
+  neck: PlacementPosition.NECK_LABEL,
+  left_sleeve: PlacementPosition.SLEEVE_LEFT,
+  right_sleeve: PlacementPosition.SLEEVE_RIGHT,
+  hem: PlacementPosition.HEM,
+};
 
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 export const DUMMY_PRODUCT_TITLE_PREFIX = "[INTERNAL_COST_LOOKUP]";
@@ -123,11 +137,40 @@ async function _buildVariantCostCache(input: {
     if (firstVariant.placeholders?.length) {
       const DPI = 300;
       const PX_TO_MM = 25.4 / DPI;
+
+      let synced = 0;
+      let skipped = 0;
+      let failed = 0;
+
       for (const ph of firstVariant.placeholders) {
-        if (!ph.width || !ph.height) continue;
+        if (!ph.width || !ph.height) {
+          skipped++;
+          continue;
+        }
+
+        const rawPosition = String(ph.position ?? "").toLowerCase().trim();
+
+        if (!rawPosition) {
+          skipped++;
+          console.warn(
+            `[variant-cache] Skipping print area with missing position for blueprint ${blueprintId}`,
+          );
+          continue;
+        }
+
+        const position = PRINTIFY_POSITION_TO_ENUM[rawPosition];
+
+        if (!position) {
+          skipped++;
+          console.warn(
+            `[variant-cache] Skipping unsupported print area position for blueprint ${blueprintId}: ${ph.position}`,
+          );
+          continue;
+        }
+
         const widthMm = Math.round(ph.width * PX_TO_MM * 10) / 10;
         const heightMm = Math.round(ph.height * PX_TO_MM * 10) / 10;
-        const position = ph.position.toUpperCase() as any;
+
         try {
           await prisma.blueprintPrintArea.upsert({
             where: {
@@ -136,18 +179,30 @@ async function _buildVariantCostCache(input: {
                 position,
               },
             },
-            create: { printifyBlueprintId: blueprintId, position, widthMm, heightMm },
-            update: { widthMm, heightMm, syncedAt: new Date() },
+            create: {
+              printifyBlueprintId: blueprintId,
+              position,
+              widthMm,
+              heightMm,
+            },
+            update: {
+              widthMm,
+              heightMm,
+              syncedAt: new Date(),
+            },
           });
+          synced++;
         } catch (e) {
+          failed++;
           console.warn(
             `[variant-cache] Failed to sync print area for blueprint ${blueprintId} / ${ph.position}:`,
             e,
           );
         }
       }
+
       console.log(
-        `[variant-cache] Synced print area for blueprint ${blueprintId}: ${firstVariant.placeholders.length} positions`,
+        `[variant-cache] Synced print areas for blueprint ${blueprintId}: ${synced} synced, ${skipped} skipped, ${failed} failed`,
       );
     }
   }

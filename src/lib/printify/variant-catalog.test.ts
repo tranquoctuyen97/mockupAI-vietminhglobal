@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { PlacementPosition } from "@prisma/client";
 import {
   buildShopifyVariantInputs,
   type CachedVariant,
   computeEnabledVariantSelection,
+  PRINTIFY_POSITION_TO_ENUM,
 } from "./variant-catalog";
 
 const variants: CachedVariant[] = [
@@ -89,5 +91,26 @@ describe("buildShopifyVariantInputs", () => {
     assert.deepEqual(plan, [
       { colorName: "Black", colorHex: "#000", size: "S", sku: "BLK-S", priceUsd: 0 },
     ]);
+  });
+});
+
+describe("PRINTIFY_POSITION_TO_ENUM", () => {
+  const cases: [string, PlacementPosition][] = [
+    ["neck", PlacementPosition.NECK_LABEL],
+    ["left_sleeve", PlacementPosition.SLEEVE_LEFT],
+    ["right_sleeve", PlacementPosition.SLEEVE_RIGHT],
+    ["front", PlacementPosition.FRONT],
+    ["back", PlacementPosition.BACK],
+    ["hem", PlacementPosition.HEM],
+  ];
+
+  for (const [printify, expected] of cases) {
+    it(`maps Printify position '${printify}' → PlacementPosition.${expected}`, () => {
+      assert.equal(PRINTIFY_POSITION_TO_ENUM[printify], expected);
+    });
+  }
+
+  it("returns undefined for unknown position", () => {
+    assert.equal(PRINTIFY_POSITION_TO_ENUM["chest"], undefined);
   });
 });
