@@ -15,6 +15,10 @@ import {
   CanvasPlacementEditor,
   type CanvasRegionPx,
 } from "@/components/placement/CanvasPlacementEditor";
+import {
+  computeCustomPrintAreaPx,
+  isSentinelRegion,
+} from "@/lib/mockup/placement-region";
 
 export type UploadMockupScope = "TEMPLATE" | "DRAFT";
 export type UploadRenderMode = "FINAL" | "COMPOSITE";
@@ -69,6 +73,8 @@ interface UploadMockupModalProps {
   initialValue?: Partial<UploadMockupModalValue> | null;
   lockedTemplateId?: string | null;
   lockedColorId?: string | null;
+  /** Print area in millimeter dimensions (from template/blueprint) */
+  printAreaMm?: { widthMm: number; heightMm: number } | null;
   onClose: () => void;
   onSave: (value: UploadMockupModalValue) => Promise<void>;
   onDelete?: () => Promise<void>;
@@ -86,6 +92,7 @@ export function UploadMockupModal({
   initialValue,
   lockedTemplateId,
   lockedColorId,
+  printAreaMm,
   onClose,
   onSave,
   onDelete,
@@ -161,6 +168,19 @@ export function UploadMockupModal({
       return;
     }
 
+    if (
+      isDraftScope &&
+      value.compositeRegionPx &&
+      isSentinelRegion(
+        value.compositeRegionPx,
+        value.imageWidth,
+        value.imageHeight,
+      )
+    ) {
+      setFileError("Chưa chỉnh vị trí design. Kéo khung design để đặt vị trí.");
+      return;
+    }
+
     setSubmitting(true);
     try {
       await onSave(
@@ -216,12 +236,11 @@ export function UploadMockupModal({
             imageWidth={value.imageWidth}
             imageHeight={value.imageHeight}
             mode="CUSTOM_COMPOSITE"
-            printAreaPx={{
-              x: Math.round(value.imageWidth * 0.15),
-              y: Math.round(value.imageHeight * 0.15),
-              width: Math.round(value.imageWidth * 0.7),
-              height: Math.round(value.imageHeight * 0.7),
-            }}
+            printAreaPx={
+              printAreaMm
+                ? computeCustomPrintAreaPx(printAreaMm, value.imageWidth, value.imageHeight)
+                : undefined
+            }
             initialRegionPx={value.compositeRegionPx ?? defaultCanvasRegion(value.imageWidth, value.imageHeight)}
             onChange={(region) => update({ compositeRegionPx: toUploadCompositeRegion(region) })}
             onSave={(region) => update({ compositeRegionPx: toUploadCompositeRegion(region) })}
@@ -558,13 +577,12 @@ function normalizeInitialCompositeRegion(
 }
 
 function defaultCanvasRegion(imageWidth: number, imageHeight: number): UploadMockupCompositeRegion {
-  const width = Math.max(1, Math.round(imageWidth * 0.38));
-  const height = Math.max(1, Math.round(imageHeight * 0.28));
+  // Sentinel region: (0,0,w,h) — triggers Smart Fit auto-snap in CanvasPlacementEditor
   return {
-    x: Math.max(0, Math.round((imageWidth - width) / 2)),
-    y: Math.max(0, Math.round((imageHeight - height) / 2)),
-    width,
-    height,
+    x: 0,
+    y: 0,
+    width: imageWidth,
+    height: imageHeight,
     rotationDeg: 0,
     imageWidth,
     imageHeight,

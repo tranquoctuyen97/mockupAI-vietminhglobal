@@ -34,22 +34,20 @@ export async function normalizeCustomMockupUpload(
     throw new ValidationError("File must be 10MB or smaller");
   }
 
-  // Normalize: auto-rotate, strip metadata, convert to JPEG
-  const normalizedBuffer = await sharp(input.rawBuffer)
-    .rotate()
-    .jpeg({ quality: 90 })
-    .toBuffer();
-
-  const metadata = await sharp(normalizedBuffer).metadata();
   const storage = getStorage();
 
-  // Write normalized source
-  await storage.putBuffer(input.storagePath, normalizedBuffer, "image/jpeg");
+  // Source: normalize to JPEG (auto-rotate, strip metadata, consistent format)
+  const normalizedSourceBuffer = await normalizeSourceBuffer(input.rawBuffer);
 
-  // Write output only for FINAL mode
+  const metadata = await sharp(normalizedSourceBuffer).metadata();
+  await storage.putBuffer(input.storagePath, normalizedSourceBuffer, "image/jpeg");
+
+  // Output: FINAL mode writes real WebP for product media / Shopify upload.
+  // COMPOSITE mode has no outputPath — the composite render is done by the worker.
   const outputPath = input.renderMode === "FINAL" && input.outputPath ? input.outputPath : null;
   if (outputPath) {
-    await storage.putBuffer(outputPath, normalizedBuffer, "image/jpeg");
+    const outputBuffer = await createWebpOutputBuffer(input.rawBuffer);
+    await storage.putBuffer(outputPath, outputBuffer, "image/webp");
   }
 
   return {
@@ -200,8 +198,31 @@ export function buildStoragePaths(input: {
 
   return {
     storagePath: `${baseKey}-source.jpg`,
-    outputPath: input.renderMode === "FINAL" ? `${baseKey}-output.jpg` : null,
+    outputPath: input.renderMode === "FINAL" ? `${baseKey}-output.webp` : null,
   };
+}
+
+/**
+ * Normalize a raw image buffer into a consistent JPEG source.
+ * Auto-rotates (EXIF), strips metadata. Source stays JPEG regardless
+ * of input format — the WebP conversion only happens for FINAL output.
+ */
+export async function normalizeSourceBuffer(rawBuffer: Buffer): Promise<Buffer> {
+  return sharp(rawBuffer)
+    .rotate()
+    .jpeg({ quality: 90 })
+    .toBuffer();
+}
+
+/**
+ * Create a real WebP output buffer from a raw image.
+ * Used for FINAL render mode — output goes to product media / Shopify.
+ */
+export async function createWebpOutputBuffer(rawBuffer: Buffer): Promise<Buffer> {
+  return sharp(rawBuffer)
+    .rotate()
+    .webp({ quality: 90 })
+    .toBuffer();
 }
 
 export class ValidationError extends Error {

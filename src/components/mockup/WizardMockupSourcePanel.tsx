@@ -13,6 +13,10 @@ import {
   type UploadMockupModalValue,
   type UploadMockupTemplate,
 } from "./UploadMockupModal";
+import {
+  computeCustomPrintAreaPx,
+  isSentinelRegion,
+} from "@/lib/mockup/placement-region";
 
 interface WizardMockupSourcePanelProps {
   draftId: string;
@@ -23,6 +27,8 @@ interface WizardMockupSourcePanelProps {
   designImageUrl?: string | null;
   onRegenerate?: () => void;
   onRemoveColor?: (colorId: string) => void | Promise<void>;
+  /** Print area in millimeter dimensions (from template/blueprint) */
+  printAreaMm?: { widthMm: number; heightMm: number } | null;
 }
 
 type SourceApi = PreviewSource & {
@@ -50,6 +56,7 @@ export function WizardMockupSourcePanel({
   designImageUrl,
   onRegenerate,
   onRemoveColor,
+  printAreaMm,
 }: WizardMockupSourcePanelProps) {
   const [loading, setLoading] = useState(true);
   const [template, setTemplate] = useState<TemplateContext | null>(null);
@@ -581,16 +588,44 @@ export function WizardMockupSourcePanel({
               <span
                 style={{
                   ...statusBadgeStyle,
-                  borderColor: placementEditorSource.compositeRegionPx
+                  borderColor: placementEditorSource.compositeRegionPx &&
+                    placementEditorImageSize &&
+                    !isSentinelRegion(
+                      placementEditorSource.compositeRegionPx,
+                      placementEditorImageSize.width,
+                      placementEditorImageSize.height,
+                    )
                     ? "rgba(22,51,0,0.22)"
                     : "rgba(185,28,28,0.2)",
-                  color: placementEditorSource.compositeRegionPx ? "var(--color-wise-dark-green)" : "#b91c1c",
-                  background: placementEditorSource.compositeRegionPx
+                  color: placementEditorSource.compositeRegionPx &&
+                    placementEditorImageSize &&
+                    !isSentinelRegion(
+                      placementEditorSource.compositeRegionPx,
+                      placementEditorImageSize.width,
+                      placementEditorImageSize.height,
+                    )
+                    ? "var(--color-wise-dark-green)"
+                    : "#b91c1c",
+                  background: placementEditorSource.compositeRegionPx &&
+                    placementEditorImageSize &&
+                    !isSentinelRegion(
+                      placementEditorSource.compositeRegionPx,
+                      placementEditorImageSize.width,
+                      placementEditorImageSize.height,
+                    )
                     ? "rgba(159,232,112,0.18)"
                     : "#fee2e2",
                 }}
               >
-                {placementEditorSource.compositeRegionPx ? "Đã chỉnh vị trí" : "Chưa chỉnh vị trí"}
+                {placementEditorSource.compositeRegionPx &&
+                  placementEditorImageSize &&
+                  !isSentinelRegion(
+                    placementEditorSource.compositeRegionPx,
+                    placementEditorImageSize.width,
+                    placementEditorImageSize.height,
+                  )
+                  ? "Đã chỉnh vị trí"
+                  : "Chưa chỉnh vị trí"}
               </span>
             </div>
 
@@ -601,12 +636,15 @@ export function WizardMockupSourcePanel({
                 imageWidth={placementEditorImageSize.width}
                 imageHeight={placementEditorImageSize.height}
                 mode="CUSTOM_COMPOSITE"
-                printAreaPx={{
-                  x: Math.round(placementEditorImageSize.width * 0.15),
-                  y: Math.round(placementEditorImageSize.height * 0.15),
-                  width: Math.round(placementEditorImageSize.width * 0.7),
-                  height: Math.round(placementEditorImageSize.height * 0.7),
-                }}
+                printAreaPx={
+                  printAreaMm && placementEditorImageSize
+                    ? computeCustomPrintAreaPx(
+                        printAreaMm,
+                        placementEditorImageSize.width,
+                        placementEditorImageSize.height,
+                      )
+                    : undefined
+                }
                 initialRegionPx={placementEditorInitialRegion}
                 onSave={(regionPx) => {
                   void savePlacementRegion(regionPx);
@@ -637,6 +675,7 @@ export function WizardMockupSourcePanel({
         lockedTemplateId={template.id}
         lockedColorId={editingSource?.colorId ?? lockedUploadColorId}
         designImageUrl={designImageUrl}
+        printAreaMm={printAreaMm}
         initialValue={editingSource ? sourceToModalValue(editingSource, template.id) : null}
         onClose={() => {
           setUploadOpen(false);

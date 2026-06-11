@@ -9,7 +9,7 @@ import { compositeImageOnCustomMockup } from "./composite.js";
 async function withTempOutput(run: (outputPath: string) => Promise<void>) {
   const dir = await mkdtemp(join(tmpdir(), "custom-mockup-composite-"));
   try {
-    await run(join(dir, "output.jpg"));
+    await run(join(dir, "output.webp"));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -44,7 +44,7 @@ test("compositeImageOnCustomMockup keeps native mockup dimensions", async () => 
     const metadata = await sharp(await readFile(outputPath)).metadata();
     assert.equal(metadata.width, 800);
     assert.equal(metadata.height, 1000);
-    assert.equal(metadata.format, "jpeg");
+    assert.equal(metadata.format, "webp");
   });
 });
 
