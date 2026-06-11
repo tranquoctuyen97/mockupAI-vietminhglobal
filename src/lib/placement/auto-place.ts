@@ -1,68 +1,68 @@
 /**
- * Auto-place design into a Printify print area.
- * Uses "contain" fit (preserves aspect ratio) and centers by default.
- * Supports optional offset overrides from StoreMockupTemplate.
+ * Auto-place a design into a Printify print area at a listing-ready default size.
+ *
+ * This produces a smaller, chest-positioned artwork placement *inside* the print
+ * area — it never changes the print area (the max printable boundary) itself.
+ * Aspect ratio is preserved and the result is clamped inside the print area.
  */
 
-export interface AutoPlaceInput {
-  design: { widthPx: number; heightPx: number };
-  printArea: { widthMm: number; heightMm: number; safeMarginMm: number };
-  override?: {
-    offsetXMm?: number | null;
-    offsetYMm?: number | null;
-    scalePercent?: number | null;
-  };
-}
+import {
+  buildDefaultPlacementFromRatio,
+  type PlacementDesignSize,
+  type ProductTypeInput,
+  resolvePlacementProfile,
+} from "./profile";
+import type { Placement, PlacementData, PrintArea, ViewKey } from "./types";
+import { createEmptyPlacementData, setPlacementForView } from "./views";
 
-export interface AutoPlaceResult {
-  xMm: number;      // Horizontal offset from print area center (0 = centered)
-  yMm: number;      // Vertical center position from top of print area
-  widthMm: number;   // Fitted width
-  heightMm: number;  // Fitted height
+export interface AutoPlaceInput {
+  design: PlacementDesignSize;
+  printArea: PrintArea;
+  /** Template-ish info used to pick a product-type tuned profile. */
+  template?: ProductTypeInput;
+  /** View to place into. Defaults to "front". */
+  view?: ViewKey;
 }
 
 /**
- * Fit design into print area safe zone, centered, with optional offset.
- *
- * Coordinate system:
- * - xMm: 0 = horizontally centered, negative = left, positive = right
- * - yMm: distance from top of print area to center of design
+ * Compute a listing-ready placement (top-left mm) for a single view.
  */
-export function autoPlace({ design, printArea, override }: AutoPlaceInput): AutoPlaceResult {
-  // Safe zone = print area minus margins on each side
-  const safeWidth = printArea.widthMm - 2 * printArea.safeMarginMm;
-  const safeHeight = printArea.heightMm - 2 * printArea.safeMarginMm;
+export function autoPlace(input: AutoPlaceInput): Placement {
+  const view = input.view ?? "front";
+  const profile = resolvePlacementProfile(input.template ?? {}, view);
+  return buildDefaultPlacementFromRatio({
+    printArea: input.printArea,
+    design: input.design,
+    profile,
+  });
+}
 
-  // Apply scale (default 100%)
-  const scale = (override?.scalePercent ?? 100) / 100;
-  const targetWidth = safeWidth * scale;
-  const targetHeight = safeHeight * scale;
+export interface BuildListingReadyPlacementDataInput {
+  design: PlacementDesignSize;
+  printArea: PrintArea;
+  template?: ProductTypeInput;
+  /** Views to populate. Defaults to ["front"]. */
+  views?: ViewKey[];
+}
 
-  // Contain fit: preserve aspect ratio, fit within target area
-  const designAspect = design.widthPx / design.heightPx;
-  const areaAspect = targetWidth / targetHeight;
-
-  let fitWidth: number;
-  let fitHeight: number;
-
-  if (designAspect > areaAspect) {
-    // Design is wider than area → constrain by width
-    fitWidth = targetWidth;
-    fitHeight = targetWidth / designAspect;
-  } else {
-    // Design is taller than area → constrain by height
-    fitHeight = targetHeight;
-    fitWidth = targetHeight * designAspect;
+/**
+ * Build a full PlacementData with listing-ready defaults for the given views.
+ * Used as a fallback when a draft has no placement override and the template has
+ * no saved default placement.
+ */
+export function buildListingReadyPlacementData(
+  input: BuildListingReadyPlacementDataInput,
+): PlacementData {
+  const views = input.views && input.views.length > 0 ? input.views : ["front" as ViewKey];
+  let data = createEmptyPlacementData();
+  for (const view of views) {
+    const placement = autoPlace({
+      design: input.design,
+      printArea: input.printArea,
+      template: input.template,
+      view,
+    });
+    data = setPlacementForView(data, view, placement);
   }
-
-  // Center position + optional offset
-  const xMm = override?.offsetXMm ?? 0;
-  const yMm = (printArea.heightMm / 2) + (override?.offsetYMm ?? 0);
-
-  return {
-    xMm,
-    yMm,
-    widthMm: Math.round(fitWidth * 100) / 100,
-    heightMm: Math.round(fitHeight * 100) / 100,
-  };
+  return data;
 }

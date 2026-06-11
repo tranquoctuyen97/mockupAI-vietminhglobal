@@ -18,11 +18,16 @@ import {
   isSyntheticMockupSource,
 } from "@/lib/mockup/real-printify-media";
 import { parseMockupSourceUrl } from "@/lib/mockup/source-url";
-import { DEFAULT_PLACEMENT, type PlacementData } from "@/lib/placement/types";
+import { buildListingReadyPlacementData } from "@/lib/placement/auto-place";
+import { DEFAULT_PLACEMENT, DEFAULT_PRINT_AREA, type PlacementData } from "@/lib/placement/types";
 import { getClientForStore } from "@/lib/printify/account";
 import { PrintifyApiError, PrintifyNotFoundError } from "@/lib/printify/client";
 import { createOrUpdatePrintifyProduct, ensurePrintifyImage } from "@/lib/printify/product";
-import { buildVariantPayload, computeVariantMatrixPerColor, ensureVariantCostCache } from "@/lib/printify/variant-catalog";
+import {
+  buildVariantPayload,
+  computeVariantMatrixPerColor,
+  ensureVariantCostCache,
+} from "@/lib/printify/variant-catalog";
 import { ShopifyClient } from "@/lib/shopify/client";
 import { sseChannels } from "@/lib/sse/channel";
 import { getStorage } from "@/lib/storage/local-disk";
@@ -139,10 +144,10 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
     const listingColorNames = listing.variants.map((v) => v.colorName);
     const latestJobsByDesign = getLatestJobByDraftDesignId(draft.mockupJobs);
     const draftDesign = listing.wizardDraftDesignId
-      ? draft.draftDesigns.find((entry) => entry.id === listing.wizardDraftDesignId) ?? null
+      ? (draft.draftDesigns.find((entry) => entry.id === listing.wizardDraftDesignId) ?? null)
       : null;
     const designJobKey = listing.wizardDraftDesignId ?? listing.designId ?? draft.designId ?? null;
-    const selectedMockupJob = designJobKey ? latestJobsByDesign.get(designJobKey) ?? null : null;
+    const selectedMockupJob = designJobKey ? (latestJobsByDesign.get(designJobKey) ?? null) : null;
 
     if (!selectedMockupJob || selectedMockupJob.status?.toLowerCase() !== "completed") {
       throw new Error(
@@ -321,13 +326,18 @@ export async function runPrintifyStage(
   if (!printifyJob) return;
 
   const emitEvent = (type: string, data: Record<string, unknown> = {}) => {
-    const payload = { ...data, listingId, draftId, draftDesignId: listing.wizardDraftDesignId ?? null };
+    const payload = {
+      ...data,
+      listingId,
+      draftId,
+      draftDesignId: listing.wizardDraftDesignId ?? null,
+    };
     sseChannels.emit(channelId, { type, data: payload });
     sseChannels.emit(draftId, { type, data: payload });
   };
 
   const draftDesign = listing.wizardDraftDesignId
-    ? draft.draftDesigns?.find((entry: any) => entry.id === listing.wizardDraftDesignId) ?? null
+    ? (draft.draftDesigns?.find((entry: any) => entry.id === listing.wizardDraftDesignId) ?? null)
     : null;
   const targetDesign = draftDesign?.design ?? draft.design ?? null;
   if (listing.wizardDraftDesignId && !draftDesign) {
@@ -345,7 +355,7 @@ export async function runPrintifyStage(
 
   const designJobKey = listing.wizardDraftDesignId ?? listing.designId ?? draft.designId ?? null;
   const latestJobsByDesign = getLatestJobByDraftDesignId(draft.mockupJobs ?? []);
-  const selectedMockupJob = designJobKey ? latestJobsByDesign.get(designJobKey) ?? null : null;
+  const selectedMockupJob = designJobKey ? (latestJobsByDesign.get(designJobKey) ?? null) : null;
 
   emitEvent("publish.printify.start", { stage: "PRINTIFY" });
 
@@ -393,12 +403,15 @@ export async function runPrintifyStage(
       return;
     }
 
-    const includedImagesForPrintify = (selectedMockupJob.images ?? []).filter((img: any) => img.included);
+    const includedImagesForPrintify = (selectedMockupJob.images ?? []).filter(
+      (img: any) => img.included,
+    );
 
     const selectedMockupIds = includedImagesForPrintify
       .map((img: any) => img.printifyMockupId)
       .filter((id: string) => id && !id.startsWith("custom:") && !id.startsWith("synthetic:"));
-    const draftProductId = draftDesign?.printifyDraftProductId ?? draft.printifyDraftProductId ?? null;
+    const draftProductId =
+      draftDesign?.printifyDraftProductId ?? draft.printifyDraftProductId ?? null;
     const draftImageId = draftDesign?.printifyImageId ?? draft.printifyImageId ?? null;
     let template = draft.template;
     if (!template && draft.storeId) {
@@ -408,9 +421,21 @@ export async function runPrintifyStage(
     }
 
     const variantIds = resolvePublishVariantIds(listing, draft, template);
+    // Placement fallback chain (Guard 3): draft override → template default →
+    // listing-ready ratio default (artwork only, never the print area) → legacy.
     const placementData =
       resolveEffectivePlacementData(draft.placementOverride, template?.defaultPlacement) ??
-      defaultPlacementData();
+      (targetDesign
+        ? buildListingReadyPlacementData({
+            design: { widthPx: targetDesign.width, heightPx: targetDesign.height },
+            printArea: DEFAULT_PRINT_AREA,
+            template: {
+              productType: draft.productType,
+              blueprintTitle: template?.blueprintTitle,
+              blueprintBrand: template?.blueprintBrand,
+            },
+          })
+        : defaultPlacementData());
 
     // -- Calculate Variants Payload (Price & SKU) --
     let printifyVariantsPayload: any[] | undefined;
@@ -474,9 +499,9 @@ export async function runPrintifyStage(
         // 5. Build payload with computed variant IDs determining enabled state
         const effectiveSizesForPayload = hasSizesByColor
           ? [...new Set(Object.values(sizesByColor!).flat())]
-          : (draft.enabledSizes?.length > 0
+          : draft.enabledSizes?.length > 0
             ? draft.enabledSizes
-            : [...new Set(cachedVariants.filter((v) => v.isAvailable).map((v) => v.size))]);
+            : [...new Set(cachedVariants.filter((v) => v.isAvailable).map((v) => v.size))];
 
         const priceBySizeOverride = draft.priceBySizeOverride as Record<string, number> | null;
 
@@ -561,7 +586,10 @@ export async function runPrintifyStage(
     // Emit printify done before final complete
     emitEvent("publish.printify.done", { printifyProductId: printifyResult.printifyProductId });
 
-    emitEvent("publish.complete", { status: "ACTIVE", printifyProductId: printifyResult.printifyProductId });
+    emitEvent("publish.complete", {
+      status: "ACTIVE",
+      printifyProductId: printifyResult.printifyProductId,
+    });
   } else {
     await prisma.listing.update({
       where: { id: listingId },
@@ -805,8 +833,7 @@ export function resolveShopifyMockupMedia(input: {
       ? parseMockupSourceUrl(image.sourceUrl)
       : { kind: "printify" as const };
     const hasRealPrintifySource =
-      isAllowedRemoteMockupUrl(image.sourceUrl) ||
-      parsedSource.kind === "custom";
+      isAllowedRemoteMockupUrl(image.sourceUrl) || parsedSource.kind === "custom";
     if (input.requireRealPrintifyMockups && !hasRealPrintifySource) continue;
 
     const path = input.storage.resolvePath(source);
