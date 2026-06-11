@@ -13,7 +13,7 @@
 
 import { createHmac, timingSafeEqual, randomBytes } from "node:crypto";
 
-const DEFAULT_SCOPES = "write_products,read_products,read_orders,write_inventory";
+const DEFAULT_SCOPES = "write_products,read_products,read_orders,write_inventory,read_publications,write_publications";
 
 /**
  * Build Shopify OAuth authorization URL

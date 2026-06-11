@@ -24,12 +24,14 @@ const REQUIRED_SCOPES = [
   { scope: "read_products", desc: "Đọc thông tin sản phẩm" },
   { scope: "read_orders", desc: "Đọc đơn hàng (analytics)" },
   { scope: "write_inventory", desc: "Quản lý tồn kho" },
+  { scope: "read_publications", desc: "Đọc thông tin xuất bản" },
+  { scope: "write_publications", desc: "Quản lý xuất bản (publish sản phẩm)" },
 ];
 
 const SETUP_STEPS = [
   "Vào Settings → Apps and sales channels → Develop apps",
   'Click "Create an app" → đặt tên (ví dụ: MockupAI)',
-  "Tab Configuration → Admin API access scopes → tick 4 scopes bên dưới",
+  "Tab Configuration → Admin API access scopes → tick 6 scopes bên dưới",
   "Mục Allowed redirection URL(s) → paste Redirect URL ở trên",
   "Click Install app → xác nhận",
   "Tab API credentials → copy Client ID + Client secret",

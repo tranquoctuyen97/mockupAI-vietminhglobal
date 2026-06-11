@@ -145,7 +145,7 @@ async function _buildVariantCostCache(input: {
                 printifyBlueprintId: blueprintId,
                 position,
               },
-            },
+            } as any,
             create: { printifyBlueprintId: blueprintId, position, widthMm, heightMm },
             update: { widthMm, heightMm, syncedAt: new Date() },
           });

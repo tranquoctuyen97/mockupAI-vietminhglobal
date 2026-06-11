@@ -10,6 +10,7 @@
 import { ShopifyClient } from "@/lib/shopify/client";
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
+import { formatDescriptionHtml } from "@/lib/content/description-html";
 
 export type ShopifyMockupImage =
   | { kind: "local"; path: string; colorName?: string }
@@ -22,6 +23,16 @@ export interface ShopifyPublishInput {
   priceUsd: number;
   productType: string;
   colors: Array<{ name: string; hex: string }>;
+  sizes?: string[]; // all sizes to create
+  variants?: Array<{
+    colorName: string;
+    size: string;
+    sku: string;
+    price: number;
+    printifyVariantId: string;
+  }>;
+  collections?: string[]; // matching collection IDs (if any)
+  category?: string | null; // taxonomy category ID (if any)
   mockupPaths: string[]; // absolute file paths
   mockupImages?: ShopifyMockupImage[];
   existingProductId?: string | null; // for retry idempotency
@@ -31,6 +42,129 @@ export interface ShopifyPublishResult {
   shopifyProductId: string;
   shopifyVariantIds: string[];
   shopifyProductUrl: string;
+  shopifyVariantsDetail?: Array<{
+    id: string;
+    colorName?: string;
+    sizeName?: string;
+  }>;
+}
+
+const TAXONOMY_CATEGORY_BY_TYPE = [
+  {
+    test: /\bhoodie(s)?\b/,
+    id: "gid://shopify/TaxonomyCategory/aa-1-13-13",
+  },
+  {
+    test: /\bsweatshirt(s)?\b/,
+    id: "gid://shopify/TaxonomyCategory/aa-1-13-14",
+  },
+  {
+    test: /\btank\s*top(s)?\b|\btank(s)?\b/,
+    id: "gid://shopify/TaxonomyCategory/aa-1-13-9",
+  },
+  {
+    test: /\bsweater(s)?\b|\bpullover(s)?\b/,
+    id: "gid://shopify/TaxonomyCategory/aa-1-13-12",
+  },
+  {
+    test: /\bt[\s-]?shirt(s)?\b|\btee(s)?\b/,
+    id: "gid://shopify/TaxonomyCategory/aa-1-13-8",
+  },
+];
+
+export function getTaxonomyCategoryId(productType?: string | null): string | null {
+  const normalized = productType
+    ?.toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  return TAXONOMY_CATEGORY_BY_TYPE.find((entry) => entry.test.test(normalized))?.id ?? null;
+}
+
+const PRODUCT_TYPE_COLLECTION_MAP: Record<string, string> = {
+  "T-Shirt": "T-Shirts",
+  "T Shirt": "T-Shirts",
+  "Tee": "T-Shirts",
+  "Hoodie": "Hoodies",
+  "Sweatshirt": "Sweatshirts",
+  "Tank Top": "Tanks",
+  "Tank": "Tanks",
+  "Sweater": "Sweaters",
+};
+
+const DEFAULT_COLLECTION_NAME = "All Products";
+
+export function getCollectionTitleForProductType(productType?: string | null): string {
+  if (!productType) return DEFAULT_COLLECTION_NAME;
+  const normalized = productType.trim().toLowerCase();
+  
+  for (const [key, val] of Object.entries(PRODUCT_TYPE_COLLECTION_MAP)) {
+    if (normalized.includes(key.toLowerCase())) {
+      return val;
+    }
+  }
+  return DEFAULT_COLLECTION_NAME;
+}
+
+export async function findCollectionId(
+  client: ShopifyClient,
+  productType: string,
+  isUpdate: boolean
+): Promise<string[] | undefined> {
+  const targetTitle = getCollectionTitleForProductType(productType);
+
+  try {
+    const searchRes = await client.graphql(`
+      query searchCollection($query: String!) {
+        collections(first: 5, query: $query) {
+          nodes {
+            id
+            title
+          }
+        }
+      }
+    `, { query: `title:"${targetTitle}"` }) as any;
+
+    const matchedNode = searchRes?.collections?.nodes?.find(
+      (n: any) => n.title.toLowerCase() === targetTitle.toLowerCase()
+    );
+
+    if (matchedNode) {
+      return [matchedNode.id];
+    }
+
+    if (targetTitle !== DEFAULT_COLLECTION_NAME) {
+      console.log(`[Shopify] Collection "${targetTitle}" not found. Falling back to "${DEFAULT_COLLECTION_NAME}"...`);
+      const fallbackRes = await client.graphql(`
+        query searchFallback($query: String!) {
+          collections(first: 5, query: $query) {
+            nodes {
+              id
+              title
+            }
+          }
+        }
+      `, { query: `title:"${DEFAULT_COLLECTION_NAME}"` }) as any;
+
+      const fallbackNode = fallbackRes?.collections?.nodes?.find(
+        (n: any) => n.title.toLowerCase() === DEFAULT_COLLECTION_NAME.toLowerCase()
+      );
+
+      if (fallbackNode) {
+        return [fallbackNode.id];
+      }
+    }
+
+    console.warn(`[Shopify] No matching collection found for "${targetTitle}" or fallback "${DEFAULT_COLLECTION_NAME}"`);
+    return undefined;
+  } catch (err) {
+    console.error(`[Shopify] findCollectionId failed:`, err);
+    return undefined;
+  }
 }
 
 /**
@@ -52,7 +186,28 @@ export async function publishToShopify(
     // Product already created in a previous attempt — skip creation
     console.log(`[Shopify] Reusing existing product: ${input.existingProductId}`);
     productId = input.existingProductId;
-    variantIds = []; // variants already exist
+    
+    // Fetch variants from Shopify
+    try {
+      const query = `
+        query getProductVariants($id: ID!) {
+          product(id: $id) {
+            variants(first: 100) {
+              nodes {
+                id
+                selectedOptions { name value }
+              }
+            }
+          }
+        }
+      `;
+      const res = await client.graphql(query, { id: productId }) as any;
+      variantNodes = res?.product?.variants?.nodes || [];
+      variantIds = variantNodes.map(v => v.id);
+    } catch (err) {
+      console.warn(`[Shopify] Failed to fetch existing variants (non-fatal):`, err);
+      variantIds = [];
+    }
   } else {
     // Step 1: Create product + options + variants atomically
     const productResult = await createProductWithSet(client, input);
@@ -100,12 +255,41 @@ export async function publishToShopify(
         }
       }
     }
+
+    // Step 2.6: Reorder media so that the Primary Color's first image is at position 0 (thumbnail)
+    const primaryColorName = input.mockupImages[0]?.colorName;
+    if (primaryColorName && uploadedMedia.length > 0) {
+      const primaryMedia = uploadedMedia.find(m => m.colorName === primaryColorName);
+      if (primaryMedia) {
+        const reorderMutation = `
+          mutation productReorderMedia($id: ID!, $moves: [MoveInput!]!) {
+            productReorderMedia(id: $id, moves: $moves) {
+              userErrors { field message }
+            }
+          }
+        `;
+        try {
+          const reorderRes = await client.graphql(reorderMutation, {
+            id: productId,
+            moves: [{ id: primaryMedia.mediaId, newPosition: "0" }]
+          }) as any;
+
+          if (reorderRes.productReorderMedia?.userErrors?.length > 0) {
+            console.warn(`[Shopify] productReorderMedia failed (non-fatal):`, reorderRes.productReorderMedia.userErrors);
+          } else {
+            console.log(`[Shopify] Reordered media: moved ${primaryMedia.mediaId} (color: ${primaryColorName}) to position 0`);
+          }
+        } catch (err) {
+          console.warn(`[Shopify] productReorderMedia threw error (non-fatal):`, err);
+        }
+      }
+    }
   } else if (input.mockupPaths.length > 0) {
     // Fallback for older code
     await uploadProductImages(client, productId, input.mockupPaths.map(p => ({ kind: "local", path: p })));
   }
 
-  // Step 3: Publish to Online Store (graceful — non-fatal if scope missing)
+  // Step 3: Publish to Online Store and all channels (graceful — non-fatal if scope missing)
   try {
     await publishProduct(client, productId);
   } catch (err) {
@@ -116,10 +300,21 @@ export async function publishToShopify(
     );
   }
 
+  const variantDetails = variantNodes.map((v) => {
+    const colorOpt = v.selectedOptions.find((o) => o.name === "Color")?.value;
+    const sizeOpt = v.selectedOptions.find((o) => o.name === "Size")?.value;
+    return {
+      id: v.id,
+      colorName: colorOpt,
+      sizeName: sizeOpt,
+    };
+  });
+
   return {
     shopifyProductId: productId,
     shopifyVariantIds: variantIds,
     shopifyProductUrl: `https://${domain}/admin/products/${extractNumericId(productId)}`,
+    shopifyVariantsDetail: variantDetails,
   };
 }
 
@@ -149,30 +344,73 @@ async function createProductWithSet(
   `;
 
   const hasColors = input.colors.length > 0;
+  const hasSizes = input.sizes && input.sizes.length > 0;
+
+  const productOptions: any[] = [];
+  if (hasColors) {
+    productOptions.push({
+      name: "Color",
+      position: 1,
+      values: input.colors.map((c) => ({ name: c.name })),
+    });
+  }
+  if (hasSizes) {
+    productOptions.push({
+      name: "Size",
+      position: hasColors ? 2 : 1,
+      values: input.sizes!.map((s) => ({ name: s })),
+    });
+  }
+
+  let variants: any[] = [];
+  if (input.variants && input.variants.length > 0) {
+    variants = input.variants.map((v) => {
+      const optionValues: any[] = [];
+      if (hasColors) {
+        optionValues.push({ optionName: "Color", name: v.colorName });
+      }
+      if (hasSizes) {
+        optionValues.push({ optionName: "Size", name: v.size });
+      }
+      return {
+        optionValues,
+        price: v.price,
+        sku: v.sku,
+        inventoryPolicy: "CONTINUE", // Continue selling even if 0 stock
+      };
+    });
+  } else {
+    // Fallback to legacy behavior if no sizes provided
+    variants = hasColors
+      ? input.colors.map((c) => ({
+          optionValues: [{ optionName: "Color", name: c.name }],
+          price: input.priceUsd,
+          inventoryPolicy: "CONTINUE",
+        }))
+      : [{ price: input.priceUsd, inventoryPolicy: "CONTINUE" }];
+  }
+
+  // Get dynamic collections if not already passed
+  let finalCollections = input.collections;
+  if (finalCollections === undefined) {
+    finalCollections = await findCollectionId(client, input.productType, false);
+  }
+
+  // Get dynamic category if not already passed
+  const finalCategory = input.category !== undefined ? input.category : getTaxonomyCategoryId(input.productType);
 
   const variables = {
     synchronous: true,
     productSet: {
       title: input.title,
-      descriptionHtml: input.descriptionHtml,
+      descriptionHtml: formatDescriptionHtml(input.descriptionHtml),
       tags: input.tags,
       productType: input.productType,
-      status: "ACTIVE", // Publish immediately — no need for separate publishablePublish
-      productOptions: hasColors
-        ? [
-            {
-              name: "Color",
-              position: 1,
-              values: input.colors.map((c) => ({ name: c.name })),
-            },
-          ]
-        : [],
-      variants: hasColors
-        ? input.colors.map((c) => ({
-            optionValues: [{ optionName: "Color", name: c.name }],
-            price: input.priceUsd,
-          }))
-        : [{ price: input.priceUsd }],
+      status: "ACTIVE", // Publish immediately
+      category: finalCategory,
+      ...(finalCollections !== undefined ? { collections: finalCollections } : {}),
+      productOptions,
+      variants,
     },
   };
 
@@ -402,11 +640,77 @@ async function publishProduct(client: ShopifyClient, productId: string): Promise
     }
   `;
 
-  // Publish to online store
-  await client.graphql(mutation, {
-    id: productId,
-    input: [{ publicationId: await getOnlineStorePublicationId(client) }],
-  });
+  let pubIds = await getAllPublicationIds(client);
+  if (pubIds.length === 0) {
+    try {
+      const fallbackId = await getOnlineStorePublicationId(client);
+      pubIds = [fallbackId];
+    } catch (err) {
+      console.warn("[Shopify] Failed to get fallback Online Store publication ID:", err);
+    }
+  }
+
+  console.log(`[Shopify] Publishing product ${productId} to ${pubIds.length} publications...`);
+
+  for (const pubId of pubIds) {
+    try {
+      const res = await client.graphql(mutation, {
+        id: productId,
+        input: [{ publicationId: pubId }]
+      }) as any;
+
+      const userErrors = res?.publishablePublish?.userErrors || [];
+      if (userErrors.length > 0) {
+        console.warn(`[Shopify] Failed to publish product ${productId} to publication ${pubId} (userErrors):`, userErrors);
+      } else {
+        console.log(`[Shopify] Successfully published product ${productId} to publication ${pubId}`);
+      }
+    } catch (err) {
+      console.warn(`[Shopify] Error publishing product ${productId} to publication ${pubId}:`, err);
+    }
+  }
+}
+
+async function getAllPublicationIds(client: ShopifyClient): Promise<string[]> {
+  const ids: string[] = [];
+  let hasNextPage = true;
+  let cursor: string | null = null;
+
+  while (hasNextPage) {
+    const query = `
+      query getPublications($first: Int!, $after: String) {
+        publications(first: $first, after: $after) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          edges {
+            node {
+              id
+            }
+          }
+        }
+      }
+    `;
+
+    try {
+      const data = await client.graphql(query, { first: 50, after: cursor }) as any;
+      const nodes = data?.publications?.edges || [];
+      for (const edge of nodes) {
+        if (edge.node?.id) {
+          ids.push(edge.node.id);
+        }
+      }
+
+      hasNextPage = data?.publications?.pageInfo?.hasNextPage || false;
+      cursor = data?.publications?.pageInfo?.endCursor || null;
+    } catch (err) {
+      console.warn("[Shopify] Failed to fetch page of publications:", err);
+      break;
+    }
+  }
+
+  return ids;
 }
 
 async function getOnlineStorePublicationId(client: ShopifyClient): Promise<string> {
@@ -433,7 +737,6 @@ async function getOnlineStorePublicationId(client: ShopifyClient): Promise<strin
   );
 
   if (!onlineStore) {
-    // Use first publication as fallback
     if (data.publications.edges.length > 0) {
       return data.publications.edges[0].node.id;
     }

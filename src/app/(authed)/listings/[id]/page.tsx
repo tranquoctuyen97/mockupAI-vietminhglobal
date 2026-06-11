@@ -12,11 +12,13 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import Link from "next/link";
+import { DescriptionRenderer } from "@/components/DescriptionRenderer";
 
 interface Listing {
   id: string;
   title: string;
   descriptionHtml: string;
+  aiContent?: any;
   tags: string[];
   status: string;
   priceUsd: number;
@@ -153,9 +155,9 @@ export default function ListingDetailPage() {
             <h3 style={{ fontWeight: 600, fontSize: "0.9rem", margin: "0 0 12px" }}>
               Description
             </h3>
-            <div
-              style={{ fontSize: "0.85rem", lineHeight: 1.5 }}
-              dangerouslySetInnerHTML={{ __html: listing.descriptionHtml }}
+            <DescriptionRenderer
+              description={listing.descriptionHtml || listing.aiContent?.description}
+              className="prose prose-sm max-w-none text-sm leading-relaxed"
             />
           </div>
 

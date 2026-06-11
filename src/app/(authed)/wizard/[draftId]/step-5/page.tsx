@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 import { useWizardStore } from "@/lib/wizard/use-wizard-store";
+import { DescriptionRenderer } from "@/components/DescriptionRenderer";
 import {
   getActiveDraftDesignId,
   getLatestJobByDraftDesignId,
@@ -909,9 +910,10 @@ export default function Step5ReviewPage() {
                   Mô tả
                 </label>
                 {aiContent?.description ? (
-                  <div
-                    style={{ fontSize: "0.85rem", lineHeight: 1.5, maxHeight: 120, overflow: "auto", padding: "8px 12px", backgroundColor: "var(--bg-tertiary)", borderRadius: "var(--radius-sm)" }}
-                    dangerouslySetInnerHTML={{ __html: aiContent.description }}
+                  <DescriptionRenderer
+                    description={aiContent.description}
+                    className="prose prose-sm max-w-none text-sm leading-relaxed max-h-[120px] overflow-auto"
+                    style={{ padding: "8px 12px", backgroundColor: "var(--bg-tertiary)", borderRadius: "var(--radius-sm)" }}
                   />
                 ) : (
                   <p style={{ opacity: 0.35, fontSize: "0.85rem", margin: 0 }}>

@@ -1,5 +1,6 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
+import pg from "pg";
 
 // Prevent multiple instances in development (Next.js hot reload)
 const globalForPrisma = globalThis as unknown as {
@@ -8,7 +9,15 @@ const globalForPrisma = globalThis as unknown as {
 
 function createPrismaClient(): PrismaClient {
   const connectionString = process.env.DATABASE_URL!;
-  const adapter = new PrismaPg({ connectionString });
+  
+  const pool = new pg.Pool({
+    connectionString,
+    ssl: connectionString.includes("neon.tech") || connectionString.includes("sslmode=require")
+      ? { rejectUnauthorized: false }
+      : undefined,
+  });
+
+  const adapter = new PrismaPg(pool);
   return new PrismaClient({
     adapter,
     log:

@@ -52,6 +52,8 @@ export default function CustomAppGuidePage() {
             <li><code>read_products</code> — Đọc danh sách sản phẩm</li>
             <li><code>read_orders</code> — Đọc đơn hàng (auto-fulfill)</li>
             <li><code>write_inventory</code> — Cập nhật tồn kho</li>
+            <li><code>read_publications</code> — Đọc thông tin xuất bản</li>
+            <li><code>write_publications</code> — Quản lý xuất bản (publish sản phẩm)</li>
           </ul>
         </div>
       </div>

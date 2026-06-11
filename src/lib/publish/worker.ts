@@ -155,20 +155,188 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
     );
     const isDryRun = isPublishDryRun();
     const requireRealPrintifyMockups = PRODUCT_DEFAULTS.mockup.requireRealPrintifyMockups;
-    const { mockupImages, mockupPaths, missingColorNames } = resolveShopifyMockupMedia({
-      images: includedImages,
-      storage,
-      colorNames: listingColorNames,
-      requireRealPrintifyMockups,
-    });
-
-    if (requireRealPrintifyMockups && missingColorNames.length > 0) {
-      throw new Error(
-        `Thiếu mockup Printify thật cho màu: ${missingColorNames.join(", ")}. Vui lòng tạo lại mockup trước khi publish.`,
-      );
+    // Resolve template
+    let template = draft.template;
+    if (!template && draft.storeId) {
+      template = await prisma.storeMockupTemplate.findFirst({
+        where: { storeId: draft.storeId, isDefault: true },
+      });
     }
 
-    // ─── Stage 1: Shopify ───────────────────────────────
+    // Pre-calculate variants payload for accurate Shopify/Printify options
+    let shopifyVariants: Array<{
+      colorName: string;
+      size: string;
+      sku: string;
+      price: number;
+      printifyVariantId: string;
+    }> = [];
+    let shopifySizes: string[] = [];
+
+    let printifyApiKey: string | null = null;
+    let externalShopId: number | null = null;
+    try {
+      const result = await getClientForStore(store.id);
+      printifyApiKey = (result.client as any).apiKey;
+      externalShopId = result.externalShopId;
+    } catch (err) {
+      console.warn("[PublishWorker] Could not resolve Printify shop (non-fatal for Shopify stage):", err);
+    }
+
+    try {
+      const blueprintId = template?.printifyBlueprintId ?? 0;
+      const printProviderId = template?.printifyPrintProviderId ?? 0;
+      const productType = template?.blueprintTitle || draft.store?.name || "Apparel";
+
+      if (blueprintId && printProviderId && productType && externalShopId && printifyApiKey) {
+        // 1. Fetch pricing template
+        const pricing = await prisma.productPricingTemplate.findFirst({
+          where: { productType },
+        });
+        const baseRetailPriceUSD = pricing?.basePriceUsd ?? 24.99;
+
+        // 2. Fetch cache
+        const { client: printifyClient } = await getClientForStore(store.id);
+        const cachedVariants = await ensureVariantCostCache({
+          client: printifyClient,
+          shopId: externalShopId,
+          blueprintId,
+          printProviderId,
+        });
+
+        // 3. Extract colors & sizes from draft
+        const enabledColorIdSet = new Set(draft.enabledColorIds ?? []);
+        const storeColors = (draft.store as any)?.colors ?? [];
+        const selectedColorNames: string[] = storeColors
+          .filter((c: any) => enabledColorIdSet.has(c.id))
+          .map((c: any) => c.name);
+
+        // 4. Per-color sizes or global fallback
+        const sizesByColor = draft.enabledSizesByColor as Record<string, string[]> | null;
+        const hasSizesByColor = sizesByColor && Object.keys(sizesByColor).length > 0;
+
+        let effectiveVariantIds: number[];
+        if (hasSizesByColor) {
+          effectiveVariantIds = computeVariantMatrixPerColor(
+            cachedVariants,
+            selectedColorNames,
+            sizesByColor!,
+            draft.enabledSizes ?? [],
+          );
+        } else {
+          const selectedSizes = draft.enabledSizes || [];
+          const effectiveSizes =
+            selectedSizes.length > 0
+              ? selectedSizes
+              : [...new Set(cachedVariants.filter((v) => v.isAvailable).map((v) => v.size))];
+          effectiveVariantIds = cachedVariants
+            .filter((v) => {
+              const lowerColor = v.colorName.trim().toLowerCase();
+              const colorOk = selectedColorNames.some((c) => c.trim().toLowerCase() === lowerColor);
+              return v.isAvailable && colorOk && effectiveSizes.includes(v.size);
+            })
+            .map((v) => v.variantId);
+        }
+
+        // 5. Build payload
+        const effectiveSizesForPayload = hasSizesByColor
+          ? [...new Set(Object.values(sizesByColor!).flat())]
+          : (draft.enabledSizes?.length > 0
+            ? draft.enabledSizes
+            : [...new Set(cachedVariants.filter((v) => v.isAvailable).map((v) => v.size))]);
+
+        const priceBySizeOverride = draft.priceBySizeOverride as Record<string, number> | null;
+
+        const printifyVariantsPayload = buildVariantPayload(
+          cachedVariants,
+          selectedColorNames,
+          effectiveSizesForPayload,
+          baseRetailPriceUSD,
+          priceBySizeOverride,
+        );
+
+        const enabledSet = new Set(effectiveVariantIds);
+        const finalPrintifyVariantsPayload = printifyVariantsPayload.map((p) => ({
+          ...p,
+          is_enabled: enabledSet.has(p.id),
+        }));
+
+        shopifySizes = effectiveSizesForPayload;
+        
+        // Map enabled variants to shopifyVariants payload & validate SKU uniqueness
+        const skuSet = new Set<string>();
+        for (const p of finalPrintifyVariantsPayload) {
+          if (p.is_enabled) {
+            const cachedV = cachedVariants.find(v => v.variantId === p.id);
+            if (cachedV) {
+              let sku = p.sku?.trim();
+              if (!sku || sku === "") {
+                sku = `VMG-${blueprintId}-${p.id}`;
+              }
+              if (skuSet.has(sku)) {
+                throw new Error(`Trùng lặp SKU: ${sku}. Vui lòng kiểm tra lại cấu hình SKU.`);
+              }
+              skuSet.add(sku);
+
+              shopifyVariants.push({
+                colorName: cachedV.colorName,
+                size: cachedV.size,
+                sku: sku,
+                price: p.price,
+                printifyVariantId: String(p.id),
+              });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(
+        "[PublishWorker] Failed to build dynamic variant payload, falling back to dummy prices:",
+        err,
+      );
+      if (err instanceof Error && err.message.startsWith("Trùng lặp SKU")) {
+        throw err;
+      }
+    }
+
+    // Re-create listing variants with correct sizes and SKUs in Prisma
+    if (shopifyVariants.length > 0) {
+      console.log(`[PublishWorker] Re-creating listing variants with correct sizes and SKUs (${shopifyVariants.length} variants)...`);
+      // Delete existing variants
+      await prisma.listingVariant.deleteMany({
+        where: { listingId: listing.id },
+      });
+      
+      // Re-create variants
+      await prisma.listing.update({
+        where: { id: listing.id },
+        data: {
+          variants: {
+            create: shopifyVariants.map(v => {
+              // Find matching hex for color
+              const matchingColor = listing.variants.find(lv => lv.colorName.toLowerCase() === v.colorName.toLowerCase());
+              const hex = matchingColor?.colorHex || "#000000";
+              return {
+                colorName: v.colorName,
+                colorHex: hex,
+                size: v.size,
+                sku: v.sku,
+                printifyVariantId: v.printifyVariantId,
+              };
+            }),
+          },
+        },
+      });
+      
+      // Reload listing variants so we have the updated ones in memory
+      const updatedListing = await prisma.listing.findUnique({
+        where: { id: listing.id },
+        include: { variants: true },
+      });
+      if (updatedListing) {
+        listing.variants = updatedListing.variants;
+      }
+    }
 
     const shopifyJob = listing.publishJobs.find((j) => j.stage === "SHOPIFY");
     if (!shopifyJob) throw new Error("Shopify publish job not found");
@@ -180,12 +348,35 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
       data: { status: "RUNNING" },
     });
 
-    let shopifyResult: { shopifyProductId: string; shopifyVariantIds: string[] } | null = null;
+    const updatedListingColorNames = listing.variants.map((v) => v.colorName);
+    const { mockupImages, mockupPaths, missingColorNames } = resolveShopifyMockupMedia({
+      images: includedImages,
+      storage,
+      colorNames: updatedListingColorNames,
+      requireRealPrintifyMockups,
+    });
+
+    if (requireRealPrintifyMockups && missingColorNames.length > 0) {
+      throw new Error(
+        `Thiếu mockup Printify thật cho màu: ${missingColorNames.join(", ")}. Vui lòng tạo lại mockup trước khi publish.`,
+      );
+    }
+
+    let shopifyResult: {
+      shopifyProductId: string;
+      shopifyVariantIds: string[];
+      shopifyVariantsDetail?: Array<{ id: string; colorName?: string; sizeName?: string }>;
+    } | null = null;
 
     if (isDryRun) {
       shopifyResult = {
         shopifyProductId: `gid://shopify/Product/dry-run-${Date.now()}`,
-        shopifyVariantIds: listing.variants.map((_, i) => `gid://shopify/ProductVariant/dry-${i}`),
+        shopifyVariantIds: listing.variants.map((v) => v.shopifyVariantId || `gid://shopify/ProductVariant/dry-${v.id}`),
+        shopifyVariantsDetail: listing.variants.map((v) => ({
+          id: v.shopifyVariantId || `gid://shopify/ProductVariant/dry-${v.id}`,
+          colorName: v.colorName,
+          sizeName: v.size,
+        })),
       };
       await sleep(1000);
     } else {
@@ -201,7 +392,14 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
             tags: listing.tags,
             priceUsd: listing.priceUsd,
             productType: draft.template?.blueprintTitle || draft.store?.name || "Apparel",
-            colors: listing.variants.map((v) => ({ name: v.colorName, hex: v.colorHex })),
+            colors: listing.variants.reduce((acc, v) => {
+              if (!acc.some((c) => c.name === v.colorName)) {
+                acc.push({ name: v.colorName, hex: v.colorHex });
+              }
+              return acc;
+            }, [] as Array<{ name: string; hex: string }>),
+            sizes: shopifySizes.length > 0 ? shopifySizes : undefined,
+            variants: shopifyVariants.length > 0 ? shopifyVariants : undefined,
             mockupPaths,
             mockupImages,
             existingProductId: createdProductId, // reuse if created in previous attempt
@@ -210,6 +408,7 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
           return {
             shopifyProductId: result.shopifyProductId,
             shopifyVariantIds: result.shopifyVariantIds,
+            shopifyVariantsDetail: result.shopifyVariantsDetail,
           };
         },
         shopifyJob.id,
@@ -235,15 +434,35 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
       data: { shopifyProductId: shopifyResult.shopifyProductId },
     });
 
-    for (
-      let i = 0;
-      i < listing.variants.length && i < shopifyResult.shopifyVariantIds.length;
-      i++
-    ) {
-      await prisma.listingVariant.update({
-        where: { id: listing.variants[i].id },
-        data: { shopifyVariantId: shopifyResult.shopifyVariantIds[i] },
-      });
+    if (shopifyResult.shopifyVariantsDetail && shopifyResult.shopifyVariantsDetail.length > 0) {
+      for (const detail of shopifyResult.shopifyVariantsDetail) {
+        if (!detail.colorName || !detail.sizeName) continue;
+        
+        // Find matching variant in DB
+        const dbVariant = listing.variants.find(
+          (v) =>
+            v.colorName.toLowerCase() === detail.colorName!.toLowerCase() &&
+            v.size.toLowerCase() === detail.sizeName!.toLowerCase()
+        );
+        
+        if (dbVariant) {
+          await prisma.listingVariant.update({
+            where: { id: dbVariant.id },
+            data: { shopifyVariantId: detail.id },
+          });
+        }
+      }
+    } else {
+      for (
+        let i = 0;
+        i < listing.variants.length && i < shopifyResult.shopifyVariantIds.length;
+        i++
+      ) {
+        await prisma.listingVariant.update({
+          where: { id: listing.variants[i].id },
+          data: { shopifyVariantId: shopifyResult.shopifyVariantIds[i] },
+        });
+      }
     }
 
     await prisma.publishJob.update({
@@ -253,11 +472,18 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
 
     emitEvent("publish.shopify.done", { shopifyProductId: shopifyResult.shopifyProductId });
 
+    // Refresh listing object before running Printify stage
+    const refreshedListing = await prisma.listing.findUnique({
+      where: { id: listingId },
+      include: { variants: true, publishJobs: true },
+    });
+    if (refreshedListing) {
+      Object.assign(listing, refreshedListing);
+    }
+
     // ─── Stage 2: Printify ──────────────────────────────
 
     // Phase 6.5: Lookup Printify key via workspace-level account
-    let printifyApiKey: string | null = null;
-    let externalShopId: number | null = null;
     try {
       const result = await getClientForStore(store.id);
       printifyApiKey = (result.client as any).apiKey; // access private field for worker
@@ -780,7 +1006,7 @@ export function resolveShopifyMockupMedia(input: {
   }));
   const selectedColorKeys = new Set(selectedColors.map((color) => color.key));
   const coveredColorKeys = new Set<string>();
-  const mockupImages: ShopifyMockupImage[] = [];
+  const rawMockupImages: ShopifyMockupImage[] = [];
 
   for (const image of input.images) {
     const colorKey = normalizeColorName(image.colorName);
@@ -791,7 +1017,7 @@ export function resolveShopifyMockupMedia(input: {
 
     if (isRemoteUrl(source)) {
       if (!isAllowedRemoteMockupUrl(source)) continue;
-      mockupImages.push({
+      rawMockupImages.push({
         kind: "remote",
         url: source,
         colorName: image.colorName,
@@ -810,7 +1036,7 @@ export function resolveShopifyMockupMedia(input: {
     if (input.requireRealPrintifyMockups && !hasRealPrintifySource) continue;
 
     const path = input.storage.resolvePath(source);
-    mockupImages.push({
+    rawMockupImages.push({
       kind: "local",
       path,
       colorName: image.colorName,
@@ -818,9 +1044,36 @@ export function resolveShopifyMockupMedia(input: {
     coveredColorKeys.add(colorKey);
   }
 
+  // 1. Choose a random Primary Color from colors that have mockups
+  const coveredColorNames = Array.from(coveredColorKeys);
+  let primaryColorKey: string | null = null;
+  if (coveredColorNames.length > 0) {
+    const randomName = coveredColorNames[Math.floor(Math.random() * coveredColorNames.length)];
+    primaryColorKey = randomName;
+  }
+
+  // 2. Separate primary color images and rest
+  const primaryImages = rawMockupImages.filter(img => img.colorName && normalizeColorName(img.colorName) === primaryColorKey);
+  const otherImages = rawMockupImages.filter(img => !img.colorName || normalizeColorName(img.colorName) !== primaryColorKey);
+
+  // 3. Sort otherImages to match input.colorNames order
+  const colorOrderMap = new Map<string, number>();
+  input.colorNames.forEach((name, idx) => {
+    colorOrderMap.set(normalizeColorName(name), idx);
+  });
+
+  otherImages.sort((a, b) => {
+    const idxA = a.colorName ? (colorOrderMap.get(normalizeColorName(a.colorName)) ?? 9999) : 9999;
+    const idxB = b.colorName ? (colorOrderMap.get(normalizeColorName(b.colorName)) ?? 9999) : 9999;
+    return idxA - idxB;
+  });
+
+  // 4. Combine: primary color images first, then other sorted images
+  const finalMockupImages = [...primaryImages, ...otherImages];
+
   return {
-    mockupImages,
-    mockupPaths: mockupImages
+    mockupImages: finalMockupImages,
+    mockupPaths: finalMockupImages
       .filter(
         (image): image is Extract<ShopifyMockupImage, { kind: "local" }> => image.kind === "local",
       )

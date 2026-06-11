@@ -1,17 +1,11 @@
+packages:
+  - '.'
+
 allowBuilds:
-  '@prisma/engines': true
-  argon2: true
-  esbuild: true
-  msgpackr-extract: true
-  prisma: true
-  protobufjs: true
-  sharp: true
-
-ignoredBuiltDependencies:
-  - sharp
-  - unrs-resolver
-
-onlyBuiltDependencies:
-  - '@prisma/engines'
-  - argon2
-  - prisma
+  '@prisma/engines': set this to true or false
+  argon2: set this to true or false
+  esbuild: set this to true or false
+  msgpackr-extract: set this to true or false
+  prisma: set this to true or false
+  protobufjs: set this to true or false
+  sharp: set this to true or false
