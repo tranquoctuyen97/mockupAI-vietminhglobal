@@ -10,6 +10,11 @@ import {
   compositeImage,
   compositeImageOnCustomMockup,
 } from "./composite";
+import {
+  computeListingReadyRegion,
+  computeCustomPrintAreaPx,
+  isBadCompositeRegion,
+} from "./placement-region";
 import { isFinalBullMqAttempt, shouldSkipMockupImageProcessing } from "./progress";
 import { MOCKUP_QUEUE_NAME, type MockupJobPayload } from "./queue";
 import { resolveMockupSourceBuffer } from "./source";
@@ -57,6 +62,10 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
             select: {
               compositeRegionPx: true,
               scope: true,
+              view: true,
+              template: {
+                select: { printAreasByView: true },
+              },
             },
           });
 
@@ -65,7 +74,7 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
             where: { id: mockupImageId },
             select: { mockupJobId: true },
           });
-          const outputKey = `custom-mockups/renders/${image.mockupJobId}/${mockupImageId}-output.jpg`;
+          const outputKey = `custom-mockups/renders/${image.mockupJobId}/${mockupImageId}-output.webp`;
           const outputPath = storage.resolvePath(outputKey);
           await mkdir(dirname(outputPath), { recursive: true });
 
@@ -73,29 +82,46 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
           const sourceBuffer = await resolveMockupSourceBuffer(sourceUrl);
           const designBuffer = await readFile(storage.resolvePath(designStoragePath));
 
-          // Resolve composite region: use stored value, or auto-compute default center when null.
-          // Auto-default applies to TEMPLATE sources (user hasn't set position yet);
-          // DRAFT sources with null region should have been filtered in generation, but we handle
-          // them gracefully here too using the same formula as UI defaultRegion().
+          // Resolve composite region: use stored value if valid, else Smart Fit.
+          // Extracts real print-area mm from template, computes pixel bounds from
+          // actual mockup image dimensions (no more hardcoded 1000px).
+          const sourceMeta = await sharp(sourceBuffer).metadata();
+          const imgW = sourceMeta.width ?? 1000;
+          const imgH = sourceMeta.height ?? 1000;
+
+          // Extract print area mm for this view
+          const printAreasByView = source.template?.printAreasByView as
+            Record<string, { widthMm: number; heightMm: number }> | null | undefined;
+          const viewPrintArea = printAreasByView?.[source.view];
+          const printAreaMm = viewPrintArea
+            ? { widthMm: viewPrintArea.widthMm, heightMm: viewPrintArea.heightMm }
+            : { widthMm: 340, heightMm: 420 };
+
+          const printAreaPx = computeCustomPrintAreaPx(printAreaMm, imgW, imgH);
+
           let region: CustomCompositeRegion;
           if (source.compositeRegionPx) {
-            region = coerceCustomCompositeRegion(source.compositeRegionPx);
+            const stored = coerceCustomCompositeRegion(source.compositeRegionPx);
+            if (!isBadCompositeRegion(stored, printAreaPx)) {
+              region = stored;
+            } else {
+              const designMeta = await sharp(designBuffer).metadata();
+              const dw = designMeta.width ?? 1024;
+              const dh = designMeta.height ?? 1024;
+              const smart = computeListingReadyRegion(printAreaPx, dw, dh);
+              region = { ...smart, rotationDeg: 0 };
+              console.log(
+                `[MockupWorker] Bad compositeRegionPx rejected for source ${parsed.sourceId}, replaced with Smart Fit ${JSON.stringify(region)}`,
+              );
+            }
           } else {
-            const meta = await sharp(sourceBuffer).metadata();
-            const w = meta.width ?? 1000;
-            const h = meta.height ?? 1000;
-            // Fallback: fit a square into the shorter side at 90%, centered.
-            // Matches the UI's auto-fit sentinel behavior for unknown design aspect ratios.
-            const side = Math.round(Math.min(w, h) * 0.9);
-            region = {
-              x: Math.round((w - side) / 2),
-              y: Math.round((h - side) / 2),
-              width: side,
-              height: side,
-              rotationDeg: 0,
-            };
+            const designMeta = await sharp(designBuffer).metadata();
+            const dw = designMeta.width ?? 1024;
+            const dh = designMeta.height ?? 1024;
+            const smart = computeListingReadyRegion(printAreaPx, dw, dh);
+            region = { ...smart, rotationDeg: 0 };
             console.log(
-              `[MockupWorker] No compositeRegionPx for source ${parsed.sourceId} (scope=${source.scope}), using default center region ${JSON.stringify(region)}`,
+              `[MockupWorker] No compositeRegionPx for source ${parsed.sourceId} (scope=${source.scope}), using Smart Fit ${JSON.stringify(region)}`,
             );
           }
 

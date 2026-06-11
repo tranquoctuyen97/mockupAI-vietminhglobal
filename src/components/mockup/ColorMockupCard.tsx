@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Upload, SlidersHorizontal, Check, AlertTriangle, RefreshCw, CheckSquare, Square, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { CanvasPlacementEditor, type CanvasRegionPx } from "@/components/placement/CanvasPlacementEditor";
+import { computeCustomPrintAreaPx, isSentinelRegion } from "@/lib/mockup/placement-region";
 
 // --- Types ---
 
@@ -28,7 +29,16 @@ export type CardState = "NO_SOURCE" | "NO_PLACEMENT" | "READY" | "GENERATED";
 export function getCardState(source: CardSource | null, generatedOutputUrl: string | null | undefined): CardState {
   if (generatedOutputUrl) return "GENERATED";
   if (!source) return "NO_SOURCE";
-  if (source.compositeRegionPx) return "READY";
+  if (
+    source.compositeRegionPx &&
+    !isSentinelRegion(
+      source.compositeRegionPx,
+      source.compositeRegionPx.imageWidth,
+      source.compositeRegionPx.imageHeight,
+    )
+  ) {
+    return "READY";
+  }
   return "NO_PLACEMENT";
 }
 
@@ -140,8 +150,8 @@ interface ColorMockupCardProps {
   onUploadClick: () => void;         // parent opens upload modal for this color
   onPlacementSaved: () => void;      // refresh after saving placement
   onDeselectColor?: () => void;      // toggle color off in sidebar
-  /** Dynamic print area in image pixels. Falls back to 70% of image when absent. */
-  printAreaPx?: { x: number; y: number; width: number; height: number } | null;
+  /** Dynamic print area in millimeter dimensions. Falls back to full image when absent. */
+  printAreaMm?: { widthMm: number; heightMm: number } | null;
 }
 
 export function ColorMockupCard({
@@ -153,7 +163,7 @@ export function ColorMockupCard({
   onUploadClick,
   onPlacementSaved,
   onDeselectColor,
-  printAreaPx: printAreaPxProp,
+  printAreaMm,
 }: ColorMockupCardProps) {
   const state = getCardState(source, generatedOutputUrl);
   const [placementOpen, setPlacementOpen] = useState(false);
@@ -165,6 +175,12 @@ export function ColorMockupCard({
 
   const bgUrl = normalizeImageUrl(source?.imageUrl ?? source?.outputUrl ?? null);
   const canEditPlacement = !!source;
+
+  // Compute printAreaPx from mm dimensions + actual image size
+  const printAreaPx = useMemo(() => {
+    if (!printAreaMm || !imageSize) return null;
+    return computeCustomPrintAreaPx(printAreaMm, imageSize.width, imageSize.height);
+  }, [printAreaMm, imageSize]);
 
   // Detect image dimensions when placement modal opens
   useEffect(() => {
@@ -436,12 +452,7 @@ export function ColorMockupCard({
               imageWidth={imageSize.width}
               imageHeight={imageSize.height}
               mode="CUSTOM_COMPOSITE"
-              printAreaPx={printAreaPxProp ?? {
-                x: Math.round(imageSize.width * 0.15),
-                y: Math.round(imageSize.height * 0.15),
-                width: Math.round(imageSize.width * 0.7),
-                height: Math.round(imageSize.height * 0.7),
-              }}
+              printAreaPx={printAreaPx ?? undefined}
               initialRegionPx={
                 source?.compositeRegionPx
                   ? { ...source.compositeRegionPx, imageWidth: imageSize.width, imageHeight: imageSize.height }

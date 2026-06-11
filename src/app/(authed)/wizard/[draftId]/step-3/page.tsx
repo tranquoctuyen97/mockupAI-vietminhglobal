@@ -1062,30 +1062,6 @@ export default function Step3PreviewPage() {
     };
   }, [WIZARD_PRINT_AREA.widthMm, WIZARD_PRINT_AREA.heightMm]);
 
-  // Print area in image pixels for CUSTOM_COMPOSITE mode (1000×1000 mockup images).
-  // Uses mm dimensions to compute aspect-correct pixel region, centered on upper-chest.
-  const printAreaPxForCustom = useMemo(() => {
-    const IMG_SIZE = 1000; // standard custom mockup image dimension
-    // Max print area = 80% of image, centered; aspect ratio from mm
-    const paAspect = WIZARD_PRINT_AREA.widthMm / WIZARD_PRINT_AREA.heightMm;
-    const maxW = IMG_SIZE * 0.8;
-    const maxH = IMG_SIZE * 0.8;
-    let paW: number, paH: number;
-    if (paAspect > maxW / maxH) {
-      paW = Math.round(maxW);
-      paH = Math.round(maxW / paAspect);
-    } else {
-      paH = Math.round(maxH);
-      paW = Math.round(maxH * paAspect);
-    }
-    return {
-      x: Math.round((IMG_SIZE - paW) / 2),
-      y: Math.round((IMG_SIZE - paH) / 2),
-      width: paW,
-      height: paH,
-    };
-  }, [WIZARD_PRINT_AREA.widthMm, WIZARD_PRINT_AREA.heightMm]);
-
   if (loading) {
     return (
       <div>
@@ -1540,7 +1516,7 @@ export default function Step3PreviewPage() {
                   router.push(`/wizard/${draftId}/step-4`);
                 }}
                 onDeselectColor={(colorId) => toggleColor(colorId)}
-                printAreaPx={printAreaPxForCustom}
+                printAreaMm={isCustomTemplateDefault ? { widthMm: WIZARD_PRINT_AREA.widthMm, heightMm: WIZARD_PRINT_AREA.heightMm } : null}
               />
 
               {/* Kết quả mockup — gallery grid gộp tất cả designs */}
@@ -1720,6 +1696,11 @@ export default function Step3PreviewPage() {
                   designImageUrl={activeDesignPreviewUrl}
                   onRegenerate={handleGenerate}
                   onRemoveColor={removeColorFromListing}
+                  printAreaMm={
+                    isCustomTemplateDefault
+                      ? { widthMm: WIZARD_PRINT_AREA.widthMm, heightMm: WIZARD_PRINT_AREA.heightMm }
+                      : null
+                  }
                 />
               )}
 

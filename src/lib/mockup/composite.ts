@@ -122,6 +122,6 @@ export async function compositeImageOnCustomMockup(
 
   await sharp(mockupBuffer)
     .composite([{ input: overlay, left, top }])
-    .jpeg({ quality: 90 })
+    .webp({ quality: 90 })
     .toFile(outputPath);
 }

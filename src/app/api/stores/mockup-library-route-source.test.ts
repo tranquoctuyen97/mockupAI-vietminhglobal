@@ -18,8 +18,12 @@ test("mockup library upload route normalizes uploads before saving records", () 
   const listRoute = readFileSync(listRoutePath, "utf8");
   const sourceService = readFileSync(sourceServicePath, "utf8");
 
+  // Route calls normalizeCustomMockupUpload
   assert.match(listRoute, /normalizeCustomMockupUpload/);
-  assert.match(sourceService, /sharp\(input\.rawBuffer\)[\s\S]*\.rotate\(\)[\s\S]*\.jpeg\(/);
+  // Source service normalizes input (rotate + encode) and writes both storage and output paths
+  assert.match(sourceService, /normalizeSourceBuffer/);
+  assert.match(sourceService, /createWebpOutputBuffer/);
+  assert.match(sourceService, /rotate\(\)/);
   assert.match(listRoute, /storagePath/);
   assert.match(listRoute, /outputPath/);
 });

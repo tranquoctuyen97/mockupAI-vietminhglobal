@@ -1,7 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Image as KonvaImage, Layer, Rect, Stage, Text, Transformer } from "react-konva";
+import {
+  computeFitRegion,
+  computeListingReadyRegion,
+  computeLogoRegion,
+  isBadCompositeRegion,
+  isSentinelRegion,
+} from "@/lib/mockup/placement-region";
 
 export type CanvasPlacementMode = "PRINTIFY_PLACEMENT" | "CUSTOM_COMPOSITE";
 
@@ -41,34 +48,6 @@ interface CanvasPlacementEditorProps {
   printAreaPx?: PrintAreaBounds;
 }
 
-// ─── Geometry helpers ─────────────────────────────────────────────────────────
-
-function computeFit(
-  areaWidth: number,
-  areaHeight: number,
-  designWidth: number,
-  designHeight: number,
-  offsetX = 0,
-  offsetY = 0,
-): { x: number; y: number; width: number; height: number } {
-  const designAspect = designWidth / Math.max(1, designHeight);
-  const areaAspect = areaWidth / Math.max(1, areaHeight);
-  let w: number, h: number;
-  if (designAspect > areaAspect) {
-    w = areaWidth;
-    h = w / designAspect;
-  } else {
-    h = areaHeight;
-    w = h * designAspect;
-  }
-  return {
-    x: Math.round(offsetX + (areaWidth - w) / 2),
-    y: Math.round(offsetY + (areaHeight - h) / 2),
-    width: Math.round(w),
-    height: Math.round(h),
-  };
-}
-
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function CanvasPlacementEditor({
@@ -103,6 +82,12 @@ export function CanvasPlacementEditor({
     [printAreaPx, imageWidth, imageHeight],
   );
 
+  // Reset autoFit flag when input parameters change
+  useEffect(() => {
+    autoFitAppliedRef.current = false;
+  }, [designImageUrl, imageWidth, imageHeight,
+      printAreaPx?.x, printAreaPx?.y, printAreaPx?.width, printAreaPx?.height]);
+
   useEffect(() => {
     autoFitAppliedRef.current = false;
     setRegion(normalizeRegion(initialRegionPx, imageWidth, imageHeight));
@@ -122,12 +107,9 @@ export function CanvasPlacementEditor({
     setDesignImage(null);
     if (!designImageUrl) {
       // No design image — auto-fit sentinel region to print area (Rect mode)
-      const isSentinel =
-        initialRegionPx.x === 0 &&
-        initialRegionPx.y === 0 &&
-        initialRegionPx.width === imageWidth &&
-        initialRegionPx.height === imageHeight;
-      if (!autoFitAppliedRef.current && isSentinel && printAreaPx) {
+      const sentinel = isSentinelRegion(initialRegionPx, imageWidth, imageHeight);
+      const bad = printAreaPx ? isBadCompositeRegion(initialRegionPx, printAreaPx) : false;
+      if (!autoFitAppliedRef.current && (sentinel || bad)) {
         autoFitAppliedRef.current = true;
         const next: CanvasRegionPx = {
           x: pa.x,
@@ -147,18 +129,23 @@ export function CanvasPlacementEditor({
     img.crossOrigin = "anonymous";
     img.onload = () => {
       setDesignImage(img);
-      const isSentinel =
-        initialRegionPx.x === 0 &&
-        initialRegionPx.y === 0 &&
-        initialRegionPx.width === imageWidth &&
-        initialRegionPx.height === imageHeight;
-      if (!autoFitAppliedRef.current && isSentinel) {
-        autoFitAppliedRef.current = true;
-        const fitted = computeFit(pa.width, pa.height, img.naturalWidth, img.naturalHeight, pa.x, pa.y);
-        const next: CanvasRegionPx = { ...fitted, rotationDeg: 0, imageWidth, imageHeight };
-        setRegion(next);
-        onChange?.(next);
-      }
+      if (autoFitAppliedRef.current) return;
+
+      const sentinel = isSentinelRegion(initialRegionPx, imageWidth, imageHeight);
+      const bad = printAreaPx ? isBadCompositeRegion(initialRegionPx, printAreaPx) : false;
+
+      if (!sentinel && !bad) return;
+
+      autoFitAppliedRef.current = true;
+      const target = printAreaPx ?? { x: 0, y: 0, width: imageWidth, height: imageHeight };
+      const smart = computeListingReadyRegion(
+        target,
+        img.naturalWidth,
+        img.naturalHeight,
+      );
+      const next: CanvasRegionPx = { ...smart, rotationDeg: 0, imageWidth, imageHeight };
+      setRegion(next);
+      onChange?.(next);
     };
     img.src = designImageUrl;
     return () => { img.onload = null; };
@@ -247,43 +234,25 @@ export function CanvasPlacementEditor({
   }
 
   // ─── Resize modes (target print area bounds) ──────────────────────────────────
-  function handleFit() {
+  function handleSmartFit() {
     const dw = designImage?.naturalWidth ?? region.width;
     const dh = designImage?.naturalHeight ?? region.height;
-    const fitted = computeFit(pa.width, pa.height, dw, dh, pa.x, pa.y);
+    const smart = computeListingReadyRegion(pa, dw, dh);
+    applyRegion({ ...region, ...smart });
+  }
+
+  function handleMaxFit() {
+    const dw = designImage?.naturalWidth ?? region.width;
+    const dh = designImage?.naturalHeight ?? region.height;
+    const fitted = computeFitRegion(pa, dw, dh);
     applyRegion({ ...region, ...fitted });
-  }
-
-  function handleFill() {
-    applyRegion({ ...region, x: pa.x, y: pa.y, width: pa.width, height: pa.height });
-  }
-
-  function handleFile() {
-    if (!designImage || !designImage.naturalWidth) { handleFit(); return; }
-    const w = designImage.naturalWidth;
-    const h = designImage.naturalHeight;
-    applyRegion({
-      ...region,
-      x: Math.round(pa.x + (pa.width - w) / 2),
-      y: Math.round(pa.y + (pa.height - h) / 2),
-      width: w,
-      height: h,
-    });
   }
 
   function handleLogo() {
     const dw = designImage?.naturalWidth ?? region.width;
     const dh = designImage?.naturalHeight ?? region.height;
-    const w = Math.round(pa.width * 0.33);
-    const designAspect = dw / Math.max(1, dh);
-    const h = Math.round(w / designAspect);
-    applyRegion({
-      ...region,
-      x: Math.round(pa.x + (pa.width - w) / 2),
-      y: Math.round(pa.y + pa.height * 0.1),
-      width: w,
-      height: h,
-    });
+    const logo = computeLogoRegion(pa, dw, dh);
+    applyRegion({ ...region, ...logo });
   }
 
   const hasPrintAreaFrame = !!printAreaPx;
@@ -330,10 +299,9 @@ export function CanvasPlacementEditor({
           {/* Resize mode buttons */}
           {(
             [
-              { label: "Fit", action: handleFit, title: "Thu/phóng vừa vùng in, giữ tỉ lệ" },
-              { label: "Fill", action: handleFill, title: "Lấp đầy toàn bộ vùng in" },
-              { label: "File", action: handleFile, title: "Kích thước gốc của file design" },
-              { label: "Logo", action: handleLogo, title: "Thu nhỏ dạng logo ~33% vùng in" },
+              { label: "Smart Fit", action: handleSmartFit, title: "Kích thước listing-ready, vùng ngực áo" },
+              { label: "Max Fit", action: handleMaxFit, title: "Fit tối đa trong vùng in, giữ tỉ lệ" },
+              { label: "Logo", action: handleLogo, title: "Thu nhỏ dạng logo ngực trái ~18% vùng in" },
             ] as const
           ).map(({ label, action, title }) => (
             <button
@@ -488,11 +456,10 @@ export function CanvasPlacementEditor({
             <Transformer
               ref={transformerRef}
               rotateEnabled={false}
-              keepRatio={false}
+              keepRatio={true}
               enabledAnchors={[
-                "top-left", "top-center", "top-right",
-                "middle-left", "middle-right",
-                "bottom-left", "bottom-center", "bottom-right",
+                "top-left", "top-right",
+                "bottom-left", "bottom-right",
               ]}
               boundBoxFunc={(oldBox, newBox) => {
                 if (newBox.width < 12 || newBox.height < 12) return oldBox;
@@ -521,44 +488,17 @@ export function CanvasPlacementEditor({
         }}
       >
         {showManualInputs ? (
-          <div className="flex items-center gap-2" style={{ flexWrap: "wrap", flex: 1 }}>
-            {(
-              [
-                { label: "X", key: "x" as const, min: -imageWidth, max: imageWidth },
-                { label: "Y", key: "y" as const, min: -imageHeight, max: imageHeight },
-                { label: "W", key: "width" as const, min: 1, max: imageWidth },
-                { label: "H", key: "height" as const, min: 1, max: imageHeight },
-                { label: "°", key: "rotationDeg" as const, min: -360, max: 360 },
-              ] as const
-            ).map(({ label, key, min, max }) => (
-              <label key={key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.74rem", color: "var(--text-muted)" }}>
-                <span style={{ fontWeight: 800, minWidth: 14 }}>{label}</span>
-                <input
-                  type="number"
-                  value={region[key]}
-                  min={min}
-                  max={max}
-                  step={1}
-                  onChange={(e) => {
-                    const val = parseFloat(e.target.value);
-                    if (!isNaN(val)) {
-                      applyRegion({ ...region, [key]: val });
-                    }
-                  }}
-                  style={{
-                    width: key === "rotationDeg" ? 54 : 64,
-                    padding: "3px 6px",
-                    fontSize: "0.74rem",
-                    borderRadius: 6,
-                    border: "1px solid var(--border-default)",
-                    background: "var(--bg-secondary)",
-                    color: "var(--text-primary)",
-                    textAlign: "right",
-                  }}
-                />
-              </label>
-            ))}
-          </div>
+          <ManualInputs
+            region={region}
+            designAspect={
+              designImage
+                ? designImage.naturalWidth / Math.max(1, designImage.naturalHeight)
+                : region.width / Math.max(1, region.height)
+            }
+            imageWidth={imageWidth}
+            imageHeight={imageHeight}
+            onApply={applyRegion}
+          />
         ) : (
           <span style={{ fontSize: "0.74rem", color: "var(--text-muted)", fontWeight: 800 }}>
             x {region.x}px · y {region.y}px · {region.width}x{region.height}px · {region.rotationDeg}°
@@ -579,6 +519,92 @@ export function CanvasPlacementEditor({
     </div>
   );
 }
+
+// ─── Manual Inputs (Width/Height linked by aspect ratio) ──────────────────────
+
+interface ManualInputsProps {
+  region: CanvasRegionPx;
+  designAspect: number;
+  imageWidth: number;
+  imageHeight: number;
+  onApply: (next: CanvasRegionPx) => void;
+}
+
+function ManualInputs({
+  region,
+  designAspect,
+  imageWidth,
+  imageHeight,
+  onApply,
+}: ManualInputsProps) {
+  const handleChange = useCallback(
+    (key: "x" | "y" | "width" | "height" | "rotationDeg", val: number) => {
+      if (key === "width") {
+        // Width → auto-compute Height from aspect ratio
+        const newHeight = Math.round(val / designAspect);
+        onApply({ ...region, width: val, height: newHeight });
+      } else if (key === "height") {
+        // Height → auto-compute Width from aspect ratio
+        const newWidth = Math.round(val * designAspect);
+        onApply({ ...region, width: newWidth, height: val });
+      } else {
+        onApply({ ...region, [key]: val });
+      }
+    },
+    [region, designAspect, onApply],
+  );
+
+  const inputs = [
+    { label: "X", key: "x" as const, min: -imageWidth, max: imageWidth },
+    { label: "Y", key: "y" as const, min: -imageHeight, max: imageHeight },
+    { label: "W", key: "width" as const, min: 1, max: imageWidth },
+    { label: "H", key: "height" as const, min: 1, max: imageHeight, hint: "= W / ratio" },
+    { label: "°", key: "rotationDeg" as const, min: -360, max: 360 },
+  ];
+
+  return (
+    <div className="flex items-center gap-2" style={{ flexWrap: "wrap", flex: 1 }}>
+      {inputs.map(({ label, key, min, max, hint }) => (
+        <label
+          key={key}
+          title={hint}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            fontSize: "0.74rem",
+            color: "var(--text-muted)",
+          }}
+        >
+          <span style={{ fontWeight: 800, minWidth: 14 }}>{label}</span>
+          <input
+            type="number"
+            value={Math.round(region[key])}
+            min={min}
+            max={max}
+            step={1}
+            onChange={(e) => {
+              const val = parseFloat(e.target.value);
+              if (!isNaN(val)) handleChange(key, val);
+            }}
+            style={{
+              width: key === "rotationDeg" ? 54 : 64,
+              padding: "3px 6px",
+              fontSize: "0.74rem",
+              borderRadius: 6,
+              border: "1px solid var(--border-default)",
+              background: key === "height" ? "var(--bg-inset, #f7f7f4)" : "var(--bg-secondary)",
+              color: key === "height" ? "var(--text-muted)" : "var(--text-primary)",
+              textAlign: "right",
+            }}
+          />
+        </label>
+      ))}
+    </div>
+  );
+}
+
+// ─── Normalize & clamp ─────────────────────────────────────────────────────────
 
 function normalizeRegion(
   region: CanvasRegionPx,
