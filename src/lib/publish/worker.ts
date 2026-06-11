@@ -26,13 +26,16 @@ import { createOrUpdatePrintifyProduct, ensurePrintifyImage } from "@/lib/printi
 import {
   buildVariantPayload,
   computeVariantMatrixPerColor,
+  buildShopifyVariantInputs,
+  computeEnabledVariantSelection,
   ensureVariantCostCache,
+  type ShopifyVariantPlanItem,
 } from "@/lib/printify/variant-catalog";
 import { ShopifyClient } from "@/lib/shopify/client";
 import { sseChannels } from "@/lib/sse/channel";
 import { getStorage } from "@/lib/storage/local-disk";
 import { publishToPrintify } from "./printify";
-import { publishToShopify, type ShopifyMockupImage } from "./shopify";
+import { publishToShopify, type ShopifyMockupImage, type ShopifyVariantInput } from "./shopify";
 
 const MAX_RETRIES = 5;
 const BACKOFF_BASE_MS = 2000;
@@ -194,6 +197,51 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
       };
       await sleep(1000);
     } else {
+      // Read the Printify catalog/cache BEFORE productSet so the Shopify payload
+      // carries the full Color + Size + SKU + price matrix. Falls back to a
+      // colors-only payload when the catalog can't be resolved.
+      let variantPlan: ShopifyVariantPlanItem[] | null = null;
+      try {
+        variantPlan = await resolveShopifyVariantPlan(draft, store.id);
+      } catch (err) {
+        console.warn(
+          "[PublishWorker] Failed to resolve Shopify variant plan, falling back to colors-only:",
+          err,
+        );
+      }
+
+      let colorsForShopify = listing.variants.map((v) => ({ name: v.colorName, hex: v.colorHex }));
+      let variantsForShopify: ShopifyVariantInput[] | undefined;
+      if (variantPlan && variantPlan.length > 0) {
+        validateVariantSkus(variantPlan);
+        variantsForShopify = variantPlan.map((v) => ({
+          colorName: v.colorName,
+          size: v.size,
+          sku: v.sku,
+          priceUsd: v.priceUsd,
+        }));
+        // Derive Color option values from the plan (unique, plan order) so they
+        // exactly match the variant option values sent to productSet.
+        const seenColor = new Set<string>();
+        const planColors: Array<{ name: string; hex: string }> = [];
+        for (const v of variantPlan) {
+          const key = v.colorName.trim().toLowerCase();
+          if (seenColor.has(key)) continue;
+          seenColor.add(key);
+          planColors.push({ name: v.colorName, hex: v.colorHex ?? "" });
+        }
+        if (planColors.length > 0) colorsForShopify = planColors;
+      }
+
+      // Pick a random primary color (rotates thumbnails) and order the upload so
+      // its media is first; the colors array order is preserved for the dropdown.
+      const primaryColorName = pickPrimaryColorName(mockupImages);
+      const orderedMockupImages = orderMockupImagesByPrimary(
+        mockupImages,
+        colorsForShopify.map((c) => c.name),
+        primaryColorName,
+      );
+
       // Track product ID across retries to prevent duplicate creation
       let createdProductId: string | null = null;
 
@@ -206,9 +254,12 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
             tags: listing.tags,
             priceUsd: listing.priceUsd,
             productType: draft.template?.blueprintTitle || draft.store?.name || "Apparel",
-            colors: listing.variants.map((v) => ({ name: v.colorName, hex: v.colorHex })),
+            vendor: "Printify",
+            colors: colorsForShopify,
+            variants: variantsForShopify,
+            primaryColorName,
             mockupPaths,
-            mockupImages,
+            mockupImages: orderedMockupImages,
             existingProductId: createdProductId, // reuse if created in previous attempt
           });
           createdProductId = result.shopifyProductId; // save for next retry
@@ -427,14 +478,14 @@ export async function runPrintifyStage(
       resolveEffectivePlacementData(draft.placementOverride, template?.defaultPlacement) ??
       (targetDesign
         ? buildListingReadyPlacementData({
-            design: { widthPx: targetDesign.width, heightPx: targetDesign.height },
-            printArea: DEFAULT_PRINT_AREA,
-            template: {
-              productType: draft.productType,
-              blueprintTitle: template?.blueprintTitle,
-              blueprintBrand: template?.blueprintBrand,
-            },
-          })
+          design: { widthPx: targetDesign.width, heightPx: targetDesign.height },
+          printArea: DEFAULT_PRINT_AREA,
+          template: {
+            productType: draft.productType,
+            blueprintTitle: template?.blueprintTitle,
+            blueprintBrand: template?.blueprintBrand,
+          },
+        })
         : defaultPlacementData());
 
     // -- Calculate Variants Payload (Price & SKU) --
@@ -467,42 +518,16 @@ export async function runPrintifyStage(
           .filter((c: any) => enabledColorIdSet.has(c.id))
           .map((c: any) => c.name);
 
-        // 4. Per-color sizes or global fallback
+        // 4. Per-color sizes or global fallback (shared with Shopify variant plan)
         const sizesByColor = draft.enabledSizesByColor as Record<string, string[]> | null;
-        const hasSizesByColor = sizesByColor && Object.keys(sizesByColor).length > 0;
-
-        let effectiveVariantIds: number[];
-        if (hasSizesByColor) {
-          // Per-color mode: each color uses its own size list
-          effectiveVariantIds = computeVariantMatrixPerColor(
-            cachedVariants,
-            selectedColorNames,
-            sizesByColor!,
-            draft.enabledSizes ?? [],
-          );
-        } else {
-          // Legacy global mode
-          const selectedSizes = draft.enabledSizes || [];
-          const effectiveSizes =
-            selectedSizes.length > 0
-              ? selectedSizes
-              : [...new Set(cachedVariants.filter((v) => v.isAvailable).map((v) => v.size))];
-          effectiveVariantIds = cachedVariants
-            .filter((v) => {
-              const lowerColor = v.colorName.trim().toLowerCase();
-              const colorOk = selectedColorNames.some((c) => c.trim().toLowerCase() === lowerColor);
-              return v.isAvailable && colorOk && effectiveSizes.includes(v.size);
-            })
-            .map((v) => v.variantId);
-        }
+        const { effectiveVariantIds, effectiveSizesForPayload } = computeEnabledVariantSelection(
+          cachedVariants,
+          selectedColorNames,
+          sizesByColor,
+          draft.enabledSizes ?? [],
+        );
 
         // 5. Build payload with computed variant IDs determining enabled state
-        const effectiveSizesForPayload = hasSizesByColor
-          ? [...new Set(Object.values(sizesByColor!).flat())]
-          : draft.enabledSizes?.length > 0
-            ? draft.enabledSizes
-            : [...new Set(cachedVariants.filter((v) => v.isAvailable).map((v) => v.size))];
-
         const priceBySizeOverride = draft.priceBySizeOverride as Record<string, number> | null;
 
         printifyVariantsPayload = buildVariantPayload(
@@ -860,4 +885,156 @@ export function resolveShopifyMockupMedia(input: {
 
 function normalizeColorName(value: string): string {
   return value.trim().toLowerCase();
+}
+
+/**
+ * Pick a random Primary Color among the colors that actually have mockup media.
+ * Its media is moved to the front of the upload list (and to position 0 via
+ * productReorderMedia) so consecutively published products rotate thumbnails.
+ * Returns null when no mockup carries a color name.
+ */
+export function pickPrimaryColorName(
+  mockupImages: ShopifyMockupImage[],
+  rng: () => number = Math.random,
+): string | null {
+  const colors = [
+    ...new Set(
+      mockupImages
+        .map((m) => m.colorName)
+        .filter((c): c is string => typeof c === "string" && c.trim().length > 0),
+    ),
+  ];
+  if (colors.length === 0) return null;
+  return colors[Math.floor(rng() * colors.length)] ?? colors[0];
+}
+
+/**
+ * Reorder mockup images so the primary color group is first, with the remaining
+ * groups following the original storefront color order (stable within a group).
+ * The colors array passed to Shopify keeps its original order, so the storefront
+ * dropdown is unchanged — only upload/media order is affected.
+ */
+export function orderMockupImagesByPrimary(
+  mockupImages: ShopifyMockupImage[],
+  colorOrder: string[],
+  primaryColorName: string | null,
+): ShopifyMockupImage[] {
+  if (!primaryColorName) return mockupImages;
+  const primaryKey = primaryColorName.trim().toLowerCase();
+  const orderRank = new Map(colorOrder.map((name, i) => [name.trim().toLowerCase(), i] as const));
+  const rankOf = (name?: string): number => {
+    if (!name) return colorOrder.length + 1;
+    const key = name.trim().toLowerCase();
+    if (key === primaryKey) return -1;
+    return orderRank.get(key) ?? colorOrder.length;
+  };
+
+  return mockupImages
+    .map((img, index) => ({ img, index }))
+    .sort((a, b) => {
+      const ra = rankOf(a.img.colorName);
+      const rb = rankOf(b.img.colorName);
+      if (ra !== rb) return ra - rb;
+      return a.index - b.index; // stable within a color group
+    })
+    .map((entry) => entry.img);
+}
+
+/**
+ * Validate variant SKUs before sending to Shopify.
+ * Throws on duplicate SKUs, or when SKUs are present on some variants but
+ * missing on others (inconsistent catalog). A catalog where no variant has a
+ * SKU is allowed (warning only) so SKU-less blueprints can still publish.
+ */
+export function validateVariantSkus(variants: ShopifyVariantPlanItem[]): void {
+  if (variants.length === 0) return;
+  const withSku = variants.filter((v) => v.sku && v.sku.trim().length > 0);
+
+  if (withSku.length === 0) {
+    console.warn("[PublishWorker] No SKUs present on any variant — publishing without SKUs");
+    return;
+  }
+
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const v of withSku) {
+    const sku = v.sku!.trim();
+    if (seen.has(sku)) duplicates.add(sku);
+    seen.add(sku);
+  }
+  if (duplicates.size > 0) {
+    throw new Error(`Duplicate SKU(s) detected, aborting publish: ${[...duplicates].join(", ")}`);
+  }
+
+  if (withSku.length < variants.length) {
+    const missing = variants
+      .filter((v) => !v.sku || v.sku.trim().length === 0)
+      .map((v) => `${v.colorName}${v.size ? ` / ${v.size}` : ""}`);
+    throw new Error(`Missing SKU for variant(s), aborting publish: ${missing.join(", ")}`);
+  }
+}
+
+/**
+ * Read the Printify variant catalog/cache and build the full Shopify variant
+ * plan (Color + Size + SKU + price) BEFORE the Shopify productSet call.
+ * Returns null when the catalog cannot be resolved (missing blueprint/provider
+ * or no enabled variants) so the caller falls back to colors-only variants.
+ */
+async function resolveShopifyVariantPlan(
+  // biome-ignore lint/suspicious/noExplicitAny: prisma draft shape, matches runPrintifyStage convention
+  draft: any,
+  storeId: string,
+): Promise<ShopifyVariantPlanItem[] | null> {
+  const template = draft.template;
+  const blueprintId = template?.printifyBlueprintId ?? 0;
+  const printProviderId = template?.printifyPrintProviderId ?? 0;
+  const productType = template?.blueprintTitle ?? draft.productType;
+  if (!blueprintId || !printProviderId || !productType) return null;
+
+  const { client: printifyClient, externalShopId } = await getClientForStore(storeId);
+  if (!externalShopId) return null;
+
+  const pricing = await prisma.productPricingTemplate.findFirst({ where: { productType } });
+  const baseRetailPriceUSD = pricing?.basePriceUsd ?? 24.99;
+
+  const cachedVariants = await ensureVariantCostCache({
+    client: printifyClient,
+    shopId: externalShopId,
+    blueprintId,
+    printProviderId,
+  });
+
+  const enabledColorIdSet = new Set(draft.enabledColorIds ?? []);
+  const storeColors =
+    (draft.store as { colors?: Array<{ id: string; name: string }> } | null)?.colors ?? [];
+  const selectedColorNames = storeColors
+    .filter((c) => enabledColorIdSet.has(c.id))
+    .map((c) => c.name);
+  if (selectedColorNames.length === 0) return null;
+
+  const sizesByColor = draft.enabledSizesByColor as Record<string, string[]> | null;
+  const { effectiveVariantIds, effectiveSizesForPayload } = computeEnabledVariantSelection(
+    cachedVariants,
+    selectedColorNames,
+    sizesByColor,
+    draft.enabledSizes ?? [],
+  );
+  if (effectiveVariantIds.length === 0) return null;
+
+  const priceBySizeOverride = draft.priceBySizeOverride as Record<string, number> | null;
+  const variantPayload = buildVariantPayload(
+    cachedVariants,
+    selectedColorNames,
+    effectiveSizesForPayload,
+    baseRetailPriceUSD,
+    priceBySizeOverride,
+  );
+
+  const plan = buildShopifyVariantInputs(
+    cachedVariants,
+    variantPayload,
+    effectiveVariantIds,
+    selectedColorNames,
+  );
+  return plan.length > 0 ? plan : null;
 }

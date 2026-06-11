@@ -4,6 +4,7 @@
 
 import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
+import { formatDescriptionHtml } from "@/lib/content/description-html";
 import { prisma } from "@/lib/db";
 import { generateIdempotencyKey, runPublishWorker } from "@/lib/publish/worker";
 
@@ -59,17 +60,14 @@ function resolveSelectedDraftDesigns(draft: any): DraftDesignSelection[] {
   ];
 }
 
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await validateSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { id: draftId } = await params;
-  const body = await request.json().catch(() => ({})) as { priceUsd?: number | string | null };
+  const body = (await request.json().catch(() => ({}))) as { priceUsd?: number | string | null };
 
   const draft = await prisma.wizardDraft.findFirst({
     where: { id: draftId, tenantId: session.tenantId },
@@ -95,7 +93,10 @@ export async function POST(
   }
 
   if (!draft.store) {
-    return NextResponse.json({ error: "Store không tồn tại. Vui lòng chọn lại store." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Store không tồn tại. Vui lòng chọn lại store." },
+      { status: 400 },
+    );
   }
 
   const selectedDraftDesigns = resolveSelectedDraftDesigns(draft);
@@ -110,7 +111,11 @@ export async function POST(
     });
   }
 
-  const aiContent = draft.aiContent as { title?: string; description?: string; tags?: string[] } | null;
+  const aiContent = draft.aiContent as {
+    title?: string;
+    description?: string;
+    tags?: string[];
+  } | null;
   if (!aiContent?.title) {
     return NextResponse.json({ error: "AI content not generated" }, { status: 400 });
   }
@@ -130,10 +135,12 @@ export async function POST(
     : pricingTemplate?.basePriceUsd || draft.store?.defaultPriceUsd?.toNumber() || 24.99;
 
   const colors =
-    draft.store?.colors?.filter((c: any) => (draft.enabledColorIds ?? []).includes(c.id)).map((c: any) => ({
-      title: c.name,
-      hex: c.hex,
-    })) || [];
+    draft.store?.colors
+      ?.filter((c: any) => (draft.enabledColorIds ?? []).includes(c.id))
+      .map((c: any) => ({
+        title: c.name,
+        hex: c.hex,
+      })) || [];
 
   const hasDraftDesignRows = (draft.draftDesigns ?? []).length > 0;
   const listings: PublishListingResponse[] = [];
@@ -177,7 +184,7 @@ export async function POST(
         wizardDraftId: draftId,
         wizardDraftDesignId: hasDraftDesignRows ? draftDesign.id : null,
         title: aiContent.title || "",
-        descriptionHtml: aiContent.description || "",
+        descriptionHtml: formatDescriptionHtml(aiContent.description),
         tags: aiContent.tags || [],
         priceUsd,
         createdBy: session.id,

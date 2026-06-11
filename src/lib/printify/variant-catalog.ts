@@ -14,11 +14,7 @@
  */
 
 import { prisma } from "@/lib/db";
-import type {
-  PrintifyClient,
-  PrintifyProductResponse,
-  PrintifyProductOption,
-} from "./client";
+import type { PrintifyClient, PrintifyProductOption, PrintifyProductResponse } from "./client";
 
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 export const DUMMY_PRODUCT_TITLE_PREFIX = "[INTERNAL_COST_LOOKUP]";
@@ -79,10 +75,7 @@ export async function ensureVariantCostCache(input: {
       where: { blueprintId, printProviderId },
     });
     if (cached.length > 0) {
-      const oldest = cached.reduce(
-        (o, v) => (v.fetchedAt < o ? v.fetchedAt : o),
-        new Date(),
-      );
+      const oldest = cached.reduce((o, v) => (v.fetchedAt < o ? v.fetchedAt : o), new Date());
       if (Date.now() - oldest.getTime() < CACHE_TTL_MS) {
         return cached.map(toCachedVariant);
       }
@@ -121,10 +114,7 @@ async function _buildVariantCostCache(input: {
   const { client, shopId, blueprintId, printProviderId } = input;
 
   // 2. Fetch catalog variants (only has id, title, options.color, options.size)
-  const catalogResponse = await client.getBlueprintVariants(
-    blueprintId,
-    printProviderId,
-  );
+  const catalogResponse = await client.getBlueprintVariants(blueprintId, printProviderId);
   const catalogVariants = catalogResponse.variants;
 
   // ── Sync print area from placeholders (first variant) ──
@@ -150,17 +140,20 @@ async function _buildVariantCostCache(input: {
             update: { widthMm, heightMm, syncedAt: new Date() },
           });
         } catch (e) {
-          console.warn(`[variant-cache] Failed to sync print area for blueprint ${blueprintId} / ${ph.position}:`, e);
+          console.warn(
+            `[variant-cache] Failed to sync print area for blueprint ${blueprintId} / ${ph.position}:`,
+            e,
+          );
         }
       }
-      console.log(`[variant-cache] Synced print area for blueprint ${blueprintId}: ${firstVariant.placeholders.length} positions`);
+      console.log(
+        `[variant-cache] Synced print area for blueprint ${blueprintId}: ${firstVariant.placeholders.length} positions`,
+      );
     }
   }
 
   if (catalogVariants.length === 0) {
-    throw new Error(
-      `No variants found for blueprint ${blueprintId} / provider ${printProviderId}`,
-    );
+    throw new Error(`No variants found for blueprint ${blueprintId} / provider ${printProviderId}`);
   }
 
   // 3. Upload tiny dummy design image (1x1 transparent PNG)
@@ -171,7 +164,7 @@ async function _buildVariantCostCache(input: {
   if (catalogVariants.length > MAX_ENABLED_VARIANTS) {
     console.log(
       `[variant-cache] Blueprint ${blueprintId}: ${catalogVariants.length} variants, ` +
-      `enabling first ${MAX_ENABLED_VARIANTS}, disabling ${catalogVariants.length - MAX_ENABLED_VARIANTS}`,
+        `enabling first ${MAX_ENABLED_VARIANTS}, disabling ${catalogVariants.length - MAX_ENABLED_VARIANTS}`,
     );
   }
 
@@ -230,15 +223,13 @@ async function _buildVariantCostCache(input: {
     }
 
     // 5b. Check which variants are missing cost data (disabled variants may not return cost)
-    const missingCostIds = catalogVariants
-      .map((cv) => cv.id)
-      .filter((id) => !costMap.has(id));
+    const missingCostIds = catalogVariants.map((cv) => cv.id).filter((id) => !costMap.has(id));
 
     // 6. Batch fallback — create additional dummies for variants missing cost
     if (missingCostIds.length > 0) {
       console.warn(
         `[variant-cache] ${missingCostIds.length}/${catalogVariants.length} ` +
-        `variants missing cost after dummy #1. Creating batch fallback.`,
+          `variants missing cost after dummy #1. Creating batch fallback.`,
       );
 
       for (let i = 0; i < missingCostIds.length; i += MAX_ENABLED_VARIANTS) {
@@ -260,9 +251,7 @@ async function _buildVariantCostCache(input: {
               placeholders: [
                 {
                   position: "front",
-                  images: [
-                    { id: dummyImageId, x: 0.5, y: 0.5, scale: 0.1, angle: 0 },
-                  ],
+                  images: [{ id: dummyImageId, x: 0.5, y: 0.5, scale: 0.1, angle: 0 }],
                 },
               ],
             },
@@ -301,9 +290,7 @@ async function _buildVariantCostCache(input: {
 
     // 7. Build option_id → value lookup from product.options[]
     //    (color hex + size names come from here, NOT from a separate endpoint)
-    const optionLookup = buildOptionValueLookupFromProduct(
-      dummyProduct.options ?? [],
-    );
+    const optionLookup = buildOptionValueLookupFromProduct(dummyProduct.options ?? []);
 
     // 8. Merge catalog data (color/size names) + cost data (from costMap with sv fallback)
     const merged: CachedVariant[] = catalogVariants.map((cv) => {
@@ -355,10 +342,7 @@ async function _buildVariantCostCache(input: {
         await client.deleteProduct(shopId, productId);
       } catch (err) {
         // Non-fatal — orphan cleanup cron will retry
-        console.warn(
-          `[variant-cache] Failed to delete dummy product ${productId}:`,
-          err,
-        );
+        console.warn(`[variant-cache] Failed to delete dummy product ${productId}:`, err);
       }
     }
   }
@@ -366,19 +350,7 @@ async function _buildVariantCostCache(input: {
 
 // ─── Size grouping ─────────────────────────────────────────────────────────────
 
-export const SIZE_ORDER = [
-  "XXS",
-  "XS",
-  "S",
-  "M",
-  "L",
-  "XL",
-  "2XL",
-  "3XL",
-  "4XL",
-  "5XL",
-  "6XL",
-];
+export const SIZE_ORDER = ["XXS", "XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL", "6XL"];
 
 export interface SizeGroup {
   size: string;
@@ -432,17 +404,12 @@ export function computeVariantMatrix(
   selectedColorNames: string[],
   selectedSizes: string[],
 ): number[] {
-  const colorSet = new Set(
-    selectedColorNames.map((c) => c.trim().toLowerCase()),
-  );
+  const colorSet = new Set(selectedColorNames.map((c) => c.trim().toLowerCase()));
   const sizeSet = new Set(selectedSizes);
 
   return variants
     .filter(
-      (v) =>
-        v.isAvailable &&
-        colorSet.has(v.colorName.trim().toLowerCase()) &&
-        sizeSet.has(v.size),
+      (v) => v.isAvailable && colorSet.has(v.colorName.trim().toLowerCase()) && sizeSet.has(v.size),
     )
     .map((v) => v.variantId);
 }
@@ -498,9 +465,12 @@ export function buildVariantPayload(
 ): Array<{ id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean }> {
   const colorSet = new Set(selectedColorNames.map((c) => c.trim().toLowerCase()));
   const sizeSet = new Set(selectedSizes);
-  
+
   // Find minimum cost to calculate delta
-  const minCostCents = variants.reduce((min, v) => (v.isAvailable && v.costCents < min ? v.costCents : min), Infinity);
+  const minCostCents = variants.reduce(
+    (min, v) => (v.isAvailable && v.costCents < min ? v.costCents : min),
+    Infinity,
+  );
   const validMinCost = minCostCents === Infinity ? 0 : minCostCents;
 
   let firstAvailable = true;
@@ -508,15 +478,22 @@ export function buildVariantPayload(
   return variants.map((v) => {
     const isSelected = colorSet.has(v.colorName.trim().toLowerCase()) && sizeSet.has(v.size);
     const isEnabled = isSelected && v.isAvailable;
-    
+
     // Per-size override takes priority; otherwise auto-calculate: baseRetail + costDelta
     const overridePrice = priceBySizeOverride?.[v.size];
     const costDeltaCents = v.costCents - validMinCost;
-    const retailPriceCents = overridePrice != null
-      ? Math.round(overridePrice * 100)
-      : Math.round(baseRetailPriceUSD * 100) + costDeltaCents;
+    const retailPriceCents =
+      overridePrice != null
+        ? Math.round(overridePrice * 100)
+        : Math.round(baseRetailPriceUSD * 100) + costDeltaCents;
 
-    const payload: { id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean } = {
+    const payload: {
+      id: number;
+      price: number;
+      is_enabled: boolean;
+      sku?: string;
+      is_default?: boolean;
+    } = {
       id: v.variantId,
       price: Math.max(100, retailPriceCents), // Minimum $1.00 allowed by Printify
       is_enabled: isEnabled,
@@ -535,6 +512,104 @@ export function buildVariantPayload(
   });
 }
 
+/**
+ * A single Shopify-bound variant derived from the Printify catalog:
+ * Color + Size + unique SKU + retail price (USD).
+ */
+export interface ShopifyVariantPlanItem {
+  colorName: string;
+  colorHex: string | null;
+  size: string | null;
+  sku: string | null;
+  priceUsd: number;
+}
+
+/**
+ * Compute the enabled Printify variant IDs and the effective size list used for
+ * the payload, supporting both per-color size maps and the legacy global list.
+ * Shared by the Printify product payload and the Shopify variant plan so both
+ * stages agree on which variants are enabled.
+ */
+export function computeEnabledVariantSelection(
+  cachedVariants: CachedVariant[],
+  selectedColorNames: string[],
+  sizesByColor: Record<string, string[]> | null,
+  enabledSizes: string[],
+): { effectiveVariantIds: number[]; effectiveSizesForPayload: string[] } {
+  const hasSizesByColor = sizesByColor != null && Object.keys(sizesByColor).length > 0;
+
+  let effectiveVariantIds: number[];
+  if (hasSizesByColor) {
+    effectiveVariantIds = computeVariantMatrixPerColor(
+      cachedVariants,
+      selectedColorNames,
+      sizesByColor,
+      enabledSizes ?? [],
+    );
+  } else {
+    const selectedSizes = enabledSizes ?? [];
+    const effectiveSizes =
+      selectedSizes.length > 0
+        ? selectedSizes
+        : [...new Set(cachedVariants.filter((v) => v.isAvailable).map((v) => v.size))];
+    effectiveVariantIds = cachedVariants
+      .filter((v) => {
+        const lowerColor = v.colorName.trim().toLowerCase();
+        const colorOk = selectedColorNames.some((c) => c.trim().toLowerCase() === lowerColor);
+        return v.isAvailable && colorOk && effectiveSizes.includes(v.size);
+      })
+      .map((v) => v.variantId);
+  }
+
+  const effectiveSizesForPayload = hasSizesByColor
+    ? [...new Set(Object.values(sizesByColor).flat())]
+    : (enabledSizes?.length ?? 0) > 0
+      ? enabledSizes
+      : [...new Set(cachedVariants.filter((v) => v.isAvailable).map((v) => v.size))];
+
+  return { effectiveVariantIds, effectiveSizesForPayload };
+}
+
+/**
+ * Build the Shopify variant plan (Color + Size + SKU + price) for the enabled
+ * variants, ordered by the given color order (storefront dropdown order) then
+ * by catalog size order. Prices come from the Printify payload (cents → USD).
+ */
+export function buildShopifyVariantInputs(
+  cachedVariants: CachedVariant[],
+  variantPayload: Array<{ id: number; price: number; sku?: string }>,
+  enabledVariantIds: number[],
+  orderedColorNames: string[],
+): ShopifyVariantPlanItem[] {
+  const byId = new Map(cachedVariants.map((v) => [v.variantId, v]));
+  const payloadById = new Map(variantPayload.map((p) => [p.id, p]));
+  const colorRank = new Map(orderedColorNames.map((c, i) => [c.trim().toLowerCase(), i] as const));
+
+  const items = enabledVariantIds
+    .map((id): ShopifyVariantPlanItem | null => {
+      const cv = byId.get(id);
+      if (!cv) return null;
+      const payload = payloadById.get(id);
+      const priceCents = payload?.price ?? 0;
+      return {
+        colorName: cv.colorName,
+        colorHex: cv.colorHex,
+        size: cv.size,
+        sku: payload?.sku ?? cv.sku ?? null,
+        priceUsd: Math.round(priceCents) / 100,
+      };
+    })
+    .filter((v): v is ShopifyVariantPlanItem => v !== null);
+
+  items.sort((a, b) => {
+    const ra = colorRank.get(a.colorName.trim().toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+    const rb = colorRank.get(b.colorName.trim().toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+    return ra - rb;
+  });
+
+  return items;
+}
+
 // ─── Internal helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -550,10 +625,7 @@ export function buildVariantPayload(
 function buildOptionValueLookupFromProduct(
   options: PrintifyProductOption[],
 ): Map<number, { type: string; title: string; colors?: string[] }> {
-  const lookup = new Map<
-    number,
-    { type: string; title: string; colors?: string[] }
-  >();
+  const lookup = new Map<number, { type: string; title: string; colors?: string[] }>();
   for (const opt of options) {
     for (const val of opt.values ?? []) {
       lookup.set(val.id, {
@@ -570,9 +642,7 @@ function buildOptionValueLookupFromProduct(
  * Upload a 1x1 transparent PNG to Printify as placeholder design.
  * Used for dummy products to fetch variant costs.
  */
-async function uploadDummyDesignImage(
-  client: PrintifyClient,
-): Promise<string> {
+async function uploadDummyDesignImage(client: PrintifyClient): Promise<string> {
   // Smallest valid PNG — 1x1 transparent pixel
   const TRANSPARENT_PNG_BASE64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=";

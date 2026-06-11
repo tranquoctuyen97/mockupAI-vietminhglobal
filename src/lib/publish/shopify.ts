@@ -2,18 +2,28 @@
  * Shopify Publish — Create product via GraphQL Admin API
  *
  * Flow (API 2025-04+):
- * 1. productSet — atomic: title, bodyHtml, tags, productType, options, variants (status: ACTIVE)
- * 2. Upload mockup images via stagedUploadsCreate + productCreateMedia
- * 3. publishablePublish — ensure product visible on Online Store (graceful, non-fatal)
+ * 1. productSet — atomic: title, descriptionHtml, vendor, productType, category,
+ *    collections, tags, options (Color + Size), variants (SKU, CONTINUE), status ACTIVE
+ * 2. Upload mockup images via stagedUploadsCreate + productCreateMedia, then
+ *    productReorderMedia to put the primary color thumbnail at position 0
+ * 3. publishablePublish to every active publication (paginated, per-channel guard)
  */
 
-import { ShopifyClient } from "@/lib/shopify/client";
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
+import { formatDescriptionHtml } from "@/lib/content/description-html";
+import type { ShopifyClient } from "@/lib/shopify/client";
 
 export type ShopifyMockupImage =
   | { kind: "local"; path: string; colorName?: string }
   | { kind: "remote"; url: string; colorName?: string };
+
+export interface ShopifyVariantInput {
+  colorName: string;
+  size?: string | null; // null / "" / "ONE_SIZE" → no Size option
+  sku?: string | null;
+  priceUsd: number;
+}
 
 export interface ShopifyPublishInput {
   title: string;
@@ -21,7 +31,10 @@ export interface ShopifyPublishInput {
   tags: string[];
   priceUsd: number;
   productType: string;
+  vendor?: string;
   colors: Array<{ name: string; hex: string }>;
+  variants?: ShopifyVariantInput[]; // full desired variant list (Color + Size + SKU + price)
+  primaryColorName?: string | null; // color whose media should become the thumbnail
   mockupPaths: string[]; // absolute file paths
   mockupImages?: ShopifyMockupImage[];
   existingProductId?: string | null; // for retry idempotency
@@ -31,6 +44,88 @@ export interface ShopifyPublishResult {
   shopifyProductId: string;
   shopifyVariantIds: string[];
   shopifyProductUrl: string;
+}
+
+const DEFAULT_VENDOR = "Printify";
+const TAXONOMY_BASE = "gid://shopify/TaxonomyCategory/";
+
+/**
+ * Canonical apparel type → Shopify Taxonomy category GID.
+ * GIDs taken from the official Shopify product taxonomy (Apparel & Accessories
+ * > Clothing > Clothing Tops). Validated at runtime before use, so a
+ * version-mismatched GID is omitted rather than failing the publish.
+ */
+const PRODUCT_TYPE_TAXONOMY_MAP: Record<string, string> = {
+  "T-Shirt": `${TAXONOMY_BASE}aa-1-13-8`,
+  "Tank Top": `${TAXONOMY_BASE}aa-1-13-9`,
+  Sweater: `${TAXONOMY_BASE}aa-1-13-12`,
+  Hoodie: `${TAXONOMY_BASE}aa-1-13-13`,
+  Sweatshirt: `${TAXONOMY_BASE}aa-1-13-14`,
+  "Long Sleeve Shirt": `${TAXONOMY_BASE}aa-1-13-7`,
+  Polo: `${TAXONOMY_BASE}aa-1-13-6`,
+};
+
+/** Canonical apparel type → Printify-like default tags (not exact Printify app tags). */
+const PRODUCT_TYPE_TAG_MAP: Record<string, string[]> = {
+  "T-Shirt": ["T-Shirt", "Printify"],
+  "Tank Top": ["Tank Top", "Printify"],
+  Sweater: ["Sweater", "Printify"],
+  Hoodie: ["Hoodie", "Printify"],
+  Sweatshirt: ["Sweatshirt", "Printify"],
+  "Long Sleeve Shirt": ["Long Sleeve Shirt", "Printify"],
+  Polo: ["Polo", "Printify"],
+};
+
+/** Canonical apparel type → manual collection title to resolve (exact title/handle only). */
+const PRODUCT_TYPE_COLLECTION_MAP: Record<string, string> = {
+  "T-Shirt": "T-Shirts",
+  "Tank Top": "Tank Tops",
+  Sweater: "Sweaters",
+  Hoodie: "Hoodies",
+  Sweatshirt: "Sweatshirts",
+  "Long Sleeve Shirt": "Long Sleeve Shirts",
+  Polo: "Polos",
+};
+
+/**
+ * Map a raw product type (e.g. Printify blueprint title "Unisex Heavy Cotton Tee")
+ * to a canonical apparel type. Returns null when unrecognized → caller keeps the
+ * raw type and skips category/default-tag mapping.
+ */
+export function normalizeProductType(raw: string): string | null {
+  const s = (raw || "").toLowerCase();
+  if (/hoodie/.test(s)) return "Hoodie";
+  if (/sweatshirt/.test(s)) return "Sweatshirt";
+  if (/tank/.test(s)) return "Tank Top";
+  if (/sweater/.test(s)) return "Sweater";
+  if (/polo/.test(s)) return "Polo";
+  if (/long\s*sleeve/.test(s)) return "Long Sleeve Shirt";
+  if (/t-?shirt|tee\b|\btee/.test(s)) return "T-Shirt";
+  return null;
+}
+
+function normalizeSize(size?: string | null): string | null {
+  if (!size) return null;
+  const trimmed = size.trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed.toUpperCase() === "ONE_SIZE") return null;
+  return trimmed;
+}
+
+/** Merge Printify-like default tags with AI tags, de-duplicated case-insensitively. */
+export function buildProductTags(canonicalType: string | null, aiTags: string[]): string[] {
+  const defaults = canonicalType ? (PRODUCT_TYPE_TAG_MAP[canonicalType] ?? []) : [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const tag of [...defaults, ...(aiTags ?? [])]) {
+    const trimmed = (tag ?? "").trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 /**
@@ -46,7 +141,8 @@ export async function publishToShopify(
 ): Promise<ShopifyPublishResult> {
   let productId: string;
   let variantIds: string[];
-  let variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }> }> = [];
+  let variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }> }> =
+    [];
 
   if (input.existingProductId) {
     // Product already created in a previous attempt — skip creation
@@ -58,25 +154,39 @@ export async function publishToShopify(
     const productResult = await createProductWithSet(client, input);
     productId = productResult.productId;
     variantNodes = productResult.variantNodes;
-    variantIds = variantNodes.map(v => v.id);
+    variantIds = variantNodes.map((v) => v.id);
   }
 
   // Step 2: Upload mockup images and link to variants
   if (input.mockupImages && input.mockupImages.length > 0) {
     const uploadedMedia = await uploadProductImages(client, productId, input.mockupImages);
-    
+
+    // Step 2.4: Force the primary color's first media to position 0 (thumbnail).
+    // The worker already uploads the primary color group first, but Shopify's
+    // default ordering is not guaranteed — reorder explicitly to be safe.
+    if (uploadedMedia.length > 0 && input.primaryColorName) {
+      const primaryMedia = uploadedMedia.find(
+        (m) => m.colorName && m.colorName.toLowerCase() === input.primaryColorName!.toLowerCase(),
+      );
+      if (primaryMedia) {
+        await reorderPrimaryMedia(client, productId, primaryMedia.mediaId);
+      }
+    }
+
     // Step 2.5: Link media to variants if we just created them
     if (uploadedMedia.length > 0 && variantNodes.length > 0) {
-      const variantMediaPairs: Array<{ id: string, mediaId: string }> = [];
-      
+      const variantMediaPairs: Array<{ id: string; mediaId: string }> = [];
+
       for (const vNode of variantNodes) {
-        const colorOption = vNode.selectedOptions.find(o => o.name === "Color");
+        const colorOption = vNode.selectedOptions.find((o) => o.name === "Color");
         if (colorOption) {
-          const matchingMedia = uploadedMedia.find(m => m.colorName && m.colorName.toLowerCase() === colorOption.value.toLowerCase());
+          const matchingMedia = uploadedMedia.find(
+            (m) => m.colorName && m.colorName.toLowerCase() === colorOption.value.toLowerCase(),
+          );
           if (matchingMedia) {
             variantMediaPairs.push({
               id: vNode.id,
-              mediaId: matchingMedia.mediaId
+              mediaId: matchingMedia.mediaId,
             });
           }
         }
@@ -90,31 +200,31 @@ export async function publishToShopify(
             }
           }
         `;
-        const bulkUpdateRes = await client.graphql(bulkUpdateMutation, {
+        const bulkUpdateRes = (await client.graphql(bulkUpdateMutation, {
           productId,
-          variants: variantMediaPairs.map(v => ({ id: v.id, mediaId: v.mediaId }))
-        }) as any;
+          variants: variantMediaPairs.map((v) => ({ id: v.id, mediaId: v.mediaId })),
+        })) as any;
 
         if (bulkUpdateRes.productVariantsBulkUpdate?.userErrors?.length > 0) {
-          console.warn(`[Shopify] productVariantsBulkUpdate failed (non-fatal):`, bulkUpdateRes.productVariantsBulkUpdate.userErrors);
+          console.warn(
+            `[Shopify] productVariantsBulkUpdate failed (non-fatal):`,
+            bulkUpdateRes.productVariantsBulkUpdate.userErrors,
+          );
         }
       }
     }
   } else if (input.mockupPaths.length > 0) {
     // Fallback for older code
-    await uploadProductImages(client, productId, input.mockupPaths.map(p => ({ kind: "local", path: p })));
-  }
-
-  // Step 3: Publish to Online Store (graceful — non-fatal if scope missing)
-  try {
-    await publishProduct(client, productId);
-  } catch (err) {
-    // If read_publications scope not yet added, product is already ACTIVE via productSet
-    console.warn(
-      `[Shopify] publishablePublish failed (non-fatal, product already ACTIVE):`,
-      err instanceof Error ? err.message : err,
+    await uploadProductImages(
+      client,
+      productId,
+      input.mockupPaths.map((p) => ({ kind: "local", path: p })),
     );
   }
+
+  // Step 3: Publish to every active publication (graceful — per-channel guard).
+  // Product is already ACTIVE via productSet, so a failure here is non-fatal.
+  await publishToAllChannels(client, productId);
 
   return {
     shopifyProductId: productId,
@@ -130,7 +240,10 @@ export async function publishToShopify(
 async function createProductWithSet(
   client: ShopifyClient,
   input: ShopifyPublishInput,
-): Promise<{ productId: string; variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }> }> }> {
+): Promise<{
+  productId: string;
+  variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }> }>;
+}> {
   const mutation = `
     mutation productSet($synchronous: Boolean!, $productSet: ProductSetInput!) {
       productSet(synchronous: $synchronous, input: $productSet) {
@@ -150,33 +263,70 @@ async function createProductWithSet(
 
   const hasColors = input.colors.length > 0;
 
-  const variables = {
-    synchronous: true,
-    productSet: {
-      title: input.title,
-      descriptionHtml: input.descriptionHtml,
-      tags: input.tags,
-      productType: input.productType,
-      status: "ACTIVE", // Publish immediately — no need for separate publishablePublish
-      productOptions: hasColors
-        ? [
-            {
-              name: "Color",
-              position: 1,
-              values: input.colors.map((c) => ({ name: c.name })),
-            },
-          ]
-        : [],
-      variants: hasColors
-        ? input.colors.map((c) => ({
-            optionValues: [{ optionName: "Color", name: c.name }],
-            price: input.priceUsd,
-          }))
-        : [{ price: input.priceUsd }],
-    },
-  };
+  const canonicalType = normalizeProductType(input.productType);
+  // Product organization: clean Type, Vendor=Printify, taxonomy category, default tags.
+  const productType = canonicalType ?? input.productType;
+  const vendor = input.vendor ?? DEFAULT_VENDOR;
+  const tags = buildProductTags(canonicalType, input.tags);
+  const [categoryId, collectionIds] = await Promise.all([
+    resolveCategoryId(client, canonicalType),
+    resolveCollectionIds(client, canonicalType),
+  ]);
 
-  const data = await client.graphql(mutation, variables) as {
+  // Variant matrix: prefer the full desired list (Color + Size + SKU + price)
+  // when provided by the worker, otherwise fall back to colors-only.
+  const variantInputs = input.variants && input.variants.length > 0 ? input.variants : null;
+  const sizesInOrder: string[] = [];
+  if (variantInputs) {
+    for (const v of variantInputs) {
+      const size = normalizeSize(v.size);
+      if (size && !sizesInOrder.includes(size)) sizesInOrder.push(size);
+    }
+  }
+  // Only expose a Size option when every variant carries a size (consistent matrix).
+  const hasSizes =
+    variantInputs != null &&
+    sizesInOrder.length > 0 &&
+    variantInputs.every((v) => normalizeSize(v.size) != null);
+
+  const productOptions: Array<{ name: string; position: number; values: Array<{ name: string }> }> =
+    [];
+  if (hasColors) {
+    productOptions.push({
+      name: "Color",
+      position: 1,
+      values: input.colors.map((c) => ({ name: c.name })),
+    });
+  }
+  if (hasSizes) {
+    productOptions.push({
+      name: "Size",
+      position: hasColors ? 2 : 1,
+      values: sizesInOrder.map((s) => ({ name: s })),
+    });
+  }
+
+  const variants = buildVariantSetInputs(input, hasColors, hasSizes);
+
+  const productSetInput: Record<string, unknown> = {
+    title: input.title,
+    descriptionHtml: formatDescriptionHtml(input.descriptionHtml),
+    tags,
+    productType,
+    vendor,
+    status: "ACTIVE", // Publish immediately — no need for separate publishablePublish
+    variants,
+  };
+  if (productOptions.length > 0) productSetInput.productOptions = productOptions;
+  if (categoryId) productSetInput.category = categoryId;
+  // Guard: only send collections when resolved exactly. Omitting (vs []) avoids
+  // clearing existing collections and lets automated collections match via
+  // productType / vendor / tags.
+  if (collectionIds.length > 0) productSetInput.collections = collectionIds;
+
+  const variables = { synchronous: true, productSet: productSetInput };
+
+  const data = (await client.graphql(mutation, variables)) as {
     productSet: {
       product: {
         id: string;
@@ -237,13 +387,13 @@ async function uploadProductImages(
     }
   `;
 
-  const mediaResult = await client.graphql(mediaMutation, {
+  const mediaResult = (await client.graphql(mediaMutation, {
     productId,
     media: mediaSources.map((source) => ({
       originalSource: source.originalSource,
       mediaContentType: "IMAGE",
     })),
-  }) as {
+  })) as {
     productCreateMedia: {
       media: Array<{ id: string }>;
       mediaUserErrors: Array<{ field: string; message: string }>;
@@ -251,7 +401,9 @@ async function uploadProductImages(
   };
 
   if (mediaResult.productCreateMedia.mediaUserErrors.length > 0) {
-    throw new Error(`Shopify productCreateMedia failed: ${mediaResult.productCreateMedia.mediaUserErrors.map((e) => e.message).join("; ")}`);
+    throw new Error(
+      `Shopify productCreateMedia failed: ${mediaResult.productCreateMedia.mediaUserErrors.map((e) => e.message).join("; ")}`,
+    );
   }
 
   return mediaResult.productCreateMedia.media.map((m, i) => ({
@@ -268,20 +420,11 @@ function detectImageMime(buffer: Buffer, filePath: string): { mime: string; ext:
   // Check magic bytes (first 4-12 bytes)
   if (buffer.length >= 8) {
     // PNG: 89 50 4E 47 0D 0A 1A 0A
-    if (
-      buffer[0] === 0x89 &&
-      buffer[1] === 0x50 &&
-      buffer[2] === 0x4e &&
-      buffer[3] === 0x47
-    ) {
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
       return { mime: "image/png", ext: ".png" };
     }
     // JPEG: FF D8 FF
-    if (
-      buffer[0] === 0xff &&
-      buffer[1] === 0xd8 &&
-      buffer[2] === 0xff
-    ) {
+    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
       return { mime: "image/jpeg", ext: ".jpg" };
     }
     // WEBP: RIFF....WEBP
@@ -294,17 +437,12 @@ function detectImageMime(buffer: Buffer, filePath: string): { mime: string; ext:
       buffer[8] === 0x57 && // W
       buffer[9] === 0x45 && // E
       buffer[10] === 0x42 && // B
-      buffer[11] === 0x50    // P
+      buffer[11] === 0x50 // P
     ) {
       return { mime: "image/webp", ext: ".webp" };
     }
     // GIF: 47 49 46 38
-    if (
-      buffer[0] === 0x47 &&
-      buffer[1] === 0x49 &&
-      buffer[2] === 0x46 &&
-      buffer[3] === 0x38
-    ) {
+    if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) {
       return { mime: "image/gif", ext: ".gif" };
     }
   }
@@ -358,7 +496,7 @@ async function stageLocalProductImages(
     resource: "PRODUCT_IMAGE",
   }));
 
-  const stagedData = await client.graphql(stagesMutation, { input: stagedInput }) as {
+  const stagedData = (await client.graphql(stagesMutation, { input: stagedInput })) as {
     stagedUploadsCreate: {
       stagedTargets: Array<{
         url: string;
@@ -393,7 +531,206 @@ async function stageLocalProductImages(
   }));
 }
 
-async function publishProduct(client: ShopifyClient, productId: string): Promise<void> {
+/**
+ * Build the full desired variant list for productSet.
+ * Each variant carries Color (+ Size when consistent), price, SKU and
+ * inventoryPolicy CONTINUE (keep selling when out of stock).
+ */
+function buildVariantSetInputs(
+  input: ShopifyPublishInput,
+  hasColors: boolean,
+  hasSizes: boolean,
+): Array<Record<string, unknown>> {
+  const variantInputs = input.variants && input.variants.length > 0 ? input.variants : null;
+
+  if (variantInputs) {
+    return variantInputs.map((v) => {
+      const optionValues: Array<{ optionName: string; name: string }> = [];
+      if (hasColors) optionValues.push({ optionName: "Color", name: v.colorName });
+      const size = normalizeSize(v.size);
+      if (hasSizes && size) optionValues.push({ optionName: "Size", name: size });
+
+      const variant: Record<string, unknown> = {
+        price: v.priceUsd,
+        inventoryPolicy: "CONTINUE",
+      };
+      if (optionValues.length > 0) variant.optionValues = optionValues;
+      if (v.sku) variant.sku = v.sku;
+      return variant;
+    });
+  }
+
+  if (hasColors) {
+    return input.colors.map((c) => ({
+      optionValues: [{ optionName: "Color", name: c.name }],
+      price: input.priceUsd,
+      inventoryPolicy: "CONTINUE",
+    }));
+  }
+
+  return [{ price: input.priceUsd, inventoryPolicy: "CONTINUE" }];
+}
+
+/**
+ * Resolve a Shopify Taxonomy category GID for the canonical product type.
+ * Validates the GID resolves to a TaxonomyCategory in the store's API version;
+ * returns null (omit category → Shopify auto-classifies) on miss/invalid.
+ */
+async function resolveCategoryId(
+  client: ShopifyClient,
+  canonicalType: string | null,
+): Promise<string | null> {
+  if (!canonicalType) return null;
+  const gid = PRODUCT_TYPE_TAXONOMY_MAP[canonicalType];
+  if (!gid) {
+    console.warn(`[Shopify] No taxonomy mapping for "${canonicalType}", omitting category`);
+    return null;
+  }
+
+  try {
+    const query = `
+      query ValidateCategory($id: ID!) {
+        node(id: $id) {
+          __typename
+          ... on TaxonomyCategory { id }
+        }
+      }
+    `;
+    const data = (await client.graphql(query, { id: gid })) as {
+      node: { __typename: string; id?: string } | null;
+    };
+    if (data.node && data.node.__typename === "TaxonomyCategory") return gid;
+    console.warn(`[Shopify] Taxonomy GID ${gid} not valid in this API version, omitting category`);
+    return null;
+  } catch (err) {
+    console.warn(
+      `[Shopify] Taxonomy validation failed, omitting category:`,
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
+function toHandle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/**
+ * Resolve manual collection IDs for the canonical product type by exact
+ * title/handle match. Returns [] (omit) when no exact match — automated
+ * collections still pick the product up via productType / vendor / tags.
+ */
+async function resolveCollectionIds(
+  client: ShopifyClient,
+  canonicalType: string | null,
+): Promise<string[]> {
+  if (!canonicalType) return [];
+  const title = PRODUCT_TYPE_COLLECTION_MAP[canonicalType];
+  if (!title) return [];
+
+  const handle = toHandle(title);
+  try {
+    const query = `
+      query FindCollection($q: String!) {
+        collections(first: 10, query: $q) {
+          nodes { id title handle }
+        }
+      }
+    `;
+    const data = (await client.graphql(query, {
+      q: `title:'${title}' OR handle:${handle}`,
+    })) as { collections: { nodes: Array<{ id: string; title: string; handle: string }> } };
+
+    const exact = data.collections.nodes.find(
+      (c) => c.title.toLowerCase() === title.toLowerCase() || c.handle.toLowerCase() === handle,
+    );
+    if (exact) return [exact.id];
+
+    console.warn(
+      `[Shopify] No exact manual collection for "${title}" — omitting collections (automated collections match via type/vendor/tags)`,
+    );
+    return [];
+  } catch (err) {
+    console.warn(
+      `[Shopify] Collection resolve failed, omitting collections:`,
+      err instanceof Error ? err.message : err,
+    );
+    return [];
+  }
+}
+
+/**
+ * Move the primary color's media to position 0 so it becomes the product
+ * thumbnail. Non-fatal — the product is already created/published.
+ */
+async function reorderPrimaryMedia(
+  client: ShopifyClient,
+  productId: string,
+  mediaId: string,
+): Promise<void> {
+  const mutation = `
+    mutation productReorderMedia($id: ID!, $moves: [MoveInput!]!) {
+      productReorderMedia(id: $id, moves: $moves) {
+        job { id }
+        userErrors { field message }
+      }
+    }
+  `;
+  try {
+    const data = (await client.graphql(mutation, {
+      id: productId,
+      moves: [{ id: mediaId, newPosition: "0" }],
+    })) as { productReorderMedia: { userErrors: Array<{ field: string; message: string }> } };
+    const errors = data.productReorderMedia?.userErrors ?? [];
+    if (errors.length > 0) {
+      console.warn(`[Shopify] productReorderMedia userErrors (non-fatal):`, errors);
+    }
+  } catch (err) {
+    console.warn(
+      `[Shopify] productReorderMedia failed (non-fatal):`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+/** Fetch every publication ID for the shop, following pagination. */
+async function getAllPublicationIds(client: ShopifyClient): Promise<string[]> {
+  const query = `
+    query Publications($cursor: String) {
+      publications(first: 50, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { id name }
+      }
+    }
+  `;
+
+  const ids: string[] = [];
+  let cursor: string | null = null;
+  // Bound the loop defensively; stores rarely have many publications.
+  for (let page = 0; page < 20; page++) {
+    const data = (await client.graphql(query, { cursor })) as {
+      publications: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        nodes: Array<{ id: string; name: string }>;
+      };
+    };
+    for (const node of data.publications.nodes) ids.push(node.id);
+    if (!data.publications.pageInfo.hasNextPage) break;
+    cursor = data.publications.pageInfo.endCursor;
+  }
+  return ids;
+}
+
+/**
+ * Publish the product to every active publication (sales channel).
+ * Each channel is published independently — a failure on one channel logs and
+ * continues so it never crashes the whole publish job. Product is already
+ * ACTIVE via productSet, so this is best-effort.
+ */
+async function publishToAllChannels(client: ShopifyClient, productId: string): Promise<void> {
   const mutation = `
     mutation publishablePublish($id: ID!, $input: [PublicationInput!]!) {
       publishablePublish(id: $id, input: $input) {
@@ -402,45 +739,35 @@ async function publishProduct(client: ShopifyClient, productId: string): Promise
     }
   `;
 
-  // Publish to online store
-  await client.graphql(mutation, {
-    id: productId,
-    input: [{ publicationId: await getOnlineStorePublicationId(client) }],
-  });
-}
-
-async function getOnlineStorePublicationId(client: ShopifyClient): Promise<string> {
-  const query = `
-    query {
-      publications(first: 10) {
-        edges {
-          node {
-            id
-            name
-          }
-        }
-      }
-    }
-  `;
-
-  const data = await client.graphql(query) as {
-    publications: { edges: Array<{ node: { id: string; name: string } }> };
-  };
-
-  // Find "Online Store" publication
-  const onlineStore = data.publications.edges.find(
-    (e) => e.node.name === "Online Store",
-  );
-
-  if (!onlineStore) {
-    // Use first publication as fallback
-    if (data.publications.edges.length > 0) {
-      return data.publications.edges[0].node.id;
-    }
-    throw new Error("No publications found for this shop");
+  let publicationIds: string[];
+  try {
+    publicationIds = await getAllPublicationIds(client);
+  } catch (err) {
+    // Likely missing read_publications scope — product is already ACTIVE.
+    console.warn(
+      `[Shopify] Could not list publications (non-fatal, product already ACTIVE):`,
+      err instanceof Error ? err.message : err,
+    );
+    return;
   }
 
-  return onlineStore.node.id;
+  for (const publicationId of publicationIds) {
+    try {
+      const data = (await client.graphql(mutation, {
+        id: productId,
+        input: [{ publicationId }],
+      })) as { publishablePublish: { userErrors: Array<{ field: string; message: string }> } };
+      const errors = data.publishablePublish?.userErrors ?? [];
+      if (errors.length > 0) {
+        console.warn(`[Shopify] publish to ${publicationId} userErrors (skip):`, errors);
+      }
+    } catch (err) {
+      console.warn(
+        `[Shopify] publish to ${publicationId} failed (skip):`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
 }
 
 function extractNumericId(gid: string): string {
