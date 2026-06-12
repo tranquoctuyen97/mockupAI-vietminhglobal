@@ -53,6 +53,8 @@ export interface PrintifyProductVariant {
 export interface PrintifyProductResponse {
   id: string;
   title: string;
+  blueprint_id: number;
+  print_provider_id: number;
   images?: PrintifyProductImage[];
   variants?: PrintifyProductVariant[];
   options?: PrintifyProductOption[];
