@@ -6,6 +6,7 @@ import { getStorage } from "../storage/local-disk";
 import { resolvePlacementViews } from "../mockup/plan";
 import {
   PrintifyClient,
+  PrintifyNotFoundError,
   type PrintifyProductImage,
 } from "./client";
 
@@ -207,9 +208,58 @@ export async function createOrUpdatePrintifyProduct(input: {
     }
   }
 
-  const product = input.productId
-    ? await input.client.updateProduct(input.shopId, input.productId, payload)
-    : await input.client.createProduct(input.shopId, payload);
+  let product;
+  if (input.productId) {
+    const existing = await input.client.getProduct(input.shopId, input.productId).catch((err) => {
+      if (err instanceof PrintifyNotFoundError) return null;
+      throw err;
+    });
+
+    const existingBlueprintId = Number(existing?.blueprint_id);
+    const existingProviderId = Number(existing?.print_provider_id);
+    const payloadBlueprintId = Number(payload.blueprint_id);
+    const payloadProviderId = Number(payload.print_provider_id);
+
+    const existingVariantsCount = existing?.variants?.length ?? 0;
+    const payloadVariantsCount = payloadVariants.length;
+
+    let hasVariantMismatch = existingVariantsCount !== payloadVariantsCount;
+    if (!hasVariantMismatch && existing?.variants) {
+      const existingIds = existing.variants.map((v) => Number(v.id)).sort();
+      const payloadIds = payloadVariants.map((v) => Number(v.id)).sort();
+      for (let i = 0; i < existingIds.length; i++) {
+        if (existingIds[i] !== payloadIds[i]) {
+          hasVariantMismatch = true;
+          break;
+        }
+      }
+    }
+
+    const isMismatch =
+      !existing ||
+      existingBlueprintId !== payloadBlueprintId ||
+      existingProviderId !== payloadProviderId ||
+      hasVariantMismatch;
+
+    if (isMismatch) {
+      console.warn("[Printify] Draft product mismatch or not found. Bypassing PUT and creating new draft product.", {
+        oldProductId: input.productId,
+        existingBlueprintId: existing?.blueprint_id,
+        existingPrintProviderId: existing?.print_provider_id,
+        payloadBlueprintId: payload.blueprint_id,
+        payloadPrintProviderId: payload.print_provider_id,
+        existingVariantsCount,
+        payloadVariantsCount,
+        hasVariantMismatch,
+        shopId: input.shopId,
+      });
+      product = await input.client.createProduct(input.shopId, payload);
+    } else {
+      product = await input.client.updateProduct(input.shopId, input.productId, payload);
+    }
+  } else {
+    product = await input.client.createProduct(input.shopId, payload);
+  }
 
   return {
     productId: product.id,

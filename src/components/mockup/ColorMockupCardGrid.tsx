@@ -1,10 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { ColorMockupCard, type CardSource } from "./ColorMockupCard";
 import { UploadMockupModal, type UploadMockupModalValue, type UploadMockupTemplate } from "./UploadMockupModal";
+import {
+  computeCustomPrintAreaPx,
+  materializeSmartFitPlacement,
+  shouldAutoApplySmartFit,
+} from "@/lib/mockup/placement-region";
 
 // --- Types ---
 
@@ -18,6 +23,8 @@ interface SourcesResponse {
   } | null;
   draftSources: SourceWithColor[];
   eligibleTemplateSources: SourceWithColor[];
+  selectedSourceIds: string[];
+  primarySourceId: string | null;
 }
 
 type SourceWithColor = CardSource & {
@@ -125,6 +132,157 @@ export function ColorMockupCardGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedColorKey]);
 
+  // ── Backfill: Smart Fit cho TEMPLATE sources thiếu placement ──
+  const backfillAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (backfillAppliedRef.current) return;
+    if (loading || !sources) return;
+    if (!printAreaMm?.widthMm || !printAreaMm?.heightMm) return;
+
+    // Collect TEMPLATE sources that need backfill (only those mapped to selected colors)
+    const needsBackfill: Array<{ sourceId: string; imageW: number; imageH: number }> = [];
+
+    for (const source of sources.eligibleTemplateSources ?? []) {
+      // Only backfill if this source maps to a selected color
+      const colorMatch = selectedColors.some((c) => c.id === source.colorId);
+      if (!colorMatch) continue;
+
+      const imageW = source.imageWidth ?? 0;
+      const imageH = source.imageHeight ?? 0;
+      if (!imageW || !imageH) continue;
+
+      const printAreaPx = computeCustomPrintAreaPx(printAreaMm, imageW, imageH);
+      const existingRegion = source.compositeRegionPx
+        ? {
+            x: source.compositeRegionPx.x,
+            y: source.compositeRegionPx.y,
+            width: source.compositeRegionPx.width,
+            height: source.compositeRegionPx.height,
+          }
+        : null;
+
+      if (
+        shouldAutoApplySmartFit({
+          existingRegion,
+          printAreaPx,
+          imageWidth: imageW,
+          imageHeight: imageH,
+        })
+      ) {
+        needsBackfill.push({ sourceId: source.id, imageW, imageH });
+      }
+    }
+
+    if (needsBackfill.length === 0) {
+      backfillAppliedRef.current = true;
+      return;
+    }
+
+    // Load design dimensions for Smart Fit computation
+    let cancelled = false;
+    const doBackfill = async () => {
+      let designW = 0;
+      let designH = 0;
+      if (designImageUrl) {
+        try {
+          const dims = await new Promise<{ w: number; h: number }>(
+            (resolve, reject) => {
+              const img = new window.Image();
+              img.crossOrigin = "anonymous";
+              img.onload = () =>
+                resolve({ w: img.naturalWidth, h: img.naturalHeight });
+              img.onerror = () =>
+                reject(new Error("Failed to load design"));
+              img.src = designImageUrl;
+            },
+          );
+          designW = dims.w;
+          designH = dims.h;
+        } catch {
+          /* keep 0 */
+        }
+      }
+
+      if (cancelled || backfillAppliedRef.current) return;
+      if (!designW || !designH) {
+        backfillAppliedRef.current = true;
+        return;
+      }
+
+      const placementsBySourceId: Record<
+        string,
+        {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+          rotationDeg: number;
+          imageWidth: number;
+          imageHeight: number;
+        }
+      > = {};
+
+      for (const { sourceId, imageW, imageH } of needsBackfill) {
+        const region = materializeSmartFitPlacement({
+          printAreaMm: printAreaMm!,
+          imageWidth: imageW,
+          imageHeight: imageH,
+          designWidth: designW,
+          designHeight: designH,
+        });
+        if (region) {
+          placementsBySourceId[sourceId] = region;
+        }
+      }
+
+      const updatedCount = Object.keys(placementsBySourceId).length;
+      if (updatedCount > 0) {
+        // Merge with existing selection: preserve already-selected sources,
+        // add newly backfilled template sources
+        const sourceIds = [
+          ...new Set([
+            ...(sources.selectedSourceIds ?? []),
+            ...Object.keys(placementsBySourceId),
+          ]),
+        ];
+        const primarySourceId =
+          sources.primarySourceId ?? sourceIds[0] ?? null;
+
+        try {
+          const res = await fetch(
+            `/api/wizard/drafts/${draftId}/mockup-library-picks`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sourceIds,
+                primarySourceId,
+                placementsBySourceId,
+              }),
+            },
+          );
+          if (res.ok) {
+            // Reload sources to pick up backfilled placements
+            await loadSources();
+          }
+        } catch {
+          /* silent — backfill is best-effort */
+        }
+      }
+
+      backfillAppliedRef.current = true;
+    };
+
+    doBackfill();
+
+    return () => {
+      cancelled = true;
+      backfillAppliedRef.current = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, sources, printAreaMm, designImageUrl]);
+
   // Map color → best source (draft preferred over template)
   const sourceByColorId = useMemo(() => {
     if (!sources) return new Map<string, CardSource | null>();
@@ -196,6 +354,37 @@ export function ColorMockupCardGrid({
     await loadSources();
   }
 
+  // Save TEMPLATE placement → update pick (not clone to DRAFT)
+  const handleSaveTemplatePlacement = useCallback(
+    async (sourceId: string, region: { x: number; y: number; width: number; height: number; rotationDeg: number; imageWidth: number; imageHeight: number }) => {
+      if (!sources) return;
+      const sourceIds = sources.selectedSourceIds?.length
+        ? sources.selectedSourceIds
+        : [sourceId];
+      // Ensure the edited source is in the list
+      const mergedSourceIds = [...new Set([...sourceIds, sourceId])];
+      const primarySourceId = sources.primarySourceId ?? mergedSourceIds[0] ?? null;
+
+      const res = await fetch(
+        `/api/wizard/drafts/${draftId}/mockup-library-picks`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sourceIds: mergedSourceIds,
+            primarySourceId,
+            placementsBySourceId: { [sourceId]: region },
+          }),
+        },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error || "Lỗi lưu vị trí");
+      }
+    },
+    [draftId, sources],
+  );
+
   if (loading) {
     return (
       <div className="card" style={{ padding: 32, textAlign: "center", opacity: 0.5 }}>
@@ -254,6 +443,7 @@ export function ColorMockupCardGrid({
             onUploadClick={() => { setUploadColorId(color.id); setUploadOpen(true); }}
             onPlacementSaved={loadSources}
             onDeselectColor={onDeselectColor ? () => onDeselectColor(color.id) : undefined}
+            onSaveTemplatePlacement={handleSaveTemplatePlacement}
             printAreaMm={printAreaMm}
           />
         ))}

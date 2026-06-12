@@ -71,16 +71,16 @@ export function computeCustomPrintAreaPx(
 
 /**
  * Smart Fit — listing-ready default placement.
- * Design ~48 % of print-area width, capped at 55 % height, centered at upper-chest.
+ * Design ~59 % of print-area width, capped at 66 % height, centered slightly below mid-chest.
  */
 export function computeListingReadyRegion(
   printArea: PrintAreaBounds,
   designW: number,
   designH: number,
 ): RawRegion {
-  const widthRatio = 0.48;
-  const centerYRatio = 0.43;
-  const maxHeightRatio = 0.55;
+  const widthRatio = 0.59;
+  const centerYRatio = 0.475;
+  const maxHeightRatio = 0.66;
 
   const designAspect = designW / Math.max(1, designH);
 

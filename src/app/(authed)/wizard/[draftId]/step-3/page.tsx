@@ -785,7 +785,14 @@ export default function Step3PreviewPage() {
             const doneCount = jobs.filter(
               (job) => isTerminalMockupJobStatus(job.status) || (job.total > 0 && job.completed + job.failed >= job.total),
             ).length;
-            if (doneCount > 0) toast.success(`Đã tạo mockups cho ${doneCount} designs`);
+            if (doneCount > 0) {
+              toast.success(`Đã tạo mockups cho ${doneCount} designs`);
+              // Manually sync local draft state since the backend worker already cleared the stale flag,
+              // and we avoid loadDraft() to prevent race conditions with user actions.
+              useWizardStore.setState((s) => ({
+                draft: s.draft ? { ...s.draft, mockupsStale: false, mockupsStaleReason: null } : null,
+              }));
+            }
           }
         });
 

@@ -551,47 +551,56 @@ export async function runPrintifyStage(
       );
     }
 
-    if (draftProductId) {
-      printifyResult = await retryWithBackoff(
-        async () =>
-          publishExistingPrintifyDraftProduct({
-            storeId: store.id,
-            draftId: draft.id,
-            draftDesignId: draftDesign?.id ?? null,
-            productId: draftProductId,
-            designStoragePath: designPath,
-            cachedImageId: draftImageId,
-            title: listing.title,
-            description: listing.descriptionHtml,
-            blueprintId: template?.printifyBlueprintId ?? 0,
-            printProviderId: template?.printifyPrintProviderId ?? 0,
-            variantIds,
-            variants: printifyVariantsPayload,
-            placementData,
-          }),
-        printifyJob.id,
-        "PRINTIFY",
-      );
-    } else {
-      printifyResult = await retryWithBackoff(
-        async () => {
-          return publishToPrintify({
-            apiKey: printifyApiKey,
-            shopId: externalShopId?.toString() || "",
-            title: listing.title,
-            description: listing.descriptionHtml,
-            blueprintId: template?.printifyBlueprintId ?? 0,
-            printProviderId: template?.printifyPrintProviderId ?? 0,
-            variantIds,
-            variants: printifyVariantsPayload,
-            mockupPaths: [],
-            selectedMockupIds,
-            designPath,
-          });
-        },
-        printifyJob.id,
-        "PRINTIFY",
-      );
+    try {
+      if (draftProductId) {
+        printifyResult = await retryWithBackoff(
+          async () =>
+            publishExistingPrintifyDraftProduct({
+              storeId: store.id,
+              draftId: draft.id,
+              draftDesignId: draftDesign?.id ?? null,
+              productId: draftProductId,
+              designStoragePath: designPath,
+              cachedImageId: draftImageId,
+              title: listing.title,
+              description: listing.descriptionHtml,
+              blueprintId: template?.printifyBlueprintId ?? 0,
+              printProviderId: template?.printifyPrintProviderId ?? 0,
+              variantIds,
+              variants: printifyVariantsPayload,
+              placementData,
+            }),
+          printifyJob.id,
+          "PRINTIFY",
+        );
+      } else {
+        printifyResult = await retryWithBackoff(
+          async () => {
+            return publishToPrintify({
+              apiKey: printifyApiKey,
+              shopId: externalShopId?.toString() || "",
+              title: listing.title,
+              description: listing.descriptionHtml,
+              blueprintId: template?.printifyBlueprintId ?? 0,
+              printProviderId: template?.printifyPrintProviderId ?? 0,
+              variantIds,
+              variants: printifyVariantsPayload,
+              mockupPaths: [],
+              selectedMockupIds,
+              designPath,
+            });
+          },
+          printifyJob.id,
+          "PRINTIFY",
+        );
+      }
+    } catch (err) {
+      console.error("[PublishWorker] Printify stage failed fast:", err);
+      await prisma.publishJob.update({
+        where: { id: printifyJob.id },
+        data: { status: "FAILED", lastError: err instanceof Error ? err.message : "Fail fast error", completedAt: new Date() },
+      });
+      printifyResult = null;
     }
   }
 
@@ -643,6 +652,17 @@ async function retryWithBackoff<T>(
       });
       return await fn();
     } catch (error) {
+      const isPrintifyValidationError =
+        error instanceof PrintifyApiError ||
+        (error instanceof Error && error.name === "PrintifyApiError");
+
+      if (isPrintifyValidationError) {
+        const status = (error as any).status;
+        if (status === 400 || status === 422) {
+          throw error; // Fail fast without retry
+        }
+      }
+
       const errorMsg = error instanceof Error ? error.message : "Unknown error";
       console.error(`[PublishWorker] ${stage} attempt ${attempt}/${MAX_RETRIES} failed:`, errorMsg);
 

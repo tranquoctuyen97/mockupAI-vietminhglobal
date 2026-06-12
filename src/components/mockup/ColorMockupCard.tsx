@@ -150,6 +150,8 @@ interface ColorMockupCardProps {
   onUploadClick: () => void;         // parent opens upload modal for this color
   onPlacementSaved: () => void;      // refresh after saving placement
   onDeselectColor?: () => void;      // toggle color off in sidebar
+  /** Callback when a TEMPLATE source placement is saved. Grid persists to pick. */
+  onSaveTemplatePlacement?: (sourceId: string, region: CanvasRegionPx) => Promise<void>;
   /** Dynamic print area in millimeter dimensions. Falls back to full image when absent. */
   printAreaMm?: { widthMm: number; heightMm: number } | null;
 }
@@ -163,6 +165,7 @@ export function ColorMockupCard({
   onUploadClick,
   onPlacementSaved,
   onDeselectColor,
+  onSaveTemplatePlacement,
   printAreaMm,
 }: ColorMockupCardProps) {
   const state = getCardState(source, generatedOutputUrl);
@@ -209,25 +212,30 @@ export function ColorMockupCard({
         height: Math.max(1, Math.round(regionPx.height)),
       };
       if (source.scope === "TEMPLATE") {
-        // Clone template source → new DRAFT source with custom placement
-        if (!bgUrl) throw new Error("Không tìm thấy ảnh mockup");
-        const imgRes = await fetch(bgUrl);
-        if (!imgRes.ok) throw new Error("Không tải được ảnh mockup");
-        const blob = await imgRes.blob();
-        const form = new FormData();
-        form.set("file", blob, "mockup.jpg");
-        form.set("colorId", color.id);
-        form.set("view", "front");
-        form.set("sceneType", "flat_lay");
-        form.set("renderMode", "COMPOSITE");
-        form.set("isPrimary", "false");
-        form.set("sortOrder", "0");
-        form.set("compositeRegionPx", JSON.stringify(roundedRegion));
-        const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources`, {
-          method: "POST",
-          body: form,
-        });
-        if (!res.ok) throw new Error((await res.json()).error || "Lỗi lưu vị trí");
+        // Save placement to the pick (not clone to DRAFT)
+        if (onSaveTemplatePlacement) {
+          await onSaveTemplatePlacement(source.id, roundedRegion);
+        } else {
+          // Fallback: clone template source → new DRAFT source (legacy)
+          if (!bgUrl) throw new Error("Không tìm thấy ảnh mockup");
+          const imgRes = await fetch(bgUrl);
+          if (!imgRes.ok) throw new Error("Không tải được ảnh mockup");
+          const blob = await imgRes.blob();
+          const form = new FormData();
+          form.set("file", blob, "mockup.jpg");
+          form.set("colorId", color.id);
+          form.set("view", "front");
+          form.set("sceneType", "flat_lay");
+          form.set("renderMode", "COMPOSITE");
+          form.set("isPrimary", "false");
+          form.set("sortOrder", "0");
+          form.set("compositeRegionPx", JSON.stringify(roundedRegion));
+          const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources`, {
+            method: "POST",
+            body: form,
+          });
+          if (!res.ok) throw new Error((await res.json()).error || "Lỗi lưu vị trí");
+        }
       } else {
         const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources/${source.id}`, {
           method: "PATCH",

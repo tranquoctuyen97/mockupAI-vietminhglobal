@@ -105,7 +105,20 @@ export class PrintifyClient {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new PrintifyApiError(`Printify API error (${response.status}): ${text}`);
+      let body: any;
+      let code: number | string | undefined;
+      try {
+        body = JSON.parse(text);
+        code = body?.code ?? body?.errors?.code;
+      } catch {
+        // Not JSON
+      }
+      throw new PrintifyApiError(
+        `Printify API error (${response.status}): ${text}`,
+        response.status,
+        body,
+        code
+      );
     }
 
     return (await response.json()) as T;
@@ -241,9 +254,15 @@ export class PrintifyAuthError extends Error {
 }
 
 export class PrintifyApiError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly body?: unknown,
+    public readonly code?: number | string,
+  ) {
     super(message);
     this.name = "PrintifyApiError";
+    Object.setPrototypeOf(this, PrintifyApiError.prototype);
   }
 }
 
@@ -258,5 +277,6 @@ export class PrintifyNotFoundError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PrintifyNotFoundError";
+    Object.setPrototypeOf(this, PrintifyNotFoundError.prototype);
   }
 }
