@@ -178,7 +178,7 @@ export function MockupPreviewSection({
               <p style={{ margin: 0, fontSize: "0.75rem", color: "var(--text-muted)", lineHeight: 1.45 }}>
                 {selectedTotal}/{total} mockup đã chọn qua {colors.length} màu
               </p>
-              {onEditRegion && activeScope === "DRAFT" && activeSource.renderMode === "COMPOSITE" && (
+              {onEditRegion && activeSource.renderMode === "COMPOSITE" && (
                 <button
                   type="button"
                   className="btn btn-secondary"
@@ -277,18 +277,21 @@ export function MockupPreviewSection({
               >
                 {colorSources.map((source) => {
                   const sourceScope = normalizePreviewScope(source.scope) ?? scope;
+                  const isSelected = selectedSourceIdSet.has(source.id);
+                  const canEditRegion =
+                    source.renderMode === "COMPOSITE" && isSelected;
                   return (
                     <PreviewTile
                       key={source.id}
                       source={source}
                       scope={sourceScope}
-                      selected={selectedSourceIdSet.has(source.id)}
+                      selected={isSelected}
                       primary={source.id === primarySourceId}
                       active={source.id === activeSource?.id}
                       editActionLabel="Chỉnh vị trí design"
                       onToggleSelected={onToggleSelected}
                       onSetPrimary={onSetPrimary}
-                      onEditRegion={sourceScope === "DRAFT" ? onEditRegion : undefined}
+                      onEditRegion={canEditRegion ? onEditRegion : undefined}
                       onDelete={sourceScope === "DRAFT" ? onDelete : undefined}
                     />
                   );

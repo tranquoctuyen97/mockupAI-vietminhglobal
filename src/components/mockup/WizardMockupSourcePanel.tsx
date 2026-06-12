@@ -16,6 +16,8 @@ import {
 import {
   computeCustomPrintAreaPx,
   isSentinelRegion,
+  materializeSmartFitPlacement,
+  shouldAutoApplySmartFit,
 } from "@/lib/mockup/placement-region";
 
 interface WizardMockupSourcePanelProps {
@@ -139,6 +141,133 @@ export function WizardMockupSourcePanel({
     };
   }, [loadData]);
 
+  // Backfill guard: chỉ chạy một lần per draft load
+  const backfillAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (backfillAppliedRef.current) return;
+    if (!draftId || !templateId) return;
+    if (!printAreaMm?.widthMm || !printAreaMm?.heightMm) return;
+    if (loading) return; // wait for initial load to complete
+
+    // Collect TEMPLATE sources that need backfill
+    const allSources = [...draftSources, ...templateSources];
+    const needsBackfill: Array<{ sourceId: string; imageW: number; imageH: number }> = [];
+
+    for (const source of allSources) {
+      const scope = normalizePreviewScope(source.scope);
+      // Only TEMPLATE sources — DRAFT sources manage their own placement
+      if (scope !== "TEMPLATE") continue;
+
+      const imageW = source.imageWidth ?? 0;
+      const imageH = source.imageHeight ?? 0;
+      if (!imageW || !imageH) continue;
+
+      const printAreaPx = computeCustomPrintAreaPx(printAreaMm, imageW, imageH);
+      const existingRegion = source.compositeRegionPx
+        ? { x: source.compositeRegionPx.x, y: source.compositeRegionPx.y,
+            width: source.compositeRegionPx.width, height: source.compositeRegionPx.height }
+        : null;
+
+      if (shouldAutoApplySmartFit({
+        existingRegion,
+        printAreaPx,
+        imageWidth: imageW,
+        imageHeight: imageH,
+      })) {
+        needsBackfill.push({ sourceId: source.id, imageW, imageH });
+      }
+    }
+
+    if (needsBackfill.length === 0) {
+      backfillAppliedRef.current = true;
+      return;
+    }
+
+    // Load design dimensions for Smart Fit computation
+    let cancelled = false;
+    const doBackfill = async () => {
+      let designW = 0;
+      let designH = 0;
+      if (designImageUrl) {
+        try {
+          const dims = await new Promise<{ w: number; h: number }>((resolve, reject) => {
+            const img = new window.Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+            img.onerror = () => reject(new Error("Failed to load design"));
+            img.src = designImageUrl;
+          });
+          designW = dims.w;
+          designH = dims.h;
+        } catch { /* keep 0 */ }
+      }
+
+      if (cancelled || backfillAppliedRef.current) return;
+      if (!designW || !designH) {
+        backfillAppliedRef.current = true;
+        return;
+      }
+
+      const placementsBySourceId: Record<string, {
+        x: number; y: number; width: number; height: number;
+        rotationDeg: number; imageWidth: number; imageHeight: number;
+      }> = {};
+      let skipped = 0;
+
+      for (const { sourceId, imageW, imageH } of needsBackfill) {
+        const region = materializeSmartFitPlacement({
+          printAreaMm: printAreaMm!,
+          imageWidth: imageW,
+          imageHeight: imageH,
+          designWidth: designW,
+          designHeight: designH,
+        });
+        if (region) {
+          placementsBySourceId[sourceId] = region;
+        } else {
+          skipped++;
+        }
+      }
+
+      const updatedCount = Object.keys(placementsBySourceId).length;
+      if (updatedCount > 0) {
+        console.log("[mockup-placement] Backfilled Smart Fit placements:", {
+          updated: updatedCount,
+          skipped,
+        });
+
+        // Persist via API (merge with current selection)
+        try {
+          const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-library-picks`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sourceIds: selectedSourceIds,
+              primarySourceId,
+              placementsBySourceId,
+            }),
+          });
+          if (res.ok) {
+            // Reload sources to pick up backfilled placements
+            await loadData(true);
+          }
+        } catch { /* silent — backfill is best-effort */ }
+      }
+
+      backfillAppliedRef.current = true;
+    };
+
+    doBackfill();
+
+    return () => {
+      cancelled = true;
+      backfillAppliedRef.current = true;
+    };
+  }, [draftId, templateId, loading, printAreaMm, designImageUrl,
+      draftSources.length, templateSources.length]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (!placementEditorSource) {
       setPlacementEditorImageSize(null);
@@ -183,20 +312,96 @@ export function WizardMockupSourcePanel({
 
   async function savePlacementRegion(regionPx: CanvasRegionPx) {
     if (!placementEditorSource) return;
-    if (normalizePreviewScope(placementEditorSource.scope) !== "DRAFT") {
-      toast.error("Chỉ mockup riêng của listing này mới chỉnh vị trí được.");
-      return;
-    }
 
     try {
-      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources/${placementEditorSource.id}`, {
+      const scope = normalizePreviewScope(placementEditorSource.scope);
+      const editedId = placementEditorSource.id;
+
+      // Enrich region with imageWidth/imageHeight (API validates these)
+      const normalizedRegionPx = {
+        ...regionPx,
+        rotationDeg: regionPx.rotationDeg ?? 0,
+        imageWidth: regionPx.imageWidth ?? placementEditorImageSize?.width,
+        imageHeight: regionPx.imageHeight ?? placementEditorImageSize?.height,
+      };
+
+      // Narrow types after enrichment to satisfy TypeScript
+      const imageWidth = normalizedRegionPx.imageWidth;
+      const imageHeight = normalizedRegionPx.imageHeight;
+
+      if (
+        !Number.isFinite(imageWidth) ||
+        !Number.isFinite(imageHeight) ||
+        imageWidth <= 0 ||
+        imageHeight <= 0
+      ) {
+        throw new Error("Thiếu kích thước ảnh mockup, không thể lưu vị trí");
+      }
+
+      const regionToSave = {
+        ...normalizedRegionPx,
+        imageWidth,
+        imageHeight,
+      };
+
+      if (scope === "TEMPLATE") {
+        // Guard: only edit already-selected sources
+        if (!selectedSourceIds.includes(editedId)) {
+          throw new Error("Mockup source chưa được chọn");
+        }
+
+        // Preserve valid primarySourceId
+        const sourceIds = Array.from(new Set(selectedSourceIds));
+        const nextPrimarySourceId =
+          primarySourceId && sourceIds.includes(primarySourceId)
+            ? primarySourceId
+            : sourceIds[0] ?? null;
+
+        const res = await fetch(
+          `/api/wizard/drafts/${draftId}/mockup-library-picks`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sourceIds,
+              primarySourceId: nextPrimarySourceId,
+              placementsBySourceId: { [editedId]: regionToSave },
+            }),
+          },
+        );
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error || "Không lưu được vùng ghép");
+        }
+      } else if (scope === "DRAFT") {
+        // DRAFT: direct PATCH to CustomMockupSource
+        const res = await fetch(
+          `/api/wizard/drafts/${draftId}/mockup-sources/${editedId}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ compositeRegionPx: regionToSave }),
+          },
+        );
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error || "Không lưu được vùng ghép");
+        }
+      } else {
+        throw new Error("Scope mockup không hợp lệ");
+      }
+
+      // Auto-regenerate after placement change.
+      await fetch(`/api/wizard/drafts/${draftId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ compositeRegionPx: regionPx }),
+        body: JSON.stringify({
+          mockupsStale: true,
+          mockupsStaleReason: "placement_changed",
+        }),
+      }).catch((error) => {
+        console.warn("[mockup-placement] Failed to mark mockups stale after placement save", error);
       });
-      if (!res.ok) {
-        throw new Error((await res.json()).error || "Không lưu được vùng ghép");
-      }
 
       toast.success("Đã lưu vị trí design");
       setPlacementEditorSource(null);
@@ -284,6 +489,72 @@ export function WizardMockupSourcePanel({
         ? nextPrimarySourceId
         : orderedSelectedIds[0] ?? null;
 
+    // ── Compute Smart Fit for TEMPLATE sources that need it ──
+    const allSources = [...draftSources, ...templateSources];
+
+    // Load design dimensions (needed for Smart Fit aspect ratio)
+    let designWidth = 0;
+    let designHeight = 0;
+    if (designImageUrl) {
+      try {
+        const dims = await new Promise<{ w: number; h: number }>((resolve, reject) => {
+          const img = new window.Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+          img.onerror = () => reject(new Error("Failed to load design image"));
+          img.src = designImageUrl;
+        });
+        designWidth = dims.w;
+        designHeight = dims.h;
+      } catch {
+        // designWidth/designHeight stay 0 — materializeSmartFitPlacement returns null
+      }
+    }
+
+    const placementsBySourceId: Record<string, {
+      x: number; y: number; width: number; height: number;
+      rotationDeg: number; imageWidth: number; imageHeight: number;
+    }> = {};
+
+    if (designWidth > 0 && designHeight > 0 && printAreaMm?.widthMm && printAreaMm?.heightMm) {
+      for (const sourceId of orderedSelectedIds) {
+        const source = allSources.find((s) => s.id === sourceId);
+        if (!source) continue;
+        // Only auto-compute for TEMPLATE sources where placement is stored on pick
+        if (normalizePreviewScope(source.scope) !== "TEMPLATE") continue;
+
+        const imageW = source.imageWidth ?? 0;
+        const imageH = source.imageHeight ?? 0;
+        if (!imageW || !imageH) continue;
+
+        const printAreaPx = computeCustomPrintAreaPx(printAreaMm, imageW, imageH);
+        const needsSmartFit = shouldAutoApplySmartFit({
+          existingRegion: source.compositeRegionPx
+            ? { x: source.compositeRegionPx.x, y: source.compositeRegionPx.y,
+                width: source.compositeRegionPx.width, height: source.compositeRegionPx.height }
+            : null,
+          printAreaPx,
+          imageWidth: imageW,
+          imageHeight: imageH,
+        });
+
+        if (!needsSmartFit) continue;
+
+        const region = materializeSmartFitPlacement({
+          printAreaMm,
+          imageWidth: imageW,
+          imageHeight: imageH,
+          designWidth,
+          designHeight,
+        });
+
+        if (region) {
+          placementsBySourceId[sourceId] = region;
+        }
+      }
+    }
+    // ── End Smart Fit computation ──
+
     const previousSelectedIds = selectedSourceIds;
     const previousPrimarySourceId = primarySourceId;
 
@@ -291,13 +562,17 @@ export function WizardMockupSourcePanel({
     setPrimarySourceId(normalizedPrimarySourceId);
 
     try {
+      const body: Record<string, unknown> = {
+        sourceIds: orderedSelectedIds,
+        primarySourceId: normalizedPrimarySourceId,
+      };
+      if (Object.keys(placementsBySourceId).length > 0) {
+        body.placementsBySourceId = placementsBySourceId;
+      }
       const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-library-picks`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sourceIds: orderedSelectedIds,
-          primarySourceId: normalizedPrimarySourceId,
-        }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
@@ -409,7 +684,7 @@ export function WizardMockupSourcePanel({
           imageWidth: width,
           imageHeight: height,
         }
-      : defaultPlacementRegion(width, height);
+      : sentinelPlacementRegion(width, height);
     return normalizePlacementRegion(rawRegion, width, height);
   })();
   const openDraftUpload = (colorId?: string | null) => {
@@ -420,7 +695,6 @@ export function WizardMockupSourcePanel({
     setUploadOpen(true);
   };
   const editPreviewSource = (source: PreviewSource) => {
-    if (normalizePreviewScope(source.scope) !== "DRAFT") return;
     if (source.renderMode !== "COMPOSITE") return;
     setUploadOpen(false);
     setEditingSource(null);
@@ -738,14 +1012,13 @@ function sourceToModalValue(source: PreviewSource, templateId: string): Partial<
   };
 }
 
-function defaultPlacementRegion(imageWidth: number, imageHeight: number): CanvasRegionPx {
-  const width = Math.max(1, Math.round(imageWidth * 0.42));
-  const height = Math.max(1, Math.round(imageHeight * 0.28));
+function sentinelPlacementRegion(imageWidth: number, imageHeight: number): CanvasRegionPx {
+  // Sentinel region: (0,0,w,h) — triggers Smart Fit auto-snap in CanvasPlacementEditor
   return {
-    x: Math.max(0, Math.round((imageWidth - width) / 2)),
-    y: Math.max(0, Math.round((imageHeight - height) / 2)),
-    width,
-    height,
+    x: 0,
+    y: 0,
+    width: imageWidth,
+    height: imageHeight,
     rotationDeg: 0,
     imageWidth,
     imageHeight,

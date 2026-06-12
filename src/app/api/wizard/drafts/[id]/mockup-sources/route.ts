@@ -91,12 +91,52 @@ export async function GET(
   // Library picks
   const picks = await prisma.wizardDraftMockupLibraryPick.findMany({
     where: { draftId },
-    select: { sourceId: true, isPrimary: true, sortOrder: true },
+    select: { sourceId: true, isPrimary: true, sortOrder: true, compositeRegionPx: true },
   });
   const resolvedSelection = resolveCustomMockupSourceSelection({
     sources: [...draftSources, ...eligibleTemplateSources],
     picks,
   });
+
+  // Build lookup: sourceId → pick's compositeRegionPx
+  const pickPlacementBySourceId = new Map<string, unknown>(
+    picks
+      .filter((p) => p.compositeRegionPx != null)
+      .map((p) => [p.sourceId, p.compositeRegionPx]),
+  );
+
+  // Enhanced serialize: merge pick placement with source placement
+  // Precedence:
+  //   DRAFT:  source.compositeRegionPx > pick.compositeRegionPx > null
+  //   TEMPLATE: pick.compositeRegionPx > source.compositeRegionPx > null
+  function serializeWithPickPlacement(
+    source: (typeof draftSources)[number],
+  ) {
+    const serialized = serializeCustomMockupSource(source);
+    const pickPlacement = pickPlacementBySourceId.get(source.id) ?? null;
+
+    let effectiveCompositeRegionPx = serialized.compositeRegionPx;
+
+    if ((source as any).scope === "DRAFT") {
+      // DRAFT source: source's own placement takes priority
+      effectiveCompositeRegionPx = serialized.compositeRegionPx ?? pickPlacement;
+    } else {
+      // TEMPLATE source: pick's placement takes priority
+      effectiveCompositeRegionPx = pickPlacement ?? serialized.compositeRegionPx;
+    }
+
+    // Extract imageWidth/imageHeight from effective placement if source doesn't have them
+    const placementObj = effectiveCompositeRegionPx && typeof effectiveCompositeRegionPx === "object"
+      ? effectiveCompositeRegionPx as Record<string, unknown>
+      : null;
+
+    return {
+      ...serialized,
+      compositeRegionPx: effectiveCompositeRegionPx,
+      imageWidth: serialized.imageWidth ?? (placementObj?.imageWidth as number | null) ?? null,
+      imageHeight: serialized.imageHeight ?? (placementObj?.imageHeight as number | null) ?? null,
+    };
+  }
 
   return NextResponse.json({
     template: draft.template
@@ -118,8 +158,8 @@ export async function GET(
           ),
         }
       : null,
-    draftSources: draftSources.map((s) => serializeCustomMockupSource(s)),
-    eligibleTemplateSources: eligibleTemplateSources.map((s) => serializeCustomMockupSource(s)),
+    draftSources: draftSources.map((s) => serializeWithPickPlacement(s)),
+    eligibleTemplateSources: eligibleTemplateSources.map((s) => serializeWithPickPlacement(s)),
     selectedSourceIds: resolvedSelection.selectedSourceIds,
     primarySourceId: resolvedSelection.primarySourceId,
     pickedTemplateSourceIds: picks.map((p) => p.sourceId),

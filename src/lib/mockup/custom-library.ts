@@ -109,6 +109,48 @@ export function parseCompositeRegionPx(value: unknown): CompositeRegionPx | null
   return region;
 }
 
+/**
+ * Validate placement JSON structure + finite numeric fields.
+ * Relaxed validation: allows negative x/y (valid for manual placement).
+ * Does NOT enforce print-area bounds.
+ * Used for placementsBySourceId in PUT mockup-library-picks.
+ */
+export function isValidCompositeRegionPx(value: unknown): value is CompositeRegionPx {
+  if (!value || typeof value !== "object") return false;
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.x === "number" && Number.isFinite(r.x) &&
+    typeof r.y === "number" && Number.isFinite(r.y) &&
+    typeof r.width === "number" && Number.isFinite(r.width) && r.width > 0 &&
+    typeof r.height === "number" && Number.isFinite(r.height) && r.height > 0 &&
+    typeof r.imageWidth === "number" && Number.isFinite(r.imageWidth) && r.imageWidth > 0 &&
+    typeof r.imageHeight === "number" && Number.isFinite(r.imageHeight) && r.imageHeight > 0
+  );
+}
+
+/**
+ * Normalize + validate placement JSON.
+ * Returns canonical CompositeRegionPx with rotationDeg defaulted to 0.
+ * Returns null if structure invalid.
+ * Server must save normalized output, not raw client JSON.
+ */
+export function normalizeCompositeRegionPx(value: unknown): CompositeRegionPx | null {
+  if (!isValidCompositeRegionPx(value)) return null;
+  const r = value as Record<string, unknown>;
+  return {
+    x: r.x as number,
+    y: r.y as number,
+    width: r.width as number,
+    height: r.height as number,
+    rotationDeg:
+      typeof r.rotationDeg === "number" && Number.isFinite(r.rotationDeg)
+        ? r.rotationDeg as number
+        : 0,
+    imageWidth: r.imageWidth as number,
+    imageHeight: r.imageHeight as number,
+  };
+}
+
 export function toJson(value: CompositeRegionPx | null): Prisma.InputJsonValue | undefined {
   return value ? (value as unknown as Prisma.InputJsonValue) : undefined;
 }

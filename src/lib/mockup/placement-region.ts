@@ -262,3 +262,70 @@ export function clampRegionToPrintArea(
   const bounds = printArea ?? { x: 0, y: 0, width: imageWidth, height: imageHeight };
   return clampRawRegion(region, bounds);
 }
+
+/**
+ * Compute Smart Fit composite region, clamped into print area.
+ * Returns null if design or image dimensions are missing.
+ * Shared helper for: library assign, upload assign, backfill on load.
+ */
+export function materializeSmartFitPlacement(params: {
+  printAreaMm: PrintAreaMm;
+  imageWidth: number;
+  imageHeight: number;
+  designWidth: number;
+  designHeight: number;
+}): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotationDeg: number;
+  imageWidth: number;
+  imageHeight: number;
+} | null {
+  const { printAreaMm, imageWidth, imageHeight, designWidth, designHeight } = params;
+
+  if (!designWidth || !designHeight || !imageWidth || !imageHeight) {
+    return null;
+  }
+
+  const printAreaPx = computeCustomPrintAreaPx(printAreaMm, imageWidth, imageHeight);
+  const region = computeListingReadyRegion(printAreaPx, designWidth, designHeight);
+  const clamped = clampRegionToPrintArea(region, printAreaPx, imageWidth, imageHeight);
+
+  return {
+    x: clamped.x,
+    y: clamped.y,
+    width: clamped.width,
+    height: clamped.height,
+    rotationDeg: 0,
+    imageWidth,
+    imageHeight,
+  };
+}
+
+/**
+ * Check xem co can auto-apply Smart Fit khong.
+ * Tra ve true neu region missing, sentinel, hoac bad/legacy.
+ * Dung chung cho: library assign, upload assign, backfill.
+ */
+export function shouldAutoApplySmartFit(params: {
+  existingRegion?: { x: number; y: number; width: number; height: number } | null;
+  printAreaPx: PrintAreaBounds;
+  imageWidth: number;
+  imageHeight: number;
+}): boolean {
+  const { existingRegion, printAreaPx, imageWidth, imageHeight } = params;
+
+  if (!existingRegion) return true;
+
+  if (isSentinelRegion(existingRegion, imageWidth, imageHeight)) {
+    return true;
+  }
+
+  if (isBadCompositeRegion(existingRegion, printAreaPx)) {
+    return true;
+  }
+
+  return false;
+}

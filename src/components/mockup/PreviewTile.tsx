@@ -183,7 +183,7 @@ export function PreviewTile({
         </div>
 
         <div className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
-          {onEditRegion && effectiveScope === "DRAFT" && isComposite && (
+          {onEditRegion && isComposite && (
             <button
               type="button"
               className="btn btn-secondary"

@@ -40,6 +40,8 @@ const draftPatchKeys = [
   "aiContent",
   "currentStep",
   "status",
+  "mockupsStale",
+  "mockupsStaleReason",
 ] as const;
 
 const draftDesignsWithRelationsInclude = {

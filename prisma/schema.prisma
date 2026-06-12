@@ -531,8 +531,9 @@ model WizardDraftMockupLibraryPick {
   sourceId  String   @map("source_id")
   colorId   String   @map("color_id")
   isPrimary Boolean  @default(false) @map("is_primary")
-  sortOrder Int      @default(0) @map("sort_order")
-  createdAt DateTime @default(now()) @map("created_at")
+  sortOrder         Int      @default(0) @map("sort_order")
+  compositeRegionPx Json?    @map("composite_region_px")
+  createdAt         DateTime @default(now()) @map("created_at")
 
   draft  WizardDraft        @relation(fields: [draftId], references: [id], onDelete: Cascade)
   source CustomMockupSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)

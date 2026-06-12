@@ -7,6 +7,8 @@ import {
   computeLogoRegion,
   isBadCompositeRegion,
   isSentinelRegion,
+  materializeSmartFitPlacement,
+  shouldAutoApplySmartFit,
 } from "./placement-region";
 
 // Shared test fixture: standard apparel front print area
@@ -126,5 +128,165 @@ test("isSentinelRegion does NOT false-positive on normal region", () => {
   assert.equal(
     isSentinelRegion({ x: 100, y: 100, width: 500, height: 500 }, 1024, 1024),
     false,
+  );
+});
+
+// ─── shouldAutoApplySmartFit ─────────────────────────────────────────────────
+
+const smartFitPrintArea = { x: 40, y: 40, width: 320, height: 400 };
+const smartFitImageW = 400;
+const smartFitImageH = 500;
+
+test("shouldAutoApplySmartFit — returns true when existingRegion is null/undefined", () => {
+  assert.equal(
+    shouldAutoApplySmartFit({
+      existingRegion: null,
+      printAreaPx: smartFitPrintArea,
+      imageWidth: smartFitImageW,
+      imageHeight: smartFitImageH,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldAutoApplySmartFit({
+      existingRegion: undefined,
+      printAreaPx: smartFitPrintArea,
+      imageWidth: smartFitImageW,
+      imageHeight: smartFitImageH,
+    }),
+    true,
+  );
+});
+
+test("shouldAutoApplySmartFit — returns true for sentinel region (0,0,imageW,imageH)", () => {
+  assert.equal(
+    shouldAutoApplySmartFit({
+      existingRegion: { x: 0, y: 0, width: smartFitImageW, height: smartFitImageH },
+      printAreaPx: smartFitPrintArea,
+      imageWidth: smartFitImageW,
+      imageHeight: smartFitImageH,
+    }),
+    true,
+  );
+});
+
+test("shouldAutoApplySmartFit — returns true for bad composite region (out of bounds)", () => {
+  assert.equal(
+    shouldAutoApplySmartFit({
+      existingRegion: { x: 0, y: 0, width: 10, height: 10 },
+      printAreaPx: { x: 300, y: 300, width: 50, height: 50 },
+      imageWidth: smartFitImageW,
+      imageHeight: smartFitImageH,
+    }),
+    true,
+  );
+});
+
+test("shouldAutoApplySmartFit — returns false for valid Smart Fit region", () => {
+  assert.equal(
+    shouldAutoApplySmartFit({
+      existingRegion: { x: 50, y: 80, width: 150, height: 200 },
+      printAreaPx: smartFitPrintArea,
+      imageWidth: smartFitImageW,
+      imageHeight: smartFitImageH,
+    }),
+    false,
+  );
+});
+
+test("shouldAutoApplySmartFit — returns false for valid manual smaller region", () => {
+  assert.equal(
+    shouldAutoApplySmartFit({
+      existingRegion: { x: 100, y: 120, width: 80, height: 100 },
+      printAreaPx: smartFitPrintArea,
+      imageWidth: smartFitImageW,
+      imageHeight: smartFitImageH,
+    }),
+    false,
+  );
+});
+
+// ─── materializeSmartFitPlacement ──────────────────────────────────────────────
+
+test("materializeSmartFitPlacement returns clamped Smart Fit region inside print area", () => {
+  const printAreaMm = { widthMm: 340, heightMm: 420 };
+  const result = materializeSmartFitPlacement({
+    printAreaMm,
+    imageWidth: 1000,
+    imageHeight: 1200,
+    designWidth: 800,
+    designHeight: 600,
+  });
+
+  assert.ok(result !== null, "result should not be null");
+  const r = result!;
+  assert.ok(r.width > 0);
+  assert.ok(r.height > 0);
+  assert.equal(r.rotationDeg, 0);
+  assert.equal(r.imageWidth, 1000);
+  assert.equal(r.imageHeight, 1200);
+  // Region must be within image bounds
+  assert.ok(r.x >= 0, `x ${r.x} should be >= 0`);
+  assert.ok(r.y >= 0, `y ${r.y} should be >= 0`);
+  assert.ok(r.x + r.width <= 1000, `right edge ${r.x + r.width} should be <= 1000`);
+  assert.ok(r.y + r.height <= 1200, `bottom edge ${r.y + r.height} should be <= 1200`);
+});
+
+test("materializeSmartFitPlacement returns null when design dimensions are missing", () => {
+  const printAreaMm = { widthMm: 340, heightMm: 420 };
+
+  assert.equal(
+    materializeSmartFitPlacement({
+      printAreaMm,
+      imageWidth: 1000,
+      imageHeight: 1200,
+      designWidth: 0,
+      designHeight: 600,
+    }),
+    null,
+  );
+
+  assert.equal(
+    materializeSmartFitPlacement({
+      printAreaMm,
+      imageWidth: 1000,
+      imageHeight: 1200,
+      designWidth: 800,
+      designHeight: 0,
+    }),
+    null,
+  );
+});
+
+test("materializeSmartFitPlacement returns null when image dimensions are missing", () => {
+  const printAreaMm = { widthMm: 340, heightMm: 420 };
+  assert.equal(
+    materializeSmartFitPlacement({
+      printAreaMm,
+      imageWidth: 0,
+      imageHeight: 1200,
+      designWidth: 800,
+      designHeight: 600,
+    }),
+    null,
+  );
+});
+
+test("materializeSmartFitPlacement handles tall/portrait design aspect ratio", () => {
+  const result = materializeSmartFitPlacement({
+    printAreaMm: { widthMm: 300, heightMm: 400 },
+    imageWidth: 800,
+    imageHeight: 1000,
+    designWidth: 400,
+    designHeight: 1200, // portrait: aspect 0.33
+  });
+
+  assert.ok(result !== null, "result should not be null");
+  // Smart Fit caps height at 55% of print area height
+  const maxHeight = Math.round(1000 * 0.8 * 0.55);
+  assert.ok(
+    result!.height <= maxHeight,
+    `height ${result!.height} should be <= ${maxHeight}`,
   );
 });
