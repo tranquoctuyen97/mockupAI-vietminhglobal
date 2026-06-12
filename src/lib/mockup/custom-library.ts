@@ -136,7 +136,7 @@ export function isValidCompositeRegionPx(value: unknown): value is CompositeRegi
  */
 export function normalizeCompositeRegionPx(value: unknown): CompositeRegionPx | null {
   if (!isValidCompositeRegionPx(value)) return null;
-  const r = value as Record<string, unknown>;
+  const r = value as unknown as Record<string, unknown>;
   return {
     x: r.x as number,
     y: r.y as number,
