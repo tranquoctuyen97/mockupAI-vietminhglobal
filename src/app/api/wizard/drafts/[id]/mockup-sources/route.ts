@@ -9,6 +9,7 @@ import {
   isCustomMockupView,
   isCustomRenderMode,
   parseCompositeRegionPx,
+  resolveEffectiveCompositeRegion,
   serializeCustomMockupSource,
   toJson,
 } from "@/lib/mockup/custom-library";
@@ -105,9 +106,9 @@ export async function GET(
       .map((p) => [p.sourceId, p.compositeRegionPx]),
   );
 
-  // Enhanced serialize: merge pick placement with source placement
+  // Enhanced serialize: merge pick placement with source placement via shared resolver.
   // Precedence:
-  //   DRAFT:  source.compositeRegionPx > pick.compositeRegionPx > null
+  //   DRAFT:    source.compositeRegionPx > pick.compositeRegionPx > null
   //   TEMPLATE: pick.compositeRegionPx > source.compositeRegionPx > null
   function serializeWithPickPlacement(
     source: (typeof draftSources)[number],
@@ -115,26 +116,17 @@ export async function GET(
     const serialized = serializeCustomMockupSource(source);
     const pickPlacement = pickPlacementBySourceId.get(source.id) ?? null;
 
-    let effectiveCompositeRegionPx = serialized.compositeRegionPx;
-
-    if ((source as any).scope === "DRAFT") {
-      // DRAFT source: source's own placement takes priority
-      effectiveCompositeRegionPx = serialized.compositeRegionPx ?? pickPlacement;
-    } else {
-      // TEMPLATE source: pick's placement takes priority
-      effectiveCompositeRegionPx = pickPlacement ?? serialized.compositeRegionPx;
-    }
-
-    // Extract imageWidth/imageHeight from effective placement if source doesn't have them
-    const placementObj = effectiveCompositeRegionPx && typeof effectiveCompositeRegionPx === "object"
-      ? effectiveCompositeRegionPx as Record<string, unknown>
-      : null;
+    const effectiveCompositeRegionPx = resolveEffectiveCompositeRegion({
+      scope: (source as any).scope as "DRAFT" | "TEMPLATE",
+      sourceRegion: serialized.compositeRegionPx,
+      pickRegion: pickPlacement,
+    });
 
     return {
       ...serialized,
       compositeRegionPx: effectiveCompositeRegionPx,
-      imageWidth: serialized.imageWidth ?? (placementObj?.imageWidth as number | null) ?? null,
-      imageHeight: serialized.imageHeight ?? (placementObj?.imageHeight as number | null) ?? null,
+      imageWidth: serialized.imageWidth ?? effectiveCompositeRegionPx?.imageWidth ?? null,
+      imageHeight: serialized.imageHeight ?? effectiveCompositeRegionPx?.imageHeight ?? null,
     };
   }
 

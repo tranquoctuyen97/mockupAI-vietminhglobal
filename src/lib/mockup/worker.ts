@@ -19,6 +19,7 @@ import { isFinalBullMqAttempt, shouldSkipMockupImageProcessing } from "./progres
 import { MOCKUP_QUEUE_NAME, type MockupJobPayload } from "./queue";
 import { resolveMockupSourceBuffer } from "./source";
 import { parseMockupSourceUrl } from "./source-url";
+import { resolveEffectiveCompositeRegion } from "./custom-library";
 import { sseChannels } from "../sse/channel";
 import { redisConnection } from "@/lib/queue/queue";
 
@@ -72,7 +73,10 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
           // Per-image render path: COMPOSITE output goes to MockupImage.compositeUrl, not CustomMockupSource.outputPath
           const image = await prisma.mockupImage.findUniqueOrThrow({
             where: { id: mockupImageId },
-            select: { mockupJobId: true },
+            select: {
+              mockupJobId: true,
+              mockupJob: { select: { draftId: true } },
+            },
           });
           const outputKey = `custom-mockups/renders/${image.mockupJobId}/${mockupImageId}-output.webp`;
           const outputPath = storage.resolvePath(outputKey);
@@ -82,7 +86,8 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
           const sourceBuffer = await resolveMockupSourceBuffer(sourceUrl);
           const designBuffer = await readFile(storage.resolvePath(designStoragePath));
 
-          // Resolve composite region: use stored value if valid, else Smart Fit.
+          // Resolve composite region: merge pick placement for TEMPLATE scope,
+          // then use stored value if valid, else Smart Fit.
           // Extracts real print-area mm from template, computes pixel bounds from
           // actual mockup image dimensions (no more hardcoded 1000px).
           const sourceMeta = await sharp(sourceBuffer).metadata();
@@ -99,9 +104,27 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
 
           const printAreaPx = computeCustomPrintAreaPx(printAreaMm, imgW, imgH);
 
+          // Merge pick placement for TEMPLATE scope sources.
+          // Pick placement (WizardDraftMockupLibraryPick) is the draft-level override;
+          // source.compositeRegionPx is the template-level default.
+          let pickRegion: unknown = null;
+          if (source.scope === "TEMPLATE") {
+            const draftId = image.mockupJob.draftId;
+            const pick = await prisma.wizardDraftMockupLibraryPick.findUnique({
+              where: { draftId_sourceId: { draftId, sourceId: parsed.sourceId } },
+              select: { compositeRegionPx: true },
+            });
+            pickRegion = pick?.compositeRegionPx ?? null;
+          }
+          const effectiveRegion = resolveEffectiveCompositeRegion({
+            scope: source.scope as "DRAFT" | "TEMPLATE",
+            sourceRegion: source.compositeRegionPx,
+            pickRegion,
+          });
+
           let region: CustomCompositeRegion;
-          if (source.compositeRegionPx) {
-            const stored = coerceCustomCompositeRegion(source.compositeRegionPx);
+          if (effectiveRegion) {
+            const stored = coerceCustomCompositeRegion(effectiveRegion);
             if (!isBadCompositeRegion(stored, printAreaPx)) {
               region = stored;
             } else {

@@ -7,6 +7,7 @@ import type { PrintifyMockupPollPayload } from "./queue";
 import { getMockupCompositeQueue } from "./queue";
 import { cacheRemoteMockupImage } from "./remote-media";
 import { resolveCustomMockupSourceSelection } from "./custom-source-selection";
+import { resolveEffectiveCompositeRegion } from "./custom-library";
 import { buildCustomMockupSourceUrl, type MockupSourceType } from "./source-url";
 import { sseChannels } from "../sse/channel";
 import { redisConnection } from "@/lib/queue/queue";
@@ -355,7 +356,7 @@ async function buildCustomRowsForDraft(input: {
       store: {
         include: { colors: true },
       },
-      mockupLibraryPicks: { select: { sourceId: true } },
+      mockupLibraryPicks: { select: { sourceId: true, compositeRegionPx: true } },
     },
   });
   if (!draft) return { draftRows: [], templateRows: [], mode: "PRINTIFY" };
@@ -414,6 +415,14 @@ async function buildCustomRowsForDraft(input: {
     (source) => source.scope === "TEMPLATE",
   );
 
+  // Build pick placement lookup: TEMPLATE scope sources may have their
+  // placement stored on WizardDraftMockupLibraryPick, not on the source itself.
+  const pickRegionBySourceId = new Map(
+    (draft.mockupLibraryPicks ?? [])
+      .filter((p) => p.compositeRegionPx != null)
+      .map((p) => [p.sourceId, p.compositeRegionPx]),
+  );
+
   const mapSource = (source: typeof draftSources[number]) => ({
     id: source.id,
     colorId: source.colorId,
@@ -425,8 +434,16 @@ async function buildCustomRowsForDraft(input: {
     isPrimary: source.isPrimary,
     sortOrder: source.sortOrder,
   });
-  const isRenderableSource = (source: typeof draftSources[number]) =>
-    source.renderMode !== "COMPOSITE" || Boolean(source.compositeRegionPx);
+  const isRenderableSource = (source: typeof draftSources[number]) => {
+    if (source.renderMode !== "COMPOSITE") return true; // FINAL mode is always renderable
+    // COMPOSITE: needs effective placement (source or pick, depending on scope)
+    const effective = resolveEffectiveCompositeRegion({
+      scope: source.scope as "DRAFT" | "TEMPLATE",
+      sourceRegion: source.compositeRegionPx,
+      pickRegion: pickRegionBySourceId.get(source.id) ?? null,
+    });
+    return effective !== null;
+  };
 
   const draftRows = buildCustomMockupImageRows({
     sources: selectedDraftSources.filter(isRenderableSource).map(mapSource),

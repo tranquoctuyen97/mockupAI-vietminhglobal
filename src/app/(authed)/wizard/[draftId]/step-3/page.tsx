@@ -685,9 +685,18 @@ export default function Step3PreviewPage() {
   ]);
 
   useEffect(() => {
-    if (!draft || loading || hasTriggeredBatchRender) return;
+    if (!draft || loading) return;
     if (selectedDraftDesigns.length === 0) return;
     if (selectedColorIds.size === 0 || !selectedTemplateReady || hasSelectedMissingCustomColors) return;
+
+    // When mockups are stale (placement/color/design changed), regenerate regardless
+    // of hasTriggeredBatchRender guard. Only check isGenerating to prevent double-fire.
+    if (draft.mockupsStale) {
+      if (!isGenerating) void handleGenerate();
+      return;
+    }
+
+    if (hasTriggeredBatchRender) return;
 
     if (!draft.mockupsStale && hasActiveOrCompletedJobsForAllDesigns(selectedDraftDesignIds, selectedDesignJobs)) {
       return;
@@ -700,6 +709,7 @@ export default function Step3PreviewPage() {
     handleGenerate,
     hasSelectedMissingCustomColors,
     hasTriggeredBatchRender,
+    isGenerating,
     loading,
     selectedColorIds.size,
     selectedDesignJobs,
