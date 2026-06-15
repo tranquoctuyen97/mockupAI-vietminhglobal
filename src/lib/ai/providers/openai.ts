@@ -1,7 +1,16 @@
-import type { ContentGenerator, ContentInput, ContentOutput } from "../types";
+import type {
+  ContentGenerator,
+  ContentInput,
+  ContentOutput,
+  ProductOrganizationInput,
+  ProductOrganizationOutput,
+} from "../types";
 import {
   buildListingUserPrompt,
+  buildOrganizationUserPrompt,
+  ORGANIZATION_JSON_SCHEMA,
   parseListingContentJson,
+  parseProductOrganizationJson,
   POD_LISTING_JSON_SCHEMA,
 } from "./shared";
 
@@ -57,6 +66,58 @@ export class OpenAiProvider implements ContentGenerator {
     if (!resultText) throw new Error("OpenAI returned empty response");
 
     return parseListingContentJson(resultText, {
+      tokensIn: data?.usage?.input_tokens ?? 0,
+      tokensOut: data?.usage?.output_tokens ?? 0,
+    });
+  }
+
+  async optimizeProductOrganization(
+    input: ProductOrganizationInput,
+  ): Promise<ProductOrganizationOutput> {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: this.modelName,
+        input: [
+          {
+            role: "system",
+            content: [{ type: "input_text", text: this.systemPrompt }],
+          },
+          {
+            role: "user",
+            content: [{ type: "input_text", text: buildOrganizationUserPrompt(input) }],
+          },
+        ],
+        max_output_tokens: 900,
+        text: {
+          format: {
+            type: "json_schema",
+            name: "pod_product_organization",
+            strict: true,
+            schema: ORGANIZATION_JSON_SCHEMA,
+          },
+        },
+      }),
+    });
+
+    const data = await response.json().catch(() => null) as any;
+    if (!response.ok) {
+      throw new OpenAiRequestError(
+        response.status,
+        data?.error?.message || `OpenAI request failed (${response.status})`,
+        data?.error?.code,
+        data?.error?.type,
+      );
+    }
+
+    const resultText = data?.output_text ?? extractOpenAiOutputText(data);
+    if (!resultText) throw new Error("OpenAI returned empty response");
+
+    return parseProductOrganizationJson(resultText, {
       tokensIn: data?.usage?.input_tokens ?? 0,
       tokensOut: data?.usage?.output_tokens ?? 0,
     });
