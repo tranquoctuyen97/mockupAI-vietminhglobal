@@ -155,6 +155,32 @@ export function toJson(value: CompositeRegionPx | null): Prisma.InputJsonValue |
   return value ? (value as unknown as Prisma.InputJsonValue) : undefined;
 }
 
+/**
+ * Resolve the effective composite region by merging source and pick placements.
+ * Pure function — callers are responsible for fetching pick data from the DB.
+ *
+ * Precedence:
+ *   DRAFT:    sourceRegion > pickRegion > null
+ *   TEMPLATE: pickRegion > sourceRegion > null
+ *
+ * This mirrors the logic in GET mockup-sources serializeWithPickPlacement()
+ * and MUST be used by any code path that reads placement for rendering.
+ */
+export function resolveEffectiveCompositeRegion(params: {
+  scope: "DRAFT" | "TEMPLATE";
+  sourceRegion: unknown;
+  pickRegion: unknown;
+}): CompositeRegionPx | null {
+  const parsedSource = parseCompositeRegionPx(params.sourceRegion);
+  const parsedPick = parseCompositeRegionPx(params.pickRegion);
+
+  if (params.scope === "DRAFT") {
+    return parsedSource ?? parsedPick;
+  }
+  // TEMPLATE: pick takes priority (draft-level override)
+  return parsedPick ?? parsedSource;
+}
+
 export function storageUrl(key: string | null | undefined): string | null {
   return key ? getStorage().getPublicUrl(key) : null;
 }

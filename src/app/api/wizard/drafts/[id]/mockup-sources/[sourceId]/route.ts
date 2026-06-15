@@ -89,6 +89,16 @@ export async function PATCH(
       });
     }
 
+    if (regionChanged || body.isPrimary !== undefined) {
+      await tx.wizardDraft.update({
+        where: { id: draftId },
+        data: {
+          mockupsStale: true,
+          mockupsStaleReason: "placement_changed",
+        },
+      });
+    }
+
     return tx.customMockupSource.update({
       where: { id: sourceId },
       data,
@@ -130,13 +140,23 @@ export async function DELETE(
   const source = await findDraftSource(sourceId, draftId, session.tenantId);
   if (!source) return NextResponse.json({ error: "Draft mockup source not found" }, { status: 404 });
 
-  await prisma.customMockupSource.update({
-    where: { id: sourceId },
-    data: {
-      isActive: false,
-      deletedAt: new Date(),
-      updatedById: session.id,
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.customMockupSource.update({
+      where: { id: sourceId },
+      data: {
+        isActive: false,
+        deletedAt: new Date(),
+        updatedById: session.id,
+      },
+    });
+
+    await tx.wizardDraft.update({
+      where: { id: draftId },
+      data: {
+        mockupsStale: true,
+        mockupsStaleReason: "placement_changed",
+      },
+    });
   });
 
   const requestInfo = getRequestInfo(request);

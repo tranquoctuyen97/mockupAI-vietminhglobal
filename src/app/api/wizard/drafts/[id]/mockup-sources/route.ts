@@ -9,6 +9,7 @@ import {
   isCustomMockupView,
   isCustomRenderMode,
   parseCompositeRegionPx,
+  resolveEffectiveCompositeRegion,
   serializeCustomMockupSource,
   toJson,
 } from "@/lib/mockup/custom-library";
@@ -74,12 +75,25 @@ export async function GET(
 
   // Eligible TEMPLATE sources (all active template sources for this store/template)
   let eligibleTemplateSources: typeof draftSources = [];
-  if (draft.templateId) {
+  let templateId = draft.templateId;
+  if (!templateId && draft.storeId) {
+    const defaultTemplate = await prisma.storeMockupTemplate.findFirst({
+      where: { storeId: draft.storeId, isDefault: true },
+      select: { id: true },
+    }) || await prisma.storeMockupTemplate.findFirst({
+      where: { storeId: draft.storeId },
+      select: { id: true },
+    });
+    if (defaultTemplate) {
+      templateId = defaultTemplate.id;
+    }
+  }
+
+  if (templateId) {
     eligibleTemplateSources = await prisma.customMockupSource.findMany({
       where: {
         scope: "TEMPLATE",
-        templateId: draft.templateId,
-        colorId: { in: draft.enabledColorIds },
+        templateId: templateId,
         isActive: true,
         deletedAt: null,
       },
@@ -105,9 +119,9 @@ export async function GET(
       .map((p) => [p.sourceId, p.compositeRegionPx]),
   );
 
-  // Enhanced serialize: merge pick placement with source placement
+  // Enhanced serialize: merge pick placement with source placement via shared resolver.
   // Precedence:
-  //   DRAFT:  source.compositeRegionPx > pick.compositeRegionPx > null
+  //   DRAFT:    source.compositeRegionPx > pick.compositeRegionPx > null
   //   TEMPLATE: pick.compositeRegionPx > source.compositeRegionPx > null
   function serializeWithPickPlacement(
     source: (typeof draftSources)[number],
@@ -115,26 +129,17 @@ export async function GET(
     const serialized = serializeCustomMockupSource(source);
     const pickPlacement = pickPlacementBySourceId.get(source.id) ?? null;
 
-    let effectiveCompositeRegionPx = serialized.compositeRegionPx;
-
-    if ((source as any).scope === "DRAFT") {
-      // DRAFT source: source's own placement takes priority
-      effectiveCompositeRegionPx = serialized.compositeRegionPx ?? pickPlacement;
-    } else {
-      // TEMPLATE source: pick's placement takes priority
-      effectiveCompositeRegionPx = pickPlacement ?? serialized.compositeRegionPx;
-    }
-
-    // Extract imageWidth/imageHeight from effective placement if source doesn't have them
-    const placementObj = effectiveCompositeRegionPx && typeof effectiveCompositeRegionPx === "object"
-      ? effectiveCompositeRegionPx as Record<string, unknown>
-      : null;
+    const effectiveCompositeRegionPx = resolveEffectiveCompositeRegion({
+      scope: (source as any).scope as "DRAFT" | "TEMPLATE",
+      sourceRegion: serialized.compositeRegionPx,
+      pickRegion: pickPlacement,
+    });
 
     return {
       ...serialized,
       compositeRegionPx: effectiveCompositeRegionPx,
-      imageWidth: serialized.imageWidth ?? (placementObj?.imageWidth as number | null) ?? null,
-      imageHeight: serialized.imageHeight ?? (placementObj?.imageHeight as number | null) ?? null,
+      imageWidth: serialized.imageWidth ?? effectiveCompositeRegionPx?.imageWidth ?? null,
+      imageHeight: serialized.imageHeight ?? effectiveCompositeRegionPx?.imageHeight ?? null,
     };
   }
 
@@ -291,7 +296,11 @@ export async function POST(
     // Auto-set mode to DRAFT_CUSTOM on first draft upload
     await tx.wizardDraft.update({
       where: { id: draftId },
-      data: { mockupSourceMode: "DRAFT_CUSTOM" },
+      data: {
+        mockupSourceMode: "DRAFT_CUSTOM",
+        mockupsStale: true,
+        mockupsStaleReason: "placement_changed",
+      },
     });
 
     const existingSelectionCount = await tx.wizardDraftMockupLibraryPick.count({

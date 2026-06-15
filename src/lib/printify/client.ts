@@ -55,6 +55,7 @@ export interface PrintifyProductResponse {
   title: string;
   blueprint_id: number;
   print_provider_id: number;
+  tags?: unknown;
   images?: PrintifyProductImage[];
   variants?: PrintifyProductVariant[];
   options?: PrintifyProductOption[];

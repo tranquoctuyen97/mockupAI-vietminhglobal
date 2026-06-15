@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { isMockupFallbackForcedForDev } from "@/lib/config/runtime-controls";
 import { prisma } from "@/lib/db";
 import { resolveCustomMockupSourceSelection } from "@/lib/mockup/custom-source-selection";
+import { resolveEffectiveCompositeRegion } from "@/lib/mockup/custom-library";
 import { resolveEffectivePlacementData } from "@/lib/mockup/plan";
 import {
   buildCustomMockupImageRows,
@@ -540,7 +541,7 @@ async function validateCustomMockupCoverage(
   template: NonNullable<MockupGenerationContext["draft"]["template"]>,
 ) {
   const selectedColorIds = new Set(draft.enabledColorIds);
-  const [draftSources, templateSources] = await Promise.all([
+  const [draftSources, templateSources, picks] = await Promise.all([
     prisma.customMockupSource.findMany({
       where: {
         scope: "DRAFT",
@@ -574,6 +575,10 @@ async function validateCustomMockupCoverage(
         renderMode: true,
         compositeRegionPx: true,
       },
+    }),
+    prisma.wizardDraftMockupLibraryPick.findMany({
+      where: { draftId: draft.id },
+      select: { sourceId: true, compositeRegionPx: true },
     }),
   ]);
   const resolvedSelection = resolveCustomMockupSourceSelection({
@@ -611,13 +616,29 @@ async function validateCustomMockupCoverage(
   // For each selected color, check if it has at least one COMPOSITE source with a region.
   // Sources without compositeRegionPx are skipped during rendering, so they're only a problem
   // when they're the ONLY source available for that color.
+  // For TEMPLATE scope sources, the placement may live on WizardDraftMockupLibraryPick
+  // rather than on CustomMockupSource — merge via resolveEffectiveCompositeRegion.
+  const pickRegionBySourceId = new Map(
+    picks
+      .filter((p) => p.compositeRegionPx != null)
+      .map((p) => [p.sourceId, p.compositeRegionPx]),
+  );
+  const templateSourceIds = new Set(templateSources.map((s) => s.id));
   const colorIds = [...new Set(resolvedSelection.selectedSources.map((s) => s.colorId))];
   const colorsWithNoValidRegion = colorIds.filter((colorId) => {
     const sourcesForColor = resolvedSelection.selectedSources.filter(
       (s) => s.colorId === colorId && s.renderMode === "COMPOSITE",
     );
     if (sourcesForColor.length === 0) return false; // No COMPOSITE sources = OK (FINAL mode)
-    return sourcesForColor.every((s) => !s.compositeRegionPx);
+    return sourcesForColor.every((s) => {
+      const scope = templateSourceIds.has(s.id) ? "TEMPLATE" : "DRAFT";
+      const effective = resolveEffectiveCompositeRegion({
+        scope,
+        sourceRegion: s.compositeRegionPx,
+        pickRegion: pickRegionBySourceId.get(s.id) ?? null,
+      });
+      return !effective;
+    });
   });
 
   if (colorsWithNoValidRegion.length > 0) {

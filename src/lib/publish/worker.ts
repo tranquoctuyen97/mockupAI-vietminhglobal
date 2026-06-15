@@ -39,6 +39,7 @@ import { publishToShopify, type ShopifyMockupImage, type ShopifyVariantInput } f
 
 const MAX_RETRIES = 5;
 const BACKOFF_BASE_MS = 2000;
+const INTERNAL_TAG_DENYLIST = new Set(["mockupai", "draft-preview"]);
 
 export function generateIdempotencyKey(draftId: string, tenantId: string, scope = ""): string {
   return createHash("sha256").update(`${draftId}|${tenantId}|${scope}`).digest("hex");
@@ -59,6 +60,72 @@ type PublishableMockupImage = {
 type StorageResolver = {
   resolvePath(key: string): string;
 };
+
+type PrintifyTagsClient = {
+  getProduct: (shopId: number, productId: string) => Promise<{ tags?: unknown }>;
+};
+
+export function normalizeExternalTags(tags: unknown): string[] {
+  if (!Array.isArray(tags)) return [];
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const raw of tags) {
+    const tag = String(raw ?? "").trim();
+    if (!tag) continue;
+
+    const key = tag.toLowerCase();
+    if (INTERNAL_TAG_DENYLIST.has(key)) continue;
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    out.push(tag);
+  }
+
+  return out;
+}
+
+export async function resolvePrintifyTagsForShopify(input: {
+  client: PrintifyTagsClient;
+  externalShopId: number | null | undefined;
+  productId: string | null | undefined;
+  storeId: string;
+  listingId: string;
+}): Promise<string[]> {
+  if (!input.externalShopId || !input.productId) return [];
+
+  try {
+    const product = await input.client.getProduct(input.externalShopId, input.productId);
+    return normalizeExternalTags(product.tags);
+  } catch (err) {
+    console.warn("[PublishWorker] Failed to fetch Printify tags, falling back to listing tags:", {
+      productId: input.productId,
+      storeId: input.storeId,
+      listingId: input.listingId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}
+
+export function selectTagsForShopify(
+  printifyTags: string[],
+  listingTags: string[] | null | undefined,
+): string[] {
+  const merged = [...printifyTags, ...normalizeExternalTags(listingTags)];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const tag of merged) {
+    const trimmed = tag.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
+}
 
 export async function runPublishWorker(input: PublishInput): Promise<void> {
   const { listingId, draftId, tenantId } = input;
@@ -188,6 +255,9 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
       data: { status: "RUNNING" },
     });
 
+    const existingPrintifyDraftProductId =
+      draftDesign?.printifyDraftProductId ?? draft.printifyDraftProductId ?? null;
+    let printifyClientContext: Awaited<ReturnType<typeof getClientForStore>> | null = null;
     let shopifyResult: { shopifyProductId: string; shopifyVariantIds: string[] } | null = null;
 
     if (isDryRun) {
@@ -233,6 +303,28 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
         if (planColors.length > 0) colorsForShopify = planColors;
       }
 
+      let printifyTagsForShopify: string[] = [];
+      if (existingPrintifyDraftProductId) {
+        try {
+          printifyClientContext = await getClientForStore(store.id);
+          printifyTagsForShopify = await resolvePrintifyTagsForShopify({
+            client: printifyClientContext.client,
+            externalShopId: printifyClientContext.externalShopId,
+            productId: existingPrintifyDraftProductId,
+            storeId: store.id,
+            listingId,
+          });
+        } catch (err) {
+          console.warn("[PublishWorker] Failed to resolve Printify account for tag lookup:", {
+            productId: existingPrintifyDraftProductId,
+            storeId: store.id,
+            listingId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      const tagsForShopify = selectTagsForShopify(printifyTagsForShopify, listing.tags);
+
       // Pick a random primary color (rotates thumbnails) and order the upload so
       // its media is first; the colors array order is preserved for the dropdown.
       const primaryColorName = pickPrimaryColorName(mockupImages);
@@ -251,7 +343,7 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
           const result = await publishToShopify(shopifyClient, store.shopifyDomain!, {
             title: listing.title,
             descriptionHtml: listing.descriptionHtml,
-            tags: listing.tags,
+            tags: tagsForShopify,
             priceUsd: listing.priceUsd,
             productType: draft.template?.blueprintTitle || draft.store?.name || "Apparel",
             vendor: "Printify",
@@ -260,6 +352,7 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
             primaryColorName,
             mockupPaths,
             mockupImages: orderedMockupImages,
+            organizationCollections: listing.organizationCollections ?? [],
             existingProductId: createdProductId, // reuse if created in previous attempt
           });
           createdProductId = result.shopifyProductId; // save for next retry
@@ -315,7 +408,8 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
     let printifyApiKey: string | null = null;
     let externalShopId: number | null = null;
     try {
-      const result = await getClientForStore(store.id);
+      const result = printifyClientContext ?? (await getClientForStore(store.id));
+      printifyClientContext = result;
       printifyApiKey = (result.client as any).apiKey; // access private field for worker
       externalShopId = result.externalShopId;
     } catch {

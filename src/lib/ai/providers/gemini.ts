@@ -1,7 +1,18 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { ContentGenerator, ContentInput, ContentOutput } from "../types";
+import {
+  ContentGenerator,
+  ContentInput,
+  ContentOutput,
+  ProductOrganizationInput,
+  ProductOrganizationOutput,
+} from "../types";
 import { SYSTEM_PROMPT_POD_LISTING } from "../prompts/pod-listing";
-import { buildListingUserPrompt, parseListingContentJson } from "./shared";
+import {
+  buildListingUserPrompt,
+  buildOrganizationUserPrompt,
+  parseListingContentJson,
+  parseProductOrganizationJson,
+} from "./shared";
 
 export class GeminiProvider implements ContentGenerator {
   private ai: GoogleGenAI;
@@ -64,5 +75,34 @@ export class GeminiProvider implements ContentGenerator {
       console.error("Failed to parse Gemini output:", resultText);
       throw new Error("AI returned malformed JSON");
     }
+  }
+
+  async optimizeProductOrganization(
+    input: ProductOrganizationInput,
+  ): Promise<ProductOrganizationOutput> {
+    const response = await this.ai.models.generateContent({
+      model: this.modelName,
+      contents: buildOrganizationUserPrompt(input),
+      config: {
+        systemInstruction: this.systemPrompt,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+            collections: { type: Type.ARRAY, items: { type: Type.STRING } },
+          },
+          required: ["tags", "collections"],
+        },
+      },
+    });
+
+    const resultText = response.text;
+    if (!resultText) throw new Error("Empty response from AI");
+
+    return parseProductOrganizationJson(resultText, {
+      tokensIn: response.usageMetadata?.promptTokenCount || 0,
+      tokensOut: response.usageMetadata?.candidatesTokenCount || 0,
+    });
   }
 }

@@ -310,6 +310,12 @@ export default function Step3PreviewPage() {
         setTemplate(activeTemplate);
         setTemplateWarning("");
 
+        // Auto-save default template to draft in DB if null
+        if (!draft.templateId && activeTemplate) {
+          updateDraft({ templateId: activeTemplate.id });
+          void saveDraftImmediately();
+        }
+
         const enabledColors = (activeTemplate?.colors ?? []).filter((color) => color.enabled !== false);
         setStoreColors(enabledColors);
         setPresetStatus(activeTemplate?.readiness ?? { ready: false, missing: ["template"] });
@@ -685,9 +691,18 @@ export default function Step3PreviewPage() {
   ]);
 
   useEffect(() => {
-    if (!draft || loading || hasTriggeredBatchRender) return;
+    if (!draft || loading) return;
     if (selectedDraftDesigns.length === 0) return;
     if (selectedColorIds.size === 0 || !selectedTemplateReady || hasSelectedMissingCustomColors) return;
+
+    // When mockups are stale (placement/color/design changed), regenerate regardless
+    // of hasTriggeredBatchRender guard. Only check isGenerating to prevent double-fire.
+    if (draft.mockupsStale) {
+      if (!isGenerating) void handleGenerate();
+      return;
+    }
+
+    if (hasTriggeredBatchRender) return;
 
     if (!draft.mockupsStale && hasActiveOrCompletedJobsForAllDesigns(selectedDraftDesignIds, selectedDesignJobs)) {
       return;
@@ -700,6 +715,7 @@ export default function Step3PreviewPage() {
     handleGenerate,
     hasSelectedMissingCustomColors,
     hasTriggeredBatchRender,
+    isGenerating,
     loading,
     selectedColorIds.size,
     selectedDesignJobs,
@@ -1523,6 +1539,9 @@ export default function Step3PreviewPage() {
                   router.push(`/wizard/${draftId}/step-4`);
                 }}
                 onDeselectColor={(colorId) => toggleColor(colorId)}
+                onMockupsStale={() => {
+                  void loadDraft(draftId);
+                }}
                 printAreaMm={isCustomTemplateDefault ? { widthMm: WIZARD_PRINT_AREA.widthMm, heightMm: WIZARD_PRINT_AREA.heightMm } : null}
               />
 
@@ -1703,6 +1722,9 @@ export default function Step3PreviewPage() {
                   designImageUrl={activeDesignPreviewUrl}
                   onRegenerate={handleGenerate}
                   onRemoveColor={removeColorFromListing}
+                  onMockupsStale={() => {
+                    void loadDraft(draftId);
+                  }}
                   printAreaMm={
                     isCustomTemplateDefault
                       ? { widthMm: WIZARD_PRINT_AREA.widthMm, heightMm: WIZARD_PRINT_AREA.heightMm }

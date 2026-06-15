@@ -85,6 +85,7 @@ interface ColorMockupCardGridProps {
   hasRenderedMockups: boolean;
   onNextStep: () => Promise<void>;
   onDeselectColor?: (colorId: string) => void;
+  onMockupsStale?: () => void;
   /** Dynamic print area in millimeter dimensions (from template/blueprint) */
   printAreaMm?: { widthMm: number; heightMm: number } | null;
 }
@@ -101,6 +102,7 @@ export function ColorMockupCardGrid({
   hasRenderedMockups,
   onNextStep,
   onDeselectColor,
+  onMockupsStale,
   printAreaMm,
 }: ColorMockupCardGridProps) {
   const [loading, setLoading] = useState(true);
@@ -265,6 +267,7 @@ export function ColorMockupCardGrid({
           if (res.ok) {
             // Reload sources to pick up backfilled placements
             await loadSources();
+            onMockupsStale?.();
           }
         } catch {
           /* silent — backfill is best-effort */
@@ -352,6 +355,7 @@ export function ColorMockupCardGrid({
     setUploadOpen(false);
     setUploadColorId(null);
     await loadSources();
+    onMockupsStale?.();
   }
 
   // Save TEMPLATE placement → update pick (not clone to DRAFT)
@@ -381,6 +385,7 @@ export function ColorMockupCardGrid({
         const body = await res.json().catch(() => ({}));
         throw new Error((body as { error?: string }).error || "Lỗi lưu vị trí");
       }
+      onMockupsStale?.();
     },
     [draftId, sources],
   );
@@ -441,7 +446,10 @@ export function ColorMockupCardGrid({
             designImageUrl={designImageUrl}
             draftId={draftId}
             onUploadClick={() => { setUploadColorId(color.id); setUploadOpen(true); }}
-            onPlacementSaved={loadSources}
+            onPlacementSaved={async () => {
+              await loadSources();
+              onMockupsStale?.();
+            }}
             onDeselectColor={onDeselectColor ? () => onDeselectColor(color.id) : undefined}
             onSaveTemplatePlacement={handleSaveTemplatePlacement}
             printAreaMm={printAreaMm}

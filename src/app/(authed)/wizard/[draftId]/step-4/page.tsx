@@ -1,21 +1,28 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { useWizardStore } from "@/lib/wizard/use-wizard-store";
+import { toast } from "sonner";
+import {
+  AlertTriangle,
+  Loader2,
+  Pencil,
+  PenTool,
+  Plus,
+  RefreshCw,
+  Wand2,
+  X,
+  Zap,
+} from "lucide-react";
 import { parseAIError } from "@/lib/ai/errors";
 import type { AIProviderError } from "@/lib/ai/errors";
 import {
-  PenTool,
-  Loader2,
-  RefreshCw,
-  Zap,
-  X,
-  Plus,
-  AlertTriangle,
-  Pencil,
-  Wand2,
-} from "lucide-react";
+  MAX_ORGANIZATION_COLLECTIONS,
+  MAX_TAGS,
+  mergeOptimizedTags,
+  normalizeOrganizationCollections,
+} from "@/lib/wizard/product-organization";
+import { useWizardStore } from "@/lib/wizard/use-wizard-store";
 
 type ContentState = "empty" | "ai-loading" | "ai-failed" | "manual-edit" | "ready";
 
@@ -23,11 +30,10 @@ interface AiContent {
   title: string;
   description: string;
   tags: string[];
+  collections: string[];
   altText: string;
   source?: "ai" | "manual";
 }
-
-const MAX_TAGS = 15; // Shopify product tags limit
 
 export default function Step5ContentPage() {
   const { draftId } = useParams<{ draftId: string }>();
@@ -40,11 +46,15 @@ export default function Step5ContentPage() {
     title: existing?.title || "",
     description: existing?.description || "",
     tags: existing?.tags || [],
+    collections: normalizeOrganizationCollections(existing?.collections || []),
     altText: existing?.altText || "",
   });
   const [aiError, setAiError] = useState<AIProviderError | null>(null);
   const [cached, setCached] = useState(false);
   const [tagInput, setTagInput] = useState("");
+  const [collectionInput, setCollectionInput] = useState("");
+  const [optimizing, setOptimizing] = useState(false);
+  const [aiConfigAvailable, setAiConfigAvailable] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
@@ -55,17 +65,36 @@ export default function Step5ContentPage() {
         title: existing.title || "",
         description: existing.description || "",
         tags: existing.tags || [],
+        collections: normalizeOrganizationCollections(existing.collections || []),
         altText: existing.altText || "",
       });
       setState("ready");
     }
   }, [existing?.title, state]);
 
-  // Auto-sync local content to global store (so Tiếp theo saves it)
   useEffect(() => {
-    if (state === "ready" || state === "manual-edit") {
-      const syncedContent = state === "manual-edit" ? { ...content, source: "manual" } : content;
-      updateDraft({ aiContent: syncedContent });
+    let cancelled = false;
+    fetch("/api/wizard/ai-config/status")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled) setAiConfigAvailable(Boolean(data?.available));
+      })
+      .catch(() => {
+        if (!cancelled) setAiConfigAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Ready content keeps current auto-save behavior. Manual edit content stays
+  // pending in the wizard store for Save/Next, but does not debounce-write DB.
+  useEffect(() => {
+    if (state === "ready") {
+      updateDraft({ aiContent: content });
+    }
+    if (state === "manual-edit") {
+      updateDraft({ aiContent: { ...content, source: "manual" } }, { debounce: false });
     }
   }, [content, state, updateDraft]);
 
@@ -104,6 +133,7 @@ export default function Step5ContentPage() {
         title: c.title || "",
         description: c.description || "",
         tags: c.tags || [],
+        collections: normalizeOrganizationCollections(c.collections || []),
         altText: c.altText || "",
       });
       setCached(data.cached ?? false);
@@ -129,7 +159,14 @@ export default function Step5ContentPage() {
     setSaving(true);
     setSaveError("");
     try {
-      updateDraft({ aiContent: { ...content, source: "manual" } });
+      const manualContent = {
+        ...content,
+        tags: mergeOptimizedTags([], content.tags),
+        collections: normalizeOrganizationCollections(content.collections),
+        source: "manual" as const,
+      };
+      setContent(manualContent);
+      updateDraft({ aiContent: manualContent });
       await useWizardStore.getState().saveDraftImmediately();
       setState("ready");
     } catch {
@@ -143,7 +180,13 @@ export default function Step5ContentPage() {
   async function handleSaveReady() {
     setSaving(true);
     try {
-      updateDraft({ aiContent: content });
+      updateDraft({
+        aiContent: {
+          ...content,
+          tags: mergeOptimizedTags([], content.tags),
+          collections: normalizeOrganizationCollections(content.collections),
+        },
+      });
       await useWizardStore.getState().saveDraftImmediately();
     } catch {
       // ignore
@@ -154,15 +197,68 @@ export default function Step5ContentPage() {
 
   // ── Tags ─────────────────────────────────────────────────────────────────
   function addTag() {
-    const tag = tagInput.trim().toLowerCase();
-    if (tag && !content.tags.includes(tag) && content.tags.length < MAX_TAGS) {
-      setContent({ ...content, tags: [...content.tags, tag] });
+    const tag = tagInput.trim();
+    if (tag && content.tags.length < MAX_TAGS) {
+      setContent({ ...content, tags: mergeOptimizedTags([tag], content.tags) });
       setTagInput("");
     }
   }
 
   function removeTag(tag: string) {
-    setContent({ ...content, tags: content.tags.filter((t) => t !== tag) });
+    setContent((current) => ({ ...current, tags: current.tags.filter((t) => t !== tag) }));
+  }
+
+  async function handleOptimizeOrganization() {
+    setOptimizing(true);
+    try {
+      const res = await fetch(`/api/wizard/drafts/${draftId}/ai/optimize-product-organization`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: content.title,
+          descriptionHtml: content.description,
+          productType: draft?.template?.blueprintTitle ?? draft?.store?.template?.blueprintTitle ?? "",
+          canonicalProductType: null,
+          currentTags: content.tags,
+          currentCollections: content.collections,
+          designContext: draft?.design?.name ?? null,
+          niche: null,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.message || "Không thể tối ưu tags & collections");
+      }
+
+      setContent((current) => ({
+        ...current,
+        tags: mergeOptimizedTags(data?.tags ?? [], current.tags),
+        collections: normalizeOrganizationCollections([
+          ...(Array.isArray(data?.collections) ? data.collections : []),
+          ...current.collections,
+        ]),
+      }));
+      toast.success("Đã tối ưu tags & collections. Bấm Lưu để áp dụng.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không thể tối ưu tags & collections");
+    } finally {
+      setOptimizing(false);
+    }
+  }
+
+  function addCollection() {
+    setContent((current) => ({
+      ...current,
+      collections: normalizeOrganizationCollections([...current.collections, collectionInput]),
+    }));
+    setCollectionInput("");
+  }
+
+  function removeCollection(collection: string) {
+    setContent((current) => ({
+      ...current,
+      collections: current.collections.filter((item) => item !== collection),
+    }));
   }
 
   // ── Shared form (manual-edit + ready) ────────────────────────────────────
@@ -204,14 +300,27 @@ export default function Step5ContentPage() {
 
       {/* Tags */}
       <div>
-        <label style={{ fontWeight: 600, fontSize: "0.85rem", display: "block", marginBottom: 6 }}>
-          Tags ({content.tags.length}/{MAX_TAGS})
-          {content.tags.length >= MAX_TAGS && (
-            <span style={{ color: "var(--color-warning, #f59e0b)", fontWeight: 400, marginLeft: 8, fontSize: "0.78rem" }}>
-              Đã đạt giới hạn Shopify
-            </span>
+        <div className="flex items-center justify-between" style={{ marginBottom: 6, gap: 12 }}>
+          <label style={{ fontWeight: 600, fontSize: "0.85rem" }}>
+            Tags ({content.tags.length}/{MAX_TAGS})
+            {content.tags.length >= MAX_TAGS && (
+              <span style={{ color: "var(--color-warning, #f59e0b)", fontWeight: 400, marginLeft: 8, fontSize: "0.78rem" }}>
+                Đã đạt giới hạn Shopify
+              </span>
+            )}
+          </label>
+          {state === "manual-edit" && aiConfigAvailable && (
+            <button
+              className="btn btn-secondary"
+              onClick={handleOptimizeOrganization}
+              disabled={optimizing}
+              style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}
+            >
+              {optimizing ? <Loader2 size={14} className="animate-spin" /> : null}
+              {optimizing ? "Đang tối ưu..." : "✨ Tối ưu tags & collections"}
+            </button>
           )}
-        </label>
+        </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
           {content.tags.map((tag) => (
             <span
@@ -243,6 +352,48 @@ export default function Step5ContentPage() {
             className="btn btn-secondary"
             onClick={addTag}
             disabled={content.tags.length >= MAX_TAGS}
+            style={{ fontSize: "0.8rem" }}
+          >
+            <Plus size={14} /> Thêm
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <label style={{ fontWeight: 600, fontSize: "0.85rem", display: "block", marginBottom: 6 }}>
+          Collections ({content.collections.length}/{MAX_ORGANIZATION_COLLECTIONS})
+        </label>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+          {content.collections.map((collection) => (
+            <span
+              key={collection}
+              className="flex items-center gap-1"
+              style={{ padding: "4px 10px", borderRadius: "var(--radius-sm)", backgroundColor: "var(--bg-tertiary)", fontSize: "0.78rem", fontWeight: 500 }}
+            >
+              {collection}
+              <button onClick={() => removeCollection(collection)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", opacity: 0.5 }}>
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            className="input"
+            value={collectionInput}
+            onChange={(e) => setCollectionInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); addCollection(); }
+            }}
+            placeholder="Thêm collection..."
+            style={{ flex: 1 }}
+            disabled={content.collections.length >= MAX_ORGANIZATION_COLLECTIONS}
+          />
+          <button
+            className="btn btn-secondary"
+            onClick={addCollection}
+            disabled={content.collections.length >= MAX_ORGANIZATION_COLLECTIONS}
             style={{ fontSize: "0.8rem" }}
           >
             <Plus size={14} /> Thêm

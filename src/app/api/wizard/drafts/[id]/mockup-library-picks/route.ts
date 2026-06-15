@@ -131,6 +131,13 @@ export async function PUT(
         };
       }),
     });
+
+    if (normalizedPlacements.size > 0) {
+      await tx.wizardDraft.update({
+        where: { id: draftId },
+        data: { mockupsStale: true, mockupsStaleReason: "placement_changed" },
+      });
+    }
   });
 
   const requestInfo = getRequestInfo(request);
