@@ -359,49 +359,47 @@ export default function Step5ContentPage() {
         </div>
       </div>
 
-      {state === "manual-edit" && (
-        <div>
-          <label style={{ fontWeight: 600, fontSize: "0.85rem", display: "block", marginBottom: 6 }}>
-            Collections ({content.collections.length}/{MAX_ORGANIZATION_COLLECTIONS})
-          </label>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-            {content.collections.map((collection) => (
-              <span
-                key={collection}
-                className="flex items-center gap-1"
-                style={{ padding: "4px 10px", borderRadius: "var(--radius-sm)", backgroundColor: "var(--bg-tertiary)", fontSize: "0.78rem", fontWeight: 500 }}
-              >
-                {collection}
-                <button onClick={() => removeCollection(collection)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", opacity: 0.5 }}>
-                  <X size={12} />
-                </button>
-              </span>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              className="input"
-              value={collectionInput}
-              onChange={(e) => setCollectionInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") { e.preventDefault(); addCollection(); }
-              }}
-              placeholder="Thêm collection..."
-              style={{ flex: 1 }}
-              disabled={content.collections.length >= MAX_ORGANIZATION_COLLECTIONS}
-            />
-            <button
-              className="btn btn-secondary"
-              onClick={addCollection}
-              disabled={content.collections.length >= MAX_ORGANIZATION_COLLECTIONS}
-              style={{ fontSize: "0.8rem" }}
+      <div>
+        <label style={{ fontWeight: 600, fontSize: "0.85rem", display: "block", marginBottom: 6 }}>
+          Collections ({content.collections.length}/{MAX_ORGANIZATION_COLLECTIONS})
+        </label>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+          {content.collections.map((collection) => (
+            <span
+              key={collection}
+              className="flex items-center gap-1"
+              style={{ padding: "4px 10px", borderRadius: "var(--radius-sm)", backgroundColor: "var(--bg-tertiary)", fontSize: "0.78rem", fontWeight: 500 }}
             >
-              <Plus size={14} /> Thêm
-            </button>
-          </div>
+              {collection}
+              <button onClick={() => removeCollection(collection)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", opacity: 0.5 }}>
+                <X size={12} />
+              </button>
+            </span>
+          ))}
         </div>
-      )}
+        <div className="flex gap-2">
+          <input
+            type="text"
+            className="input"
+            value={collectionInput}
+            onChange={(e) => setCollectionInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); addCollection(); }
+            }}
+            placeholder="Thêm collection..."
+            style={{ flex: 1 }}
+            disabled={content.collections.length >= MAX_ORGANIZATION_COLLECTIONS}
+          />
+          <button
+            className="btn btn-secondary"
+            onClick={addCollection}
+            disabled={content.collections.length >= MAX_ORGANIZATION_COLLECTIONS}
+            style={{ fontSize: "0.8rem" }}
+          >
+            <Plus size={14} /> Thêm
+          </button>
+        </div>
+      </div>
 
       {/* Alt Text */}
       <div>

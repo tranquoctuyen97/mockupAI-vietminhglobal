@@ -3,7 +3,7 @@
  *
  * Flow (API 2025-04+):
  * 1. productSet — atomic: title, descriptionHtml, vendor, productType, category,
- *    collections, tags, options (Color + Size), variants (SKU, CONTINUE), status ACTIVE
+ *    tags, options (Color + Size), variants (SKU, CONTINUE), status ACTIVE
  * 2. Upload mockup images via stagedUploadsCreate + productCreateMedia, then
  *    productReorderMedia to put the primary color thumbnail at position 0
  * 3. publishablePublish to every active publication (paginated, per-channel guard)
@@ -13,6 +13,7 @@ import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { formatDescriptionHtml } from "@/lib/content/description-html";
 import type { ShopifyClient } from "@/lib/shopify/client";
+import { normalizeOrganizationCollections } from "@/lib/wizard/product-organization";
 
 export type ShopifyMockupImage =
   | { kind: "local"; path: string; colorName?: string }
@@ -37,6 +38,7 @@ export interface ShopifyPublishInput {
   primaryColorName?: string | null; // color whose media should become the thumbnail
   mockupPaths: string[]; // absolute file paths
   mockupImages?: ShopifyMockupImage[];
+  organizationCollections?: string[];
   existingProductId?: string | null; // for retry idempotency
 }
 
@@ -47,7 +49,17 @@ export interface ShopifyPublishResult {
 }
 
 const DEFAULT_VENDOR = "Printify";
+const DEFAULT_SHOPIFY_INVENTORY_QUANTITY = 999;
 const TAXONOMY_BASE = "gid://shopify/TaxonomyCategory/";
+
+type CollectionResolverClient = Pick<ShopifyClient, "graphql">;
+
+type ShopifyCollectionNode = {
+  id: string;
+  title: string;
+  handle: string;
+  ruleSet: { appliedDisjunctively: boolean } | null;
+};
 
 /**
  * Canonical apparel type → Shopify Taxonomy category GID.
@@ -67,13 +79,30 @@ const PRODUCT_TYPE_TAXONOMY_MAP: Record<string, string> = {
 
 /** Canonical apparel type → Printify-like default tags (not exact Printify app tags). */
 const PRODUCT_TYPE_TAG_MAP: Record<string, string[]> = {
-  "T-Shirt": ["T-Shirt", "Printify"],
-  "Tank Top": ["Tank Top", "Printify"],
-  Sweater: ["Sweater", "Printify"],
-  Hoodie: ["Hoodie", "Printify"],
-  Sweatshirt: ["Sweatshirt", "Printify"],
-  "Long Sleeve Shirt": ["Long Sleeve Shirt", "Printify"],
-  Polo: ["Polo", "Printify"],
+  "T-Shirt": [
+    "T-Shirt",
+    "Printify",
+    "Unisex",
+    "DTG",
+    "Cotton",
+    "Crew neck",
+    "Men's Clothing",
+    "Women's Clothing",
+  ],
+  "Tank Top": [
+    "Tank Top",
+    "Printify",
+    "Unisex",
+    "Sleeveless",
+    "Summer Wear",
+    "Men's Clothing",
+    "Women's Clothing",
+  ],
+  Sweater: ["Sweater", "Printify", "Unisex", "Knitwear", "Winter Wear", "Long Sleeve"],
+  Hoodie: ["Hoodie", "Printify", "Unisex", "Outerwear", "Sweatshirt", "Winter Wear", "Long Sleeve"],
+  Sweatshirt: ["Sweatshirt", "Printify", "Unisex", "Outerwear", "Winter Wear", "Long Sleeve"],
+  "Long Sleeve Shirt": ["Long Sleeve Shirt", "Printify", "Unisex", "Long Sleeve", "T-Shirt"],
+  Polo: ["Polo", "Printify", "Unisex", "Collared Shirt", "Short Sleeve"],
 };
 
 /** Canonical apparel type → manual collection title to resolve (exact title/handle only). */
@@ -141,7 +170,7 @@ export async function publishToShopify(
 ): Promise<ShopifyPublishResult> {
   let productId: string;
   let variantIds: string[];
-  let variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }> }> =
+  let variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }>; inventoryItem?: { id: string } | null }> =
     [];
 
   if (input.existingProductId) {
@@ -155,6 +184,10 @@ export async function publishToShopify(
     productId = productResult.productId;
     variantNodes = productResult.variantNodes;
     variantIds = variantNodes.map((v) => v.id);
+
+    // Enable inventory tracking — Shopify defaults tracked=false,
+    // so without this the 999 quantity we set is invisible.
+    await enableInventoryTrackingAndSetStock(client, variantNodes);
   }
 
   // Step 2: Upload mockup images and link to variants
@@ -165,8 +198,9 @@ export async function publishToShopify(
     // The worker already uploads the primary color group first, but Shopify's
     // default ordering is not guaranteed — reorder explicitly to be safe.
     if (uploadedMedia.length > 0 && input.primaryColorName) {
+      const primaryColorName = input.primaryColorName.toLowerCase();
       const primaryMedia = uploadedMedia.find(
-        (m) => m.colorName && m.colorName.toLowerCase() === input.primaryColorName!.toLowerCase(),
+        (m) => m.colorName && m.colorName.toLowerCase() === primaryColorName,
       );
       if (primaryMedia) {
         await reorderPrimaryMedia(client, productId, primaryMedia.mediaId);
@@ -203,12 +237,17 @@ export async function publishToShopify(
         const bulkUpdateRes = (await client.graphql(bulkUpdateMutation, {
           productId,
           variants: variantMediaPairs.map((v) => ({ id: v.id, mediaId: v.mediaId })),
-        })) as any;
+        })) as {
+          productVariantsBulkUpdate?: {
+            userErrors?: Array<{ field?: string | string[] | null; message: string }>;
+          };
+        };
 
-        if (bulkUpdateRes.productVariantsBulkUpdate?.userErrors?.length > 0) {
+        const bulkUpdateErrors = bulkUpdateRes.productVariantsBulkUpdate?.userErrors ?? [];
+        if (bulkUpdateErrors.length > 0) {
           console.warn(
             `[Shopify] productVariantsBulkUpdate failed (non-fatal):`,
-            bulkUpdateRes.productVariantsBulkUpdate.userErrors,
+            bulkUpdateErrors,
           );
         }
       }
@@ -242,7 +281,7 @@ async function createProductWithSet(
   input: ShopifyPublishInput,
 ): Promise<{
   productId: string;
-  variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }> }>;
+  variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }>; inventoryItem?: { id: string } | null }>;
 }> {
   const mutation = `
     mutation productSet($synchronous: Boolean!, $productSet: ProductSetInput!) {
@@ -253,6 +292,7 @@ async function createProductWithSet(
             nodes {
               id
               selectedOptions { name value }
+              inventoryItem { id }
             }
           }
         }
@@ -268,9 +308,10 @@ async function createProductWithSet(
   const productType = canonicalType ?? input.productType;
   const vendor = input.vendor ?? DEFAULT_VENDOR;
   const tags = buildProductTags(canonicalType, input.tags);
-  const [categoryId, collectionIds] = await Promise.all([
+  const [categoryId, collectionIds, locationId] = await Promise.all([
     resolveCategoryId(client, canonicalType),
-    resolveCollectionIds(client, canonicalType),
+    resolveProductCollectionIds(client, canonicalType, input.organizationCollections),
+    resolveDefaultLocationId(client),
   ]);
 
   // Variant matrix: prefer the full desired list (Color + Size + SKU + price)
@@ -306,7 +347,7 @@ async function createProductWithSet(
     });
   }
 
-  const variants = buildVariantSetInputs(input, hasColors, hasSizes);
+  const variants = buildVariantSetInputs(input, hasColors, hasSizes, locationId);
 
   const productSetInput: Record<string, unknown> = {
     title: input.title,
@@ -319,9 +360,6 @@ async function createProductWithSet(
   };
   if (productOptions.length > 0) productSetInput.productOptions = productOptions;
   if (categoryId) productSetInput.category = categoryId;
-  // Guard: only send collections when resolved exactly. Omitting (vs []) avoids
-  // clearing existing collections and lets automated collections match via
-  // productType / vendor / tags.
   if (collectionIds.length > 0) productSetInput.collections = collectionIds;
 
   const variables = { synchronous: true, productSet: productSetInput };
@@ -331,17 +369,19 @@ async function createProductWithSet(
       product: {
         id: string;
         variants: {
-          nodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }> }>;
+          nodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }>; inventoryItem?: { id: string } | null }>;
         };
       };
-      userErrors: Array<{ field: string; message: string }>;
+      userErrors: Array<{ field: string | string[] | null; message: string }>;
     };
   };
 
   if (data.productSet.userErrors.length > 0) {
-    throw new Error(
-      `Shopify productSet failed: ${data.productSet.userErrors.map((e) => e.message).join("; ")}`,
-    );
+    const errors = data.productSet.userErrors.map((e) => {
+      const field = Array.isArray(e.field) ? e.field.join(".") : e.field;
+      return field ? `${field}: ${e.message}` : e.message;
+    });
+    throw new Error(`Shopify productSet failed: ${errors.join("; ")}`);
   }
 
   return {
@@ -540,6 +580,7 @@ function buildVariantSetInputs(
   input: ShopifyPublishInput,
   hasColors: boolean,
   hasSizes: boolean,
+  locationId: string | null,
 ): Array<Record<string, unknown>> {
   const variantInputs = input.variants && input.variants.length > 0 ? input.variants : null;
 
@@ -554,6 +595,7 @@ function buildVariantSetInputs(
         price: v.priceUsd,
         inventoryPolicy: "CONTINUE",
       };
+      addDefaultInventoryQuantity(variant, locationId);
       if (optionValues.length > 0) variant.optionValues = optionValues;
       if (v.sku) variant.sku = v.sku;
       return variant;
@@ -561,14 +603,131 @@ function buildVariantSetInputs(
   }
 
   if (hasColors) {
-    return input.colors.map((c) => ({
-      optionValues: [{ optionName: "Color", name: c.name }],
-      price: input.priceUsd,
-      inventoryPolicy: "CONTINUE",
-    }));
+    return input.colors.map((c) => {
+      const variant: Record<string, unknown> = {
+        optionValues: [{ optionName: "Color", name: c.name }],
+        price: input.priceUsd,
+        inventoryPolicy: "CONTINUE",
+      };
+      addDefaultInventoryQuantity(variant, locationId);
+      return variant;
+    });
   }
 
-  return [{ price: input.priceUsd, inventoryPolicy: "CONTINUE" }];
+  const variant: Record<string, unknown> = {
+    price: input.priceUsd,
+    inventoryPolicy: "CONTINUE",
+  };
+  addDefaultInventoryQuantity(variant, locationId);
+  return [variant];
+}
+
+function addDefaultInventoryQuantity(
+  variant: Record<string, unknown>,
+  locationId: string | null,
+): void {
+  if (!locationId) return;
+  variant.inventoryQuantities = [
+    {
+      locationId,
+      name: "available",
+      quantity: DEFAULT_SHOPIFY_INVENTORY_QUANTITY,
+    },
+  ];
+}
+
+async function resolveDefaultLocationId(client: ShopifyClient): Promise<string | null> {
+  try {
+    const query = `
+      query GetDefaultLocation {
+        locations(first: 1) {
+          nodes {
+            id
+          }
+        }
+      }
+    `;
+    const data = (await client.graphql(query, {})) as {
+      locations: { nodes: Array<{ id: string }> };
+    };
+    return data.locations.nodes[0]?.id ?? null;
+  } catch (err) {
+    console.warn(
+      "[Shopify] Failed to resolve default location, omitting inventory quantities:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
+/**
+ * Enable inventory tracking for all variants and set initial stock.
+ * Shopify defaults tracked=false, and any inventoryQuantities passed
+ * during productSet for untracked items are discarded.
+ * Therefore, we must enable tracking first, then manually set quantities.
+ */
+async function enableInventoryTrackingAndSetStock(
+  client: ShopifyClient,
+  variantNodes: Array<{ inventoryItem?: { id: string } | null }>,
+): Promise<void> {
+  const inventoryItemIds = variantNodes
+    .map((v) => v.inventoryItem?.id)
+    .filter((id): id is string => Boolean(id));
+
+  if (inventoryItemIds.length === 0) {
+    console.warn("[Shopify] No inventory item IDs — skipping tracking enable");
+    return;
+  }
+
+  // 1. Enable tracking (Promise.allSettled)
+  const trackMutation = `
+    mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
+      inventoryItemUpdate(id: $id, input: $input) {
+        inventoryItem { id tracked }
+        userErrors { message }
+      }
+    }
+  `;
+
+  await Promise.allSettled(
+    inventoryItemIds.map((id) =>
+      client.graphql(trackMutation, { id, input: { tracked: true } }),
+    ),
+  );
+
+  // 2. Resolve location to set stock
+  const locationId = await resolveDefaultLocationId(client);
+  if (!locationId) {
+    console.warn("[Shopify] Could not resolve location for setting quantities");
+    return;
+  }
+
+  // 3. Set stock to 999
+  const setQuantitiesMutation = `
+    mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
+      inventorySetQuantities(input: $input) {
+        userErrors { message }
+      }
+    }
+  `;
+
+  try {
+    await client.graphql(setQuantitiesMutation, {
+      input: {
+        name: "available",
+        ignoreCompareQuantity: true,
+        reason: "correction",
+        quantities: inventoryItemIds.map((id) => ({
+          inventoryItemId: id,
+          locationId,
+          quantity: DEFAULT_SHOPIFY_INVENTORY_QUANTITY,
+        })),
+      },
+    });
+    console.log(`[Shopify] Enabled tracking and set stock to ${DEFAULT_SHOPIFY_INVENTORY_QUANTITY} for ${inventoryItemIds.length} item(s)`);
+  } catch (err) {
+    console.warn("[Shopify] Failed to set inventory quantities:", err);
+  }
 }
 
 /**
@@ -608,57 +767,6 @@ async function resolveCategoryId(
       err instanceof Error ? err.message : err,
     );
     return null;
-  }
-}
-
-function toHandle(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-/**
- * Resolve manual collection IDs for the canonical product type by exact
- * title/handle match. Returns [] (omit) when no exact match — automated
- * collections still pick the product up via productType / vendor / tags.
- */
-async function resolveCollectionIds(
-  client: ShopifyClient,
-  canonicalType: string | null,
-): Promise<string[]> {
-  if (!canonicalType) return [];
-  const title = PRODUCT_TYPE_COLLECTION_MAP[canonicalType];
-  if (!title) return [];
-
-  const handle = toHandle(title);
-  try {
-    const query = `
-      query FindCollection($q: String!) {
-        collections(first: 10, query: $q) {
-          nodes { id title handle }
-        }
-      }
-    `;
-    const data = (await client.graphql(query, {
-      q: `title:'${title}' OR handle:${handle}`,
-    })) as { collections: { nodes: Array<{ id: string; title: string; handle: string }> } };
-
-    const exact = data.collections.nodes.find(
-      (c) => c.title.toLowerCase() === title.toLowerCase() || c.handle.toLowerCase() === handle,
-    );
-    if (exact) return [exact.id];
-
-    console.warn(
-      `[Shopify] No exact manual collection for "${title}" — omitting collections (automated collections match via type/vendor/tags)`,
-    );
-    return [];
-  } catch (err) {
-    console.warn(
-      `[Shopify] Collection resolve failed, omitting collections:`,
-      err instanceof Error ? err.message : err,
-    );
-    return [];
   }
 }
 
@@ -768,6 +876,205 @@ async function publishToAllChannels(client: ShopifyClient, productId: string): P
       );
     }
   }
+}
+
+function toHandle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function isExactCollectionMatch(collection: ShopifyCollectionNode, value: string, handle: string) {
+  const normalizedValue = value.toLowerCase();
+  return collection.title.toLowerCase() === normalizedValue || collection.handle.toLowerCase() === handle;
+}
+
+function collectManualCollectionIds(
+  names: string[],
+  collections: ShopifyCollectionNode[],
+  existingIds: Set<string>,
+): string[] {
+  const ids: string[] = [];
+
+  for (const name of names) {
+    const handle = toHandle(name);
+    const exact = collections.find(
+      (collection) =>
+        collection.ruleSet === null && isExactCollectionMatch(collection, name, handle),
+    );
+    if (!exact || existingIds.has(exact.id)) continue;
+
+    existingIds.add(exact.id);
+    ids.push(exact.id);
+  }
+
+  return ids;
+}
+
+export async function resolveManualCollectionIdsByTitlesOrHandles(
+  client: CollectionResolverClient,
+  values: unknown,
+): Promise<string[]> {
+  const names = normalizeOrganizationCollections(values);
+  if (names.length === 0) return [];
+
+  try {
+    const handleQuery = names.map((name) => `handle:${toHandle(name)}`).join(" OR ");
+    const query = `
+      query FindManualCollectionsByHandle($q: String!) {
+        collections(first: 50, query: $q) {
+          nodes {
+            id
+            title
+            handle
+            ruleSet { appliedDisjunctively }
+          }
+        }
+      }
+    `;
+    const data = (await client.graphql(query, { q: handleQuery })) as {
+      collections: { nodes: ShopifyCollectionNode[] };
+    };
+
+    const seenIds = new Set<string>();
+    const ids = collectManualCollectionIds(names, data.collections.nodes, seenIds);
+    const resolvedCount = ids.length;
+
+    if (resolvedCount === names.length) return ids;
+
+    const unresolvedNames = names.filter((name) => {
+      const handle = toHandle(name);
+      return !data.collections.nodes.some(
+        (collection) =>
+          collection.ruleSet === null && isExactCollectionMatch(collection, name, handle),
+      );
+    });
+
+    if (unresolvedNames.length === 0) return ids;
+
+    const allCollectionsQuery = `
+      query ListManualCollectionsForTitleMatch {
+        collections(first: 250) {
+          nodes {
+            id
+            title
+            handle
+            ruleSet { appliedDisjunctively }
+          }
+        }
+      }
+    `;
+    const allCollections = (await client.graphql(allCollectionsQuery, {})) as {
+      collections: { nodes: ShopifyCollectionNode[] };
+    };
+
+    ids.push(
+      ...collectManualCollectionIds(unresolvedNames, allCollections.collections.nodes, seenIds),
+    );
+
+    const finalUnresolved = names.filter((name) => {
+      const handle = toHandle(name);
+      const matchedInFirst = data.collections.nodes.some(
+        (collection) =>
+          collection.ruleSet === null && isExactCollectionMatch(collection, name, handle),
+      );
+      if (matchedInFirst) return false;
+
+      const matchedInSecond = allCollections.collections.nodes.some(
+        (collection) =>
+          collection.ruleSet === null && isExactCollectionMatch(collection, name, handle),
+      );
+      return !matchedInSecond;
+    });
+
+    if (finalUnresolved.length > 0) {
+      for (const name of finalUnresolved) {
+        try {
+          const createMutation = `
+            mutation CreateManualCollection($input: CollectionInput!) {
+              collectionCreate(input: $input) {
+                collection {
+                  id
+                  title
+                }
+                userErrors {
+                  field
+                  message
+                }
+              }
+            }
+          `;
+          const res = (await client.graphql(createMutation, {
+            input: { title: name },
+          })) as {
+            collectionCreate?: {
+              collection?: { id: string; title: string } | null;
+              userErrors?: Array<{ field: string[]; message: string }> | null;
+            } | null;
+          };
+
+          const collection = res.collectionCreate?.collection;
+          const userErrors = res.collectionCreate?.userErrors || [];
+          if (userErrors.length > 0) {
+            console.error(`[Shopify] Failed to create collection "${name}":`, userErrors);
+          } else if (collection?.id) {
+            console.log(`[Shopify] Successfully auto-created collection "${name}" with ID ${collection.id}`);
+            if (!seenIds.has(collection.id)) {
+              seenIds.add(collection.id);
+              ids.push(collection.id);
+            }
+          }
+        } catch (createErr) {
+          console.error(`[Shopify] Error creating collection "${name}":`, createErr);
+        }
+      }
+    }
+
+    return ids;
+  } catch (err) {
+    console.warn(
+      `[Shopify] Manual collection resolve failed, falling back to product type collections:`,
+      err instanceof Error ? err.message : err,
+    );
+    return [];
+  }
+}
+
+export async function resolveProductCollectionIds(
+  client: CollectionResolverClient,
+  canonicalType: string | null,
+  organizationCollections: unknown = [],
+): Promise<string[]> {
+  const organizationCollectionIds = await resolveManualCollectionIdsByTitlesOrHandles(
+    client,
+    organizationCollections,
+  );
+  if (organizationCollectionIds.length > 0) return organizationCollectionIds;
+
+  return resolveCollectionIds(client, canonicalType);
+}
+
+/**
+ * Resolve manual collection IDs for the canonical product type by exact
+ * title/handle match. Returns [] (omit) when no exact match.
+ * Filters out Smart Collections (where ruleSet is not null).
+ */
+async function resolveCollectionIds(
+  client: CollectionResolverClient,
+  canonicalType: string | null,
+): Promise<string[]> {
+  if (!canonicalType) return [];
+  const title = PRODUCT_TYPE_COLLECTION_MAP[canonicalType];
+  if (!title) return [];
+
+  const ids = await resolveManualCollectionIdsByTitlesOrHandles(client, [title]);
+  if (ids.length > 0) return ids;
+  if (canonicalType) {
+    console.warn(`[Shopify] No exact manual collection for "${title}" — omitting collections`);
+  }
+  return [];
 }
 
 function extractNumericId(gid: string): string {

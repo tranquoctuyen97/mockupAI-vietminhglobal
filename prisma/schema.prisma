@@ -723,6 +723,7 @@ model Listing {
   title             String
   descriptionHtml   String        @map("description_html")
   tags              String[]
+  organizationCollections String[] @default([]) @map("organization_collections")
   priceUsd          Float         @map("price_usd")
   publishedAt       DateTime?     @map("published_at")
   archivedAt        DateTime?     @map("archived_at")

@@ -75,12 +75,25 @@ export async function GET(
 
   // Eligible TEMPLATE sources (all active template sources for this store/template)
   let eligibleTemplateSources: typeof draftSources = [];
-  if (draft.templateId) {
+  let templateId = draft.templateId;
+  if (!templateId && draft.storeId) {
+    const defaultTemplate = await prisma.storeMockupTemplate.findFirst({
+      where: { storeId: draft.storeId, isDefault: true },
+      select: { id: true },
+    }) || await prisma.storeMockupTemplate.findFirst({
+      where: { storeId: draft.storeId },
+      select: { id: true },
+    });
+    if (defaultTemplate) {
+      templateId = defaultTemplate.id;
+    }
+  }
+
+  if (templateId) {
     eligibleTemplateSources = await prisma.customMockupSource.findMany({
       where: {
         scope: "TEMPLATE",
-        templateId: draft.templateId,
-        colorId: { in: draft.enabledColorIds },
+        templateId: templateId,
         isActive: true,
         deletedAt: null,
       },
@@ -283,7 +296,11 @@ export async function POST(
     // Auto-set mode to DRAFT_CUSTOM on first draft upload
     await tx.wizardDraft.update({
       where: { id: draftId },
-      data: { mockupSourceMode: "DRAFT_CUSTOM" },
+      data: {
+        mockupSourceMode: "DRAFT_CUSTOM",
+        mockupsStale: true,
+        mockupsStaleReason: "placement_changed",
+      },
     });
 
     const existingSelectionCount = await tx.wizardDraftMockupLibraryPick.count({

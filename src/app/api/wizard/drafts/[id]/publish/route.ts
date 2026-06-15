@@ -7,6 +7,7 @@ import { validateSession } from "@/lib/auth/session";
 import { formatDescriptionHtml } from "@/lib/content/description-html";
 import { prisma } from "@/lib/db";
 import { generateIdempotencyKey, runPublishWorker } from "@/lib/publish/worker";
+import { normalizeOrganizationCollections } from "@/lib/wizard/product-organization";
 
 type DraftDesignSelection = {
   id: string;
@@ -115,6 +116,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     title?: string;
     description?: string;
     tags?: string[];
+    collections?: string[];
   } | null;
   if (!aiContent?.title) {
     return NextResponse.json({ error: "AI content not generated" }, { status: 400 });
@@ -186,6 +188,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         title: aiContent.title || "",
         descriptionHtml: formatDescriptionHtml(aiContent.description),
         tags: aiContent.tags || [],
+        organizationCollections: normalizeOrganizationCollections(aiContent.collections),
         priceUsd,
         createdBy: session.id,
         variants: {

@@ -29,6 +29,7 @@ interface WizardMockupSourcePanelProps {
   designImageUrl?: string | null;
   onRegenerate?: () => void;
   onRemoveColor?: (colorId: string) => void | Promise<void>;
+  onMockupsStale?: () => void;
   /** Print area in millimeter dimensions (from template/blueprint) */
   printAreaMm?: { widthMm: number; heightMm: number } | null;
 }
@@ -58,6 +59,7 @@ export function WizardMockupSourcePanel({
   designImageUrl,
   onRegenerate,
   onRemoveColor,
+  onMockupsStale,
   printAreaMm,
 }: WizardMockupSourcePanelProps) {
   const [loading, setLoading] = useState(true);
@@ -407,6 +409,7 @@ export function WizardMockupSourcePanel({
       setPlacementEditorSource(null);
       setPlacementEditorImageSize(null);
       await loadData(true);
+      onMockupsStale?.();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không lưu được vùng ghép");
     }

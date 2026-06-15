@@ -1,13 +1,170 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import type { ShopifyMockupImage } from "./shopify";
 import {
+  normalizeExternalTags,
   orderMockupImagesByPrimary,
   pickPrimaryColorName,
+  resolvePrintifyTagsForShopify,
   resolvePublishVariantIds,
   resolveShopifyMockupMedia,
+  selectTagsForShopify,
   validateVariantSkus,
 } from "./worker";
+
+describe("runPublishWorker organization collections source", () => {
+  const source = readFileSync(new URL("./worker.ts", import.meta.url), "utf8");
+
+  it("passes Listing organizationCollections to Shopify publish", () => {
+    assert.match(source, /organizationCollections:\s*listing\.organizationCollections\s*\?\?\s*\[\]/);
+  });
+});
+
+describe("normalizeExternalTags", () => {
+  it("trims, drops blank/nullish tags, deduplicates case-insensitively, and preserves first casing", () => {
+    assert.deepEqual(
+      normalizeExternalTags([
+        " Women's Clothing ",
+        "women's clothing",
+        "",
+        "   ",
+        null,
+        undefined,
+        "Unisex",
+      ]),
+      ["Women's Clothing", "Unisex"],
+    );
+  });
+
+  it("removes internal mockup draft tags", () => {
+    assert.deepEqual(normalizeExternalTags(["mockupai", "DRAFT-PREVIEW", "Cotton"]), ["Cotton"]);
+  });
+
+  it("returns an empty array for non-array input", () => {
+    assert.deepEqual(normalizeExternalTags("Cotton"), []);
+    assert.deepEqual(normalizeExternalTags(null), []);
+  });
+});
+
+describe("resolvePrintifyTagsForShopify", () => {
+  it("returns normalized tags from an existing Printify product", async () => {
+    const client = {
+      getProduct: async (shopId: number, productId: string) => {
+        assert.equal(shopId, 123);
+        assert.equal(productId, "printify-product-1");
+        return { id: productId, title: "Product", tags: [" Printify ", "mockupai", "Unisex"] };
+      },
+    };
+
+    assert.deepEqual(
+      await resolvePrintifyTagsForShopify({
+        client,
+        externalShopId: 123,
+        productId: "printify-product-1",
+        storeId: "store-1",
+        listingId: "listing-1",
+      }),
+      ["Printify", "Unisex"],
+    );
+  });
+
+  it("returns an empty array for missing context", async () => {
+    const client = {
+      getProduct: async () => {
+        throw new Error("should not be called");
+      },
+    };
+
+    assert.deepEqual(
+      await resolvePrintifyTagsForShopify({
+        client,
+        externalShopId: null,
+        productId: "printify-product-1",
+        storeId: "store-1",
+        listingId: "listing-1",
+      }),
+      [],
+    );
+
+    assert.deepEqual(
+      await resolvePrintifyTagsForShopify({
+        client,
+        externalShopId: 123,
+        productId: null,
+        storeId: "store-1",
+        listingId: "listing-1",
+      }),
+      [],
+    );
+  });
+
+  it("returns an empty array for internal-only tags", async () => {
+    const client = {
+      getProduct: async () => ({
+        id: "printify-product-1",
+        title: "Product",
+        tags: ["mockupai", "draft-preview"],
+      }),
+    };
+
+    assert.deepEqual(
+      await resolvePrintifyTagsForShopify({
+        client,
+        externalShopId: 123,
+        productId: "printify-product-1",
+        storeId: "store-1",
+        listingId: "listing-1",
+      }),
+      [],
+    );
+  });
+
+  it("does not throw when Printify fetch fails", async () => {
+    const client = {
+      getProduct: async () => {
+        throw new Error("Printify unavailable");
+      },
+    };
+    const originalWarn = console.warn;
+    console.warn = () => undefined;
+    try {
+      assert.deepEqual(
+        await resolvePrintifyTagsForShopify({
+          client,
+          externalShopId: 123,
+          productId: "printify-product-1",
+          storeId: "store-1",
+          listingId: "listing-1",
+        }),
+        [],
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+});
+
+describe("selectTagsForShopify", () => {
+  it("merges and deduplicates printify tags and listing tags", () => {
+    assert.deepEqual(
+      selectTagsForShopify(["Unisex", "Printify"], ["summer", "unisex", "Cotton"]),
+      ["Unisex", "Printify", "summer", "Cotton"]
+    );
+  });
+
+  it("filters out internal mockup draft tags from listing tags", () => {
+    assert.deepEqual(
+      selectTagsForShopify(["Unisex"], ["draft-preview", "Cotton", "unisex"]),
+      ["Unisex", "Cotton"]
+    );
+  });
+
+  it("handles null or empty listing tags gracefully", () => {
+    assert.deepEqual(selectTagsForShopify(["Unisex"], null), ["Unisex"]);
+    assert.deepEqual(selectTagsForShopify([], ["summer"]), ["summer"]);
+  });
+});
 
 describe("resolvePublishVariantIds", () => {
   it("uses listing Printify variant IDs when present", () => {

@@ -310,6 +310,12 @@ export default function Step3PreviewPage() {
         setTemplate(activeTemplate);
         setTemplateWarning("");
 
+        // Auto-save default template to draft in DB if null
+        if (!draft.templateId && activeTemplate) {
+          updateDraft({ templateId: activeTemplate.id });
+          void saveDraftImmediately();
+        }
+
         const enabledColors = (activeTemplate?.colors ?? []).filter((color) => color.enabled !== false);
         setStoreColors(enabledColors);
         setPresetStatus(activeTemplate?.readiness ?? { ready: false, missing: ["template"] });
@@ -1533,6 +1539,9 @@ export default function Step3PreviewPage() {
                   router.push(`/wizard/${draftId}/step-4`);
                 }}
                 onDeselectColor={(colorId) => toggleColor(colorId)}
+                onMockupsStale={() => {
+                  void loadDraft(draftId);
+                }}
                 printAreaMm={isCustomTemplateDefault ? { widthMm: WIZARD_PRINT_AREA.widthMm, heightMm: WIZARD_PRINT_AREA.heightMm } : null}
               />
 
@@ -1713,6 +1722,9 @@ export default function Step3PreviewPage() {
                   designImageUrl={activeDesignPreviewUrl}
                   onRegenerate={handleGenerate}
                   onRemoveColor={removeColorFromListing}
+                  onMockupsStale={() => {
+                    void loadDraft(draftId);
+                  }}
                   printAreaMm={
                     isCustomTemplateDefault
                       ? { widthMm: WIZARD_PRINT_AREA.widthMm, heightMm: WIZARD_PRINT_AREA.heightMm }
