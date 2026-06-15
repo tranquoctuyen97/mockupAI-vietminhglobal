@@ -51,6 +51,9 @@
 - Modify `src/app/(authed)/wizard/[draftId]/step-4/page.tsx`
   - Add `collections` form state, manual-edit-only optimize button, collection chips/input, success/error toasts, and explicit manual Save behavior.
 
+- Modify `src/lib/wizard/use-wizard-store.ts`
+  - Allow pending draft updates without debounce so Step 4 manual edits can be saved by Save or Next without auto-saving DB.
+
 - Create `src/app/(authed)/wizard/[draftId]/step-4/page-source.test.ts`
   - Source-level guards for optimize button gating and no optimize call from generate/regenerate.
 
@@ -873,8 +876,8 @@ describe("Step 4 product organization UI source", () => {
     assert.doesNotMatch(beforeOptimizeHandler, /optimize-product-organization/);
   });
 
-  it("keeps manual edits local until Save", () => {
-    assert.match(source, /state !== "manual-edit"/);
+  it("keeps manual edits pending without debounce until Save or Next", () => {
+    assert.match(source, /debounce:\s*false/);
     assert.match(source, /handleSaveManual/);
     assert.match(source, /collections/);
   });
@@ -954,7 +957,24 @@ useEffect(() => {
 }, []);
 ```
 
-- [ ] **Step 5: Stop auto-saving manual edit content**
+- [ ] **Step 5: Add pending-only store updates for manual edit content**
+
+In `src/lib/wizard/use-wizard-store.ts`, update the `updateDraft` type and implementation to accept `options?: { debounce?: boolean }`. After the optimistic `set({ draft, pendingPatch })`, return before creating a timer when `options?.debounce === false`.
+
+```ts
+updateDraft: (
+  patch: Record<string, unknown>,
+  options?: { debounce?: boolean },
+) => Promise<void>;
+```
+
+```ts
+if (options?.debounce === false) {
+  return;
+}
+```
+
+Then update Step 4's sync effect:
 
 Replace the current auto-sync effect with:
 
@@ -963,10 +983,13 @@ useEffect(() => {
   if (state === "ready") {
     updateDraft({ aiContent: content });
   }
+  if (state === "manual-edit") {
+    updateDraft({ aiContent: { ...content, source: "manual" } }, { debounce: false });
+  }
 }, [content, state, updateDraft]);
 ```
 
-This keeps `manual-edit` changes local until Save/Next.
+This keeps `manual-edit` changes available to Save/Next through `pendingPatch` without starting the 1s database auto-save timer.
 
 - [ ] **Step 6: Add optimize and collection handlers**
 

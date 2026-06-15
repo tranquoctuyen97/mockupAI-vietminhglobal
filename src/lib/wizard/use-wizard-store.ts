@@ -141,7 +141,10 @@ interface WizardStore {
   pendingPatch: Record<string, unknown>;
 
   loadDraft: (id: string, expand?: string) => Promise<void>;
-  updateDraft: (patch: Record<string, unknown>) => Promise<void>;
+  updateDraft: (
+    patch: Record<string, unknown>,
+    options?: { debounce?: boolean },
+  ) => Promise<void>;
   saveDraftImmediately: () => Promise<void>;
   setDraft: (draft: DraftData) => void;
   updateMockupJob: (jobId: string, update: Partial<MockupJob>) => void;
@@ -237,7 +240,7 @@ export const useWizardStore = create<WizardStore>((set, get) => {
     return promise;
   },
 
-  updateDraft: async (patch: Record<string, unknown>) => {
+  updateDraft: async (patch: Record<string, unknown>, options?: { debounce?: boolean }) => {
     const { draft, saveTimer, pendingPatch } = get();
     if (!draft) return;
 
@@ -254,6 +257,10 @@ export const useWizardStore = create<WizardStore>((set, get) => {
       draft: { ...draft, ...changedPatch } as DraftData,
       pendingPatch: newPendingPatch
     });
+
+    if (options?.debounce === false) {
+      return;
+    }
 
     // Debounce save (1s)
     if (saveTimer) clearTimeout(saveTimer);
