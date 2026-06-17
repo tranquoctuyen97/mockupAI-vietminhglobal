@@ -290,6 +290,9 @@ model StoreMockupTemplate {
   blueprintImageUrl       String?          @map("blueprint_image_url")
   blueprintBrand          String?          @map("blueprint_brand")
   defaultMockupSource     TemplateDefaultMockupSource @default(PRINTIFY) @map("default_mockup_source")
+  basePriceUsd             Decimal? @map("base_price_usd") @db.Decimal(10, 2)
+  priceBySizeDefault       Json?    @map("price_by_size_default")
+  defaultCompositeRegionPx Json?    @map("default_composite_region_px")
 
   store               Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
   colors              TemplateColor[]
