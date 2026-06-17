@@ -5,7 +5,12 @@ export type PriceMap = Record<string, number>;
 function toNumberish(value: unknown): number | null {
   if (typeof value === "number") return value;
   if (typeof value === "string" && value.trim() !== "") return Number(value);
-  if (value && typeof value === "object" && "toNumber" in value && typeof value.toNumber === "function") {
+  if (
+    value &&
+    typeof value === "object" &&
+    "toNumber" in value &&
+    typeof value.toNumber === "function"
+  ) {
     return value.toNumber();
   }
   return null;

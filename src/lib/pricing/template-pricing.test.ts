@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  mergeDraftAndTemplatePriceMaps,
   normalizeMoneyValue,
   normalizePriceBySizeDefault,
   resolveBaseTemplatePrice,
@@ -37,9 +38,18 @@ test("normalizePriceBySizeDefault returns null for invalid maps", () => {
 });
 
 test("resolveBaseTemplatePrice uses template base before store default and fallback", () => {
-  assert.equal(resolveBaseTemplatePrice({ templateBasePriceUsd: 25.5, storeDefaultPriceUsd: 30 }), 25.5);
-  assert.equal(resolveBaseTemplatePrice({ templateBasePriceUsd: null, storeDefaultPriceUsd: "30.995" }), 31);
-  assert.equal(resolveBaseTemplatePrice({ templateBasePriceUsd: null, storeDefaultPriceUsd: null }), 24.99);
+  assert.equal(
+    resolveBaseTemplatePrice({ templateBasePriceUsd: 25.5, storeDefaultPriceUsd: 30 }),
+    25.5,
+  );
+  assert.equal(
+    resolveBaseTemplatePrice({ templateBasePriceUsd: null, storeDefaultPriceUsd: "30.995" }),
+    31,
+  );
+  assert.equal(
+    resolveBaseTemplatePrice({ templateBasePriceUsd: null, storeDefaultPriceUsd: null }),
+    24.99,
+  );
 });
 
 test("resolvePriceForSize uses draft override before template per-size before base", () => {
@@ -60,5 +70,56 @@ test("resolvePriceForSize uses draft override before template per-size before ba
       templatePriceBySizeDefault: null,
     }),
     24.99,
+  );
+});
+
+test("resolvePriceForSize uses exact size lookup after map keys are trimmed", () => {
+  const params = {
+    size: "2XL",
+    draftPriceBySizeOverride: null,
+    templatePriceBySizeDefault: { " 2XL ": 30, " 3XL ": 32 },
+    templateBasePriceUsd: 24.99,
+    storeDefaultPriceUsd: 21.99,
+  };
+
+  assert.equal(resolvePriceForSize(params), 30);
+  assert.equal(resolvePriceForSize({ ...params, size: " 2XL " }), 24.99);
+});
+
+test("mergeDraftAndTemplatePriceMaps merges template and draft maps with draft winning same size", () => {
+  assert.deepEqual(
+    mergeDraftAndTemplatePriceMaps({
+      templatePriceBySizeDefault: { XL: 28, " 2XL ": "30.005" },
+      draftPriceBySizeOverride: { "2XL": 31.111, "3XL": 33 },
+    }),
+    {
+      XL: 28,
+      "2XL": 31.11,
+      "3XL": 33,
+    },
+  );
+});
+
+test("mergeDraftAndTemplatePriceMaps returns null when both maps are null invalid or empty", () => {
+  assert.equal(
+    mergeDraftAndTemplatePriceMaps({
+      templatePriceBySizeDefault: null,
+      draftPriceBySizeOverride: null,
+    }),
+    null,
+  );
+  assert.equal(
+    mergeDraftAndTemplatePriceMaps({
+      templatePriceBySizeDefault: { XL: 0 },
+      draftPriceBySizeOverride: ["2XL"],
+    }),
+    null,
+  );
+  assert.equal(
+    mergeDraftAndTemplatePriceMaps({
+      templatePriceBySizeDefault: {},
+      draftPriceBySizeOverride: {},
+    }),
+    null,
   );
 });
