@@ -56,6 +56,7 @@ export async function GET(
           printProviderTitle: true,
           defaultMockupSource: true,
           defaultPlacement: true,
+          defaultCompositeRegionPx: true,
           colors: {
             orderBy: { sortOrder: "asc" },
             include: { color: { select: { id: true, name: true, hex: true } } },
@@ -76,16 +77,18 @@ export async function GET(
   // Eligible TEMPLATE sources (all active template sources for this store/template)
   let eligibleTemplateSources: typeof draftSources = [];
   let templateId = draft.templateId;
+  let templateDefaultCompositeRegionPx: unknown = draft.template?.defaultCompositeRegionPx ?? null;
   if (!templateId && draft.storeId) {
     const defaultTemplate = await prisma.storeMockupTemplate.findFirst({
       where: { storeId: draft.storeId, isDefault: true },
-      select: { id: true },
+      select: { id: true, defaultCompositeRegionPx: true },
     }) || await prisma.storeMockupTemplate.findFirst({
       where: { storeId: draft.storeId },
-      select: { id: true },
+      select: { id: true, defaultCompositeRegionPx: true },
     });
     if (defaultTemplate) {
       templateId = defaultTemplate.id;
+      templateDefaultCompositeRegionPx = defaultTemplate.defaultCompositeRegionPx ?? null;
     }
   }
 
@@ -121,8 +124,8 @@ export async function GET(
 
   // Enhanced serialize: merge pick placement with source placement via shared resolver.
   // Precedence:
-  //   DRAFT:    source.compositeRegionPx > pick.compositeRegionPx > null
-  //   TEMPLATE: pick.compositeRegionPx > source.compositeRegionPx > null
+  //   DRAFT:    source.compositeRegionPx > pick.compositeRegionPx > template.defaultCompositeRegionPx > null
+  //   TEMPLATE: pick.compositeRegionPx > source.compositeRegionPx > template.defaultCompositeRegionPx > null
   function serializeWithPickPlacement(
     source: (typeof draftSources)[number],
   ) {
@@ -133,6 +136,7 @@ export async function GET(
       scope: (source as any).scope as "DRAFT" | "TEMPLATE",
       sourceRegion: serialized.compositeRegionPx,
       pickRegion: pickPlacement,
+      templateDefaultRegion: templateDefaultCompositeRegionPx,
     });
 
     return {

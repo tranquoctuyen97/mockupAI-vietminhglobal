@@ -459,6 +459,7 @@ async function buildCustomRowsForDraft(input: {
       scope: source.scope as "DRAFT" | "TEMPLATE",
       sourceRegion: source.compositeRegionPx,
       pickRegion: pickRegionBySourceId.get(source.id) ?? null,
+      templateDefaultRegion: template.defaultCompositeRegionPx,
     });
     return effective !== null;
   };

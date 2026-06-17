@@ -716,6 +716,7 @@ async function validateCustomMockupCoverage(
         scope,
         sourceRegion: s.compositeRegionPx,
         pickRegion: pickRegionBySourceId.get(s.id) ?? null,
+        templateDefaultRegion: template.defaultCompositeRegionPx,
       });
       return !effective;
     });

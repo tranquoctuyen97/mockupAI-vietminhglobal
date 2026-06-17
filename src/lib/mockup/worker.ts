@@ -65,7 +65,7 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
               scope: true,
               view: true,
               template: {
-                select: { printAreasByView: true },
+                select: { printAreasByView: true, defaultCompositeRegionPx: true },
               },
             },
           });
@@ -75,7 +75,12 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
             where: { id: mockupImageId },
             select: {
               mockupJobId: true,
-              mockupJob: { select: { draftId: true } },
+              mockupJob: {
+                select: {
+                  draftId: true,
+                  draft: { select: { template: { select: { defaultCompositeRegionPx: true } } } },
+                },
+              },
             },
           });
           const outputKey = `custom-mockups/renders/${image.mockupJobId}/${mockupImageId}-output.webp`;
@@ -120,6 +125,11 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
             scope: source.scope as "DRAFT" | "TEMPLATE",
             sourceRegion: source.compositeRegionPx,
             pickRegion,
+            templateDefaultRegion:
+              source.template?.defaultCompositeRegionPx ??
+              image.mockupJob.draft.template?.defaultCompositeRegionPx ??
+              null,
+            imageSize: { width: imgW, height: imgH },
           });
 
           let region: CustomCompositeRegion;

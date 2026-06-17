@@ -20,7 +20,12 @@ export async function PUT(
   const { id: draftId } = await params;
   const draft = await prisma.wizardDraft.findFirst({
     where: { id: draftId, tenantId: session.tenantId },
-    select: { id: true, templateId: true, enabledColorIds: true },
+    select: {
+      id: true,
+      templateId: true,
+      enabledColorIds: true,
+      template: { select: { defaultCompositeRegionPx: true } },
+    },
   });
   if (!draft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
 
@@ -80,7 +85,7 @@ export async function PUT(
         ...(draft.templateId ? [{ scope: "TEMPLATE" as const, templateId: draft.templateId }] : []),
       ],
     },
-    select: { id: true, colorId: true },
+    select: { id: true, colorId: true, compositeRegionPx: true },
   });
 
   const foundIds = new Set(sources.map((s) => s.id));
@@ -115,10 +120,12 @@ export async function PUT(
       data: uniqueSourceIds.map((sourceId, index) => {
         const source = sources.find((entry) => entry.id === sourceId)!;
 
-        // Placement precedence: request mới > existing cũ > null
+        // Placement precedence: request mới > existing cũ > source > template snapshot > null
         const compositeRegionPx =
           normalizedPlacements.get(sourceId) ??
           existingPlacementBySourceId.get(sourceId) ??
+          source.compositeRegionPx ??
+          draft.template?.defaultCompositeRegionPx ??
           null;
 
         return {
