@@ -10,6 +10,11 @@ import { validateSession } from "@/lib/auth/session";
 import { createTemplate, updateTemplatePlacement } from "@/lib/stores/store-service";
 import { prisma } from "@/lib/db";
 import { enrichColorHex } from "@/lib/printify/color-hex";
+import { normalizeCompositeRegionPx } from "@/lib/mockup/custom-library";
+import {
+  normalizeMoneyValue,
+  normalizePriceBySizeDefault,
+} from "@/lib/pricing/template-pricing";
 import {
   getTemplateReadiness,
   getTemplateReadinessLabel,
@@ -92,6 +97,9 @@ export async function GET(
       blueprintTitle: template.blueprintTitle,
       printProviderTitle: template.printProviderTitle,
       defaultMockupSource: template.defaultMockupSource,
+      basePriceUsd: template.basePriceUsd ? Number(template.basePriceUsd) : null,
+      priceBySizeDefault: template.priceBySizeDefault ?? null,
+      defaultCompositeRegionPx: template.defaultCompositeRegionPx ?? null,
       enabledVariantIds: template.enabledVariantIds,
       enabledSizes: template.enabledSizes,
       defaultPlacement: template.defaultPlacement,
@@ -150,6 +158,9 @@ export async function POST(
     defaultAspectRatio?: string;
     blueprintImageUrl?: string;
     blueprintBrand?: string;
+    basePriceUsd?: number | string | null;
+    priceBySizeDefault?: Record<string, unknown> | null;
+    defaultCompositeRegionPx?: unknown;
   };
 
   if (!data.name || !data.printifyBlueprintId || !data.printifyPrintProviderId) {
@@ -159,10 +170,38 @@ export async function POST(
     );
   }
 
+  if (data.basePriceUsd != null && normalizeMoneyValue(data.basePriceUsd) == null) {
+    return NextResponse.json(
+      { error: "basePriceUsd must be a positive finite number" },
+      { status: 400 },
+    );
+  }
+  if (
+    data.priceBySizeDefault != null &&
+    normalizePriceBySizeDefault(data.priceBySizeDefault) == null
+  ) {
+    return NextResponse.json(
+      { error: "priceBySizeDefault must be { sizeName: positivePrice }" },
+      { status: 400 },
+    );
+  }
+  if (
+    data.defaultCompositeRegionPx != null &&
+    normalizeCompositeRegionPx(data.defaultCompositeRegionPx) == null
+  ) {
+    return NextResponse.json(
+      { error: "defaultCompositeRegionPx is invalid" },
+      { status: 400 },
+    );
+  }
+
   const result = await createTemplate(id, {
     ...data,
     defaultPlacement: data.defaultPlacement as Prisma.InputJsonValue,
     defaultMockupSource: data.defaultMockupSource,
+    basePriceUsd: data.basePriceUsd ?? null,
+    priceBySizeDefault: data.priceBySizeDefault ?? null,
+    defaultCompositeRegionPx: data.defaultCompositeRegionPx ?? null,
   });
   return NextResponse.json(result);
 }

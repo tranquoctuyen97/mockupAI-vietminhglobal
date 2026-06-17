@@ -14,3 +14,11 @@ test("mockup templates route exposes GET with readiness and colors", () => {
   assert.match(source, /include:\s*{\s*colors:\s*{/);
   assert.match(source, /return\s+NextResponse\.json\(\{\s*templates/);
 });
+
+test("mockup templates route includes template pricing and composite defaults", () => {
+  const source = readFileSync(join(process.cwd(), routePath), "utf8");
+
+  assert.match(source, /basePriceUsd/);
+  assert.match(source, /priceBySizeDefault/);
+  assert.match(source, /defaultCompositeRegionPx/);
+});

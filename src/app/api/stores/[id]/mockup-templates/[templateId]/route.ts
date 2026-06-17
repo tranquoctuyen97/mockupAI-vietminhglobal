@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { requireFeature } from "@/lib/auth/guards";
 import { updateTemplate, deleteTemplate } from "@/lib/stores/store-service";
 import { prisma } from "@/lib/db";
+import { normalizeCompositeRegionPx } from "@/lib/mockup/custom-library";
+import {
+  normalizeMoneyValue,
+  normalizePriceBySizeDefault,
+} from "@/lib/pricing/template-pricing";
 import type { Prisma } from "@prisma/client";
 
 export async function PATCH(
@@ -31,6 +36,31 @@ export async function PATCH(
 
   const body = await request.json();
 
+  if (body.basePriceUsd != null && normalizeMoneyValue(body.basePriceUsd) == null) {
+    return NextResponse.json(
+      { error: "basePriceUsd must be a positive finite number" },
+      { status: 400 },
+    );
+  }
+  if (
+    body.priceBySizeDefault != null &&
+    normalizePriceBySizeDefault(body.priceBySizeDefault) == null
+  ) {
+    return NextResponse.json(
+      { error: "priceBySizeDefault must be { sizeName: positivePrice }" },
+      { status: 400 },
+    );
+  }
+  if (
+    body.defaultCompositeRegionPx != null &&
+    normalizeCompositeRegionPx(body.defaultCompositeRegionPx) == null
+  ) {
+    return NextResponse.json(
+      { error: "defaultCompositeRegionPx is invalid" },
+      { status: 400 },
+    );
+  }
+
   const result = await updateTemplate(templateId, {
     name: body.name,
     printifyBlueprintId: body.printifyBlueprintId,
@@ -48,6 +78,16 @@ export async function PATCH(
     blueprintImageUrl: body.blueprintImageUrl,
     blueprintBrand: body.blueprintBrand,
     defaultMockupSource: body.defaultMockupSource,
+    basePriceUsd:
+      body.basePriceUsd === undefined ? undefined : body.basePriceUsd ?? null,
+    priceBySizeDefault:
+      body.priceBySizeDefault === undefined
+        ? undefined
+        : body.priceBySizeDefault ?? null,
+    defaultCompositeRegionPx:
+      body.defaultCompositeRegionPx === undefined
+        ? undefined
+        : body.defaultCompositeRegionPx ?? null,
     colorIds: body.colorIds,
   });
 

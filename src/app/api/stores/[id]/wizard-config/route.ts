@@ -108,6 +108,9 @@ export async function GET(
       blueprintTitle: template.blueprintTitle,
       printProviderTitle: template.printProviderTitle,
       defaultMockupSource: template.defaultMockupSource,
+      basePriceUsd: template.basePriceUsd ? Number(template.basePriceUsd) : null,
+      priceBySizeDefault: template.priceBySizeDefault ?? null,
+      defaultCompositeRegionPx: template.defaultCompositeRegionPx ?? null,
       enabledVariantIds: template.enabledVariantIds,
       enabledSizes: template.enabledSizes,
       // Per-color size map; null means use enabledSizes as global fallback
