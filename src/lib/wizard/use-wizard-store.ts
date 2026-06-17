@@ -52,7 +52,21 @@ interface StoreColor {
   id: string;
   name: string;
   hex: string;
+  colorGroup?: string | null;
   enabled?: boolean;
+}
+
+interface WizardDraftDesignPair {
+  id: string;
+  draftId: string;
+  baseName: string;
+  lightDraftDesignId: string;
+  darkDraftDesignId: string;
+  sortOrder: number;
+  aiContent?: unknown | null;
+  lightDesign?: DraftDesign | null;
+  darkDesign?: DraftDesign | null;
+  listing?: unknown | null;
 }
 
 interface DraftData {
@@ -105,6 +119,7 @@ interface DraftData {
   currentStep: number;
   status: string;
   draftDesigns?: DraftDesign[];
+  designPairs?: WizardDraftDesignPair[];
   mockupJobs: MockupJob[];
   mockupsStale?: boolean;
   mockupsStaleReason?: string | null;

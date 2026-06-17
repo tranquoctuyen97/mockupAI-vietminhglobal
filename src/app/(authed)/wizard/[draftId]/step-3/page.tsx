@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { resolveColorGroups, type EffectiveColorGroup } from "@/lib/designs/color-classifier";
 import { useWizardStore } from "@/lib/wizard/use-wizard-store";
 import { useAuthedUser } from "@/lib/auth/user-context";
 
@@ -60,6 +61,7 @@ import { PlacementEditorModal } from "@/components/wizard/step3/PlacementEditorM
 import type { CanvasRegionPx } from "@/components/placement/CanvasPlacementEditor";
 
 type TemplateReadinessLabel = "DEFAULT" | "DEFAULT INCOMPLETE" | "READY" | "INCOMPLETE";
+type StoreColorGroup = "auto" | EffectiveColorGroup;
 
 type WizardTemplateOption = {
   id: string;
@@ -85,6 +87,7 @@ type WizardTemplateOption = {
     name: string;
     hex: string;
     enabled: boolean;
+    colorGroup?: StoreColorGroup | null;
     sortOrder: number;
     customMockupCount?: number;
     hasCustomMockup?: boolean;
@@ -188,6 +191,24 @@ export default function Step3PreviewPage() {
     }
     return map;
   }, [selectedTemplate]);
+  const effectiveColorGroups = useMemo(
+    () =>
+      resolveColorGroups(
+        storeColors.map((color) => ({
+          id: color.id,
+          hex: color.hex,
+          colorGroup: color.colorGroup ?? "auto",
+        })),
+      ),
+    [storeColors],
+  );
+  const groupedColorNames = useMemo(() => {
+    const groups: Record<EffectiveColorGroup, string[]> = { light: [], dark: [] };
+    for (const color of storeColors) {
+      groups[effectiveColorGroups.get(color.id) ?? "dark"].push(color.name);
+    }
+    return groups;
+  }, [effectiveColorGroups, storeColors]);
   const selectedMissingCustomColors = useMemo(() => {
     if (!isCustomTemplateDefault) return [];
     return storeColors.filter(
@@ -919,6 +940,40 @@ export default function Step3PreviewPage() {
     updateDraft({ enabledColorIds: Array.from(next) });
   };
 
+  const updateColorGroup = async (colorId: string, colorGroup: StoreColorGroup) => {
+    if (!draft?.storeId) return;
+    const previousStoreColors = storeColors;
+    const applyColorGroup = <T extends { id: string; colorGroup?: StoreColorGroup | null }>(
+      colors: T[],
+    ) =>
+      colors.map((color) =>
+        color.id === colorId ? { ...color, colorGroup } : color,
+      );
+
+    setStoreColors((current) => applyColorGroup(current));
+    setTemplate((current) =>
+      current ? { ...current, colors: applyColorGroup(current.colors) } : current,
+    );
+    setTemplates((current) =>
+      current.map((candidate) => ({
+        ...candidate,
+        colors: applyColorGroup(candidate.colors),
+      })),
+    );
+
+    try {
+      const res = await fetch(`/api/stores/${draft.storeId}/colors/${colorId}/group`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ colorGroup }),
+      });
+      if (!res.ok) throw new Error("Failed to update color group");
+    } catch {
+      setStoreColors(previousStoreColors);
+      toast.error("Không thể cập nhật nhóm màu");
+    }
+  };
+
   const selectAllColors = () => {
     const next = new Set<string>();
     storeColors.forEach((color) => {
@@ -1371,6 +1426,81 @@ export default function Step3PreviewPage() {
             customAvailabilityByColorId={customAvailabilityByColorId}
             isCustomTemplate={isCustomTemplateDefault}
           />
+
+          <div className="card" style={{ padding: 16 }}>
+            <div style={{ marginBottom: 12 }}>
+              <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>Nhóm màu sáng/tối</h3>
+              <p style={{ margin: "3px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                Sáng: {groupedColorNames.light.join(", ") || "—"}
+              </p>
+              <p style={{ margin: "3px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                Tối: {groupedColorNames.dark.join(", ") || "—"}
+              </p>
+            </div>
+
+            <div style={{ display: "grid", gap: 8 }}>
+              {storeColors.map((color) => {
+                const effectiveGroup = effectiveColorGroups.get(color.id) ?? "dark";
+                return (
+                  <div
+                    key={color.id}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(0, 1fr) 112px",
+                      gap: 10,
+                      alignItems: "center",
+                      padding: "8px 10px",
+                      border: "1px solid var(--border-default)",
+                      borderRadius: "var(--radius-sm)",
+                    }}
+                  >
+                    <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: "50%",
+                          backgroundColor: color.hex,
+                          border: "1px solid var(--border-default)",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <div style={{ minWidth: 0 }}>
+                        <p
+                          style={{
+                            margin: 0,
+                            fontWeight: 800,
+                            fontSize: "0.78rem",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {color.name}
+                        </p>
+                        <p style={{ margin: "2px 0 0", fontSize: "0.68rem", opacity: 0.5 }}>
+                          {effectiveGroup === "light" ? "Sáng" : "Tối"}
+                        </p>
+                      </div>
+                    </div>
+                    <select
+                      className="input"
+                      value={color.colorGroup ?? "auto"}
+                      onChange={(event) => {
+                        void updateColorGroup(color.id, event.target.value as StoreColorGroup);
+                      }}
+                      style={{ height: 34, fontSize: "0.75rem", padding: "0 8px" }}
+                    >
+                      <option value="auto">Auto</option>
+                      <option value="light">Sáng</option>
+                      <option value="dark">Tối</option>
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
 
 
           <SizePicker

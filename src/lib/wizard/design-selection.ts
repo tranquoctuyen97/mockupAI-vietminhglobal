@@ -1,4 +1,4 @@
-export const MAX_WIZARD_DESIGNS = 5;
+export const MAX_WIZARD_DESIGNS = 80;
 
 export interface DraftDesignLike {
   designId?: string | null;

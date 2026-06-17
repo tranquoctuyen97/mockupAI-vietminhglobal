@@ -55,6 +55,16 @@ export async function processPrintifyMockupPollJob(
       data: { status: "running", errorMessage: null },
     });
 
+    const mockupJobFilter = await prisma.mockupJob.findUnique({
+      where: { id: mockupJobId },
+      select: { colorFilterIds: true, colorGroup: true },
+    });
+    const colorFilterIds = coerceStringArray(mockupJobFilter?.colorFilterIds);
+    const allowedColorNames =
+      colorFilterIds.length > 0
+        ? await resolveColorNamesForFilter(draftId, colorFilterIds)
+        : null;
+
     const { client, externalShopId } = await getClientForStore(storeId);
     const mockups = await pollPrintifyMockups({
       client,
@@ -70,11 +80,14 @@ export async function processPrintifyMockupPollJob(
       client,
       externalShopId,
     });
-    const printifyRows = await buildMockupImageRows({ mockups, variantColorLookup });
+    const printifyRows = (await buildMockupImageRows({ mockups, variantColorLookup })).filter(
+      (row) => !allowedColorNames || allowedColorNames.has(normalizeColorKey(row.colorName)),
+    );
     const { draftRows, templateRows, mode } = await buildCustomRowsForDraft({
       draftId,
       storeId,
       variantColorLookup,
+      colorFilterIds,
     });
 
     // Determine which bucket gets default inclusion
@@ -348,6 +361,7 @@ async function buildCustomRowsForDraft(input: {
   draftId: string;
   storeId: string;
   variantColorLookup: Map<number, { colorName: string }>;
+  colorFilterIds?: string[];
 }): Promise<{ draftRows: MockupImageRow[]; templateRows: MockupImageRow[]; mode: "PRINTIFY" | "CUSTOM" }> {
   const draft = await prisma.wizardDraft.findUnique({
     where: { id: input.draftId },
@@ -371,7 +385,11 @@ async function buildCustomRowsForDraft(input: {
 
   const defaultMockupSource = template.defaultMockupSource ?? "PRINTIFY";
 
-  const enabledColorSet = new Set(draft.enabledColorIds);
+  const enabledColorSet = new Set(
+    input.colorFilterIds && input.colorFilterIds.length > 0
+      ? input.colorFilterIds
+      : draft.enabledColorIds,
+  );
   const colorsById = new Map(
     (draft.store?.colors ?? [])
       .filter((color) => enabledColorSet.has(color.id))
@@ -673,4 +691,26 @@ function normalizeColorKey(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+function coerceStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+async function resolveColorNamesForFilter(
+  draftId: string,
+  colorFilterIds: string[],
+): Promise<Set<string>> {
+  const draft = await prisma.wizardDraft.findUnique({
+    where: { id: draftId },
+    include: { store: { include: { colors: true } } },
+  });
+  const colorIdSet = new Set(colorFilterIds);
+  return new Set(
+    (draft?.store?.colors ?? [])
+      .filter((color) => colorIdSet.has(color.id))
+      .map((color) => normalizeColorKey(color.name)),
+  );
 }

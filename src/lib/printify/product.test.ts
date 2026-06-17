@@ -115,3 +115,62 @@ test("pollPrintifyMockups throws a timeout when images never appear", async () =
     PrintifyMockupTimeoutError,
   );
 });
+
+test("buildPrintifyProductPayload supports separate images by variant group", () => {
+  const payload = buildPrintifyProductPayload({
+    title: "Pair Product",
+    description: "Description",
+    blueprintId: 1,
+    printProviderId: 2,
+    variantIds: [101, 102],
+    imageId: "legacy",
+    placementData: {
+      version: "2.1" as const,
+      variants: {
+        _default: {
+          front: { xMm: 0, yMm: 0, widthMm: 100, heightMm: 100, rotationDeg: 0 },
+        },
+      },
+    },
+    imageGroups: [
+      { imageId: "light-image", variantIds: [101] },
+      { imageId: "dark-image", variantIds: [102] },
+    ],
+  });
+
+  const printAreas = payload.print_areas as Array<{
+    variant_ids: number[];
+    placeholders: Array<{ images: Array<{ id: string }> }>;
+  }>;
+  assert.deepEqual(printAreas.map((area) => area.variant_ids), [[101], [102]]);
+  assert.equal(printAreas[0].placeholders[0].images[0].id, "light-image");
+  assert.equal(printAreas[1].placeholders[0].images[0].id, "dark-image");
+});
+
+test("buildPrintifyProductPayload legacy single image still creates one print_area", () => {
+  const payload = buildPrintifyProductPayload({
+    title: "Single Design",
+    description: "Description",
+    blueprintId: 1,
+    printProviderId: 2,
+    variantIds: [101, 102, 103],
+    imageId: "single-image",
+    placementData: {
+      version: "2.1" as const,
+      variants: {
+        _default: {
+          front: { xMm: 0, yMm: 0, widthMm: 100, heightMm: 100, rotationDeg: 0 },
+        },
+      },
+    },
+  });
+
+  const printAreas = payload.print_areas as Array<{
+    variant_ids: number[];
+    placeholders: Array<{ images: Array<{ id: string }> }>;
+  }>;
+  assert.equal(printAreas.length, 1);
+  assert.deepEqual(printAreas[0].variant_ids, [101, 102, 103]);
+  assert.equal(printAreas[0].placeholders[0].images[0].id, "single-image");
+});
+

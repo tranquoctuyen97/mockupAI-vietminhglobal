@@ -217,6 +217,7 @@ model Store {
   wizardDrafts        WizardDraft[]
   listings            Listing[]
   customMockupSources CustomMockupSource[]
+  designs             Design[]
 
   @@unique([tenantId, shopifyDomain])
   @@index([tenantId, status])
@@ -247,6 +248,7 @@ model StoreColor {
   storeId         String  @map("store_id")
   name            String
   hex             String
+  colorGroup      String  @default("auto") @map("color_group")
   printifyColorId String? @map("printify_color_id")
   enabled         Boolean @default(true)
   sortOrder       Int     @default(0) @map("sort_order")
@@ -416,6 +418,7 @@ model CustomMockupSource {
 model Design {
   id               String       @id @default(cuid())
   tenantId         String       @map("tenant_id")
+  storeId          String?      @map("store_id")
   ownerUserId      String       @map("owner_user_id")
   name             String
   originalFilename String       @map("original_filename")
@@ -431,12 +434,14 @@ model Design {
   createdAt        DateTime     @default(now()) @map("created_at")
   updatedAt        DateTime     @updatedAt @map("updated_at")
 
+  store        Store?              @relation(fields: [storeId], references: [id], onDelete: SetNull)
   usages       DesignUsage[]
   wizardDrafts WizardDraft[]
   draftDesigns WizardDraftDesign[]
   mockupJobs   MockupJob[]
 
   @@index([tenantId, status])
+  @@index([tenantId, storeId, status])
   @@index([tenantId, name])
   @@map("designs")
 }
@@ -490,6 +495,7 @@ model WizardDraft {
 
   mockupJobs          MockupJob[]
   draftDesigns        WizardDraftDesign[]
+  designPairs         WizardDraftDesignPair[]
   listings            Listing[]
   design              Design?                       @relation(fields: [designId], references: [id])
   tenant              Tenant                        @relation(fields: [tenantId], references: [id])
@@ -518,11 +524,36 @@ model WizardDraftDesign {
   design   Design      @relation(fields: [designId], references: [id], onDelete: Cascade)
   jobs     MockupJob[]
   listings Listing[]
+  lightPairs WizardDraftDesignPair[] @relation("PairLightDesign")
+  darkPairs  WizardDraftDesignPair[] @relation("PairDarkDesign")
 
   @@unique([draftId, designId])
   @@index([draftId, sortOrder])
   @@index([designId])
   @@map("wizard_draft_designs")
+}
+
+model WizardDraftDesignPair {
+  id                 String   @id @default(cuid())
+  draftId            String   @map("wizard_draft_id")
+  baseName           String   @map("base_name")
+  lightDraftDesignId String   @map("light_draft_design_id")
+  darkDraftDesignId  String   @map("dark_draft_design_id")
+  sortOrder          Int      @default(0) @map("sort_order")
+  aiContent          Json?    @map("ai_content")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  draft       WizardDraft       @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  lightDesign WizardDraftDesign @relation("PairLightDesign", fields: [lightDraftDesignId], references: [id], onDelete: Cascade)
+  darkDesign  WizardDraftDesign @relation("PairDarkDesign", fields: [darkDraftDesignId], references: [id], onDelete: Cascade)
+  listing     Listing?
+
+  @@unique([draftId, baseName])
+  @@unique([draftId, lightDraftDesignId])
+  @@unique([draftId, darkDraftDesignId])
+  @@index([draftId, sortOrder])
+  @@map("wizard_draft_design_pairs")
 }
 
 model WizardDraftMockupLibraryPick {
@@ -589,6 +620,8 @@ model MockupJob {
   failedImages      Int      @default(0) @map("failed_images")
   errorMessage      String?  @map("error_message")
   placementSnapshot Json     @map("placement_snapshot") // PlacementData at job creation time
+  colorFilterIds    Json?    @map("color_filter_ids")
+  colorGroup        String?  @map("color_group")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
@@ -717,6 +750,7 @@ model Listing {
   templateId        String?       @map("template_id")
   wizardDraftId     String?       @map("wizard_draft_id")
   wizardDraftDesignId String?     @unique @map("wizard_draft_design_id")
+  wizardDraftDesignPairId String? @unique @map("wizard_draft_design_pair_id")
   shopifyProductId  String?       @map("shopify_product_id")
   printifyProductId String?       @map("printify_product_id")
   status            ListingStatus @default(PUBLISHING)
@@ -734,6 +768,7 @@ model Listing {
   template          StoreMockupTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   wizardDraft       WizardDraft?         @relation(fields: [wizardDraftId], references: [id], onDelete: SetNull)
   wizardDraftDesign WizardDraftDesign?   @relation(fields: [wizardDraftDesignId], references: [id], onDelete: SetNull)
+  wizardDraftDesignPair WizardDraftDesignPair? @relation(fields: [wizardDraftDesignPairId], references: [id], onDelete: SetNull)
   variants          ListingVariant[]
   publishJobs       PublishJob[]
 

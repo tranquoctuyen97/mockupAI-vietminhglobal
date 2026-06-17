@@ -42,6 +42,8 @@ interface Checklist {
   contentComplete: boolean;
   placementValid: boolean;
   mockupsNotStale: boolean;
+  pairingComplete?: boolean;
+  colorGroupsBalanced?: boolean;
   readyToPublish: boolean;
 }
 
@@ -392,7 +394,7 @@ export default function Step5ReviewPage() {
 
   const selectedTemplateBlueprint = draft?.template?.blueprintTitle ?? draft?.store?.template?.blueprintTitle ?? draft?.productType;
   const selectedSizesCount = draft?.enabledSizes?.length ?? 0;
-  const summaryListingsCount = selectedDraftDesigns.length;
+  const summaryListingsCount = (draft?.designPairs as any[] ?? []).length > 0 ? (draft?.designPairs as any[]).length : selectedDraftDesigns.length;
   const selectedMockupColorCount = colors.filter((color) =>
     activeMockups.some((image) => normalizeColorName(image.colorName) === normalizeColorName(color.name)),
   ).length;
@@ -632,7 +634,12 @@ export default function Step5ReviewPage() {
     : activeDesignStatus === "running" || activeDesignStatus === "pending"
       ? "Đang render mockup..."
       : "Chưa có mockup";
-  const overallSummaryLabel = `${selectedDraftDesigns.length} designs × ${colors.length} colors = ${selectedDraftDesigns.length} listings`;
+  const designPairs = (draft?.designPairs ?? []) as Array<{ id: string; baseName: string; lightDesign?: any; darkDesign?: any; aiContent?: any }>;
+  const hasPairs = designPairs.length > 0;
+  const listingsCount = hasPairs ? designPairs.length : selectedDraftDesigns.length;
+  const overallSummaryLabel = hasPairs
+    ? `${designPairs.length} cặp sáng/tối × ${colors.length} colors = ${designPairs.length} listings`
+    : `${selectedDraftDesigns.length} designs × ${colors.length} colors = ${selectedDraftDesigns.length} listings`;
 
   return (
     <div>
@@ -665,6 +672,22 @@ export default function Step5ReviewPage() {
             <span style={{ fontWeight: 600 }}>Kiểm tra trước khi Publish</span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {hasPairs && localChecklist.pairingComplete !== undefined && (
+              <ChecklistItem
+                ok={localChecklist.pairingComplete}
+                label="Tất cả design đã ghép cặp sáng/tối"
+                linkLabel="Fix ở Designs"
+                linkHref={`/wizard/${draftId}/step-2`}
+              />
+            )}
+            {hasPairs && localChecklist.colorGroupsBalanced !== undefined && (
+              <ChecklistItem
+                ok={localChecklist.colorGroupsBalanced}
+                label="Có ít nhất 1 màu sáng và 1 màu tối"
+                linkLabel="Fix ở Mockups"
+                linkHref={`/wizard/${draftId}/step-3`}
+              />
+            )}
             <ChecklistItem
               ok={localChecklist.mockupsMatchColors}
               label={`Mockup khớp số màu của design đang chọn (${selectedMockupColorCount}/${colors.length})`}
@@ -673,7 +696,7 @@ export default function Step5ReviewPage() {
             />
             <ChecklistItem
               ok={localChecklist.contentComplete}
-              label="Nội dung đầy đủ (title)"
+              label={hasPairs ? `Nội dung đầy đủ cho ${designPairs.length} cặp` : "Nội dung đầy đủ (title)"}
               linkLabel="Fix ở Content"
               linkHref={`/wizard/${draftId}/step-4`}
             />

@@ -125,6 +125,7 @@ export async function GET(
           cacheHexMap.get(entry.color.name) ||
           enrichColorHex(entry.color.name, entry.color.hex),
         enabled: entry.color.enabled,
+        colorGroup: entry.color.colorGroup,
         sortOrder: entry.sortOrder,
         customMockupCount: customSourceCountByColorId.get(entry.color.id) ?? 0,
         hasCustomMockup:
@@ -139,6 +140,7 @@ export async function GET(
     name: c.name,
     hex: enrichColorHex(c.name, c.hex),
     enabled: c.enabled,
+    colorGroup: c.colorGroup,
     sortOrder: c.sortOrder,
   }));
 

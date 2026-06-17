@@ -94,7 +94,7 @@ test("getDraft and updateDraft include ordered draftDesigns with design and job 
     source.match(/draftDesigns:\s*draftDesignsWithRelationsInclude/g)?.length,
     2,
   );
-  assert.match(source, /findUniqueOrThrow\(\{[\s\S]*include:\s*{\s*draftDesigns:\s*draftDesignsWithRelationsInclude/);
+  assert.match(source, /findUniqueOrThrow\(\{[\s\S]*draftDesigns:\s*draftDesignsWithRelationsInclude/);
 });
 
 test("updateDraft normalizes legacy designId patches before validation and child sync", () => {
@@ -107,6 +107,32 @@ test("updateDraft normalizes legacy designId patches before validation and child
   assert.match(source, /sanitizedDesignId\s*!==\s*undefined[\s\S]*normalizeDesignIds\(sanitizedDesignId\s*===\s*null\s*\?\s*\[\]\s*:\s*\[sanitizedDesignId\]\)/);
   assert.match(source, /id:\s*{\s*in:\s*nextDesignIds\s*}[\s\S]*tenantId[\s\S]*status:\s*"ACTIVE"[\s\S]*deletedAt:\s*null/);
   assert.match(source, /if \(nextDesignIds !== undefined\)[\s\S]*wizardDraftDesign\.deleteMany[\s\S]*wizardDraftDesign\.upsert/);
+});
+
+test("updateDraft validates selected designs inside transaction and by draft store", () => {
+  const source = readFileSync(
+    join(process.cwd(), "src/lib/wizard/state.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /return prisma\.\$transaction\(async \(tx\) => \{[\s\S]*tx\.design\.findMany/);
+  assert.doesNotMatch(source, /await prisma\.design\.findMany/);
+  assert.match(source, /storeId:\s*draft\.storeId/);
+  assert.match(source, /Select a store before selecting designs/);
+});
+
+test("updateDraft rebuilds design pairs without wiping unchanged aiContent", () => {
+  const source = readFileSync(
+    join(process.cwd(), "src/lib/wizard/state.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /const existingByStableKey = new Map/);
+  assert.match(source, /existingPairs\.map\(\(pair\) => \[stablePairKey\(pair\), pair\]\)/);
+  assert.match(source, /wizardDraftDesignPair\.update\({[\s\S]*data:\s*{\s*sortOrder:\s*pairRow\.sortOrder\s*}/);
+  assert.match(source, /pairRowsToCreate/);
+  assert.match(source, /wizardDraftDesignPair\.deleteMany[\s\S]*wizardDraftDesignPair\.create/);
+  assert.doesNotMatch(source, /assertPairingIsPublishable/);
 });
 
 test("updateDraft marks mockups stale when template changes", () => {

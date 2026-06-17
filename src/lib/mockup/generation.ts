@@ -1,6 +1,11 @@
 import type { Prisma } from "@prisma/client";
 import { isMockupFallbackForcedForDev } from "@/lib/config/runtime-controls";
 import { prisma } from "@/lib/db";
+import {
+  assertColorFilterHasColors,
+  resolveColorFilterForDraftDesign,
+  type PairColorFilterResult,
+} from "@/lib/mockup/pair-color-filter";
 import { resolveCustomMockupSourceSelection } from "@/lib/mockup/custom-source-selection";
 import { resolveEffectiveCompositeRegion } from "@/lib/mockup/custom-library";
 import { resolveEffectivePlacementData } from "@/lib/mockup/plan";
@@ -54,7 +59,7 @@ export type PreparedMockupGeneration = {
   enabledVariantIds: number[];
   placementSnapshot: Prisma.InputJsonValue;
   effectivePlacementData: NonNullable<ReturnType<typeof resolveEffectivePlacementData>>;
-  client: Awaited<ReturnType<typeof import("@/lib/printify/account").getClientForStore>>["client"];
+  client: Awaited<ReturnType<typeof getClientForStore>>["client"];
   externalShopId: number;
   /** True when template.defaultMockupSource === "CUSTOM" — skips Printify upload/product/poll */
   isCustom: boolean;
@@ -76,6 +81,13 @@ export async function loadMockupGenerationContext(draftId: string, tenantId: str
           },
         },
         include: { design: true },
+      },
+      designPairs: {
+        orderBy: { sortOrder: "asc" },
+        select: {
+          lightDraftDesignId: true,
+          darkDraftDesignId: true,
+        },
       },
       template: {
         include: {
@@ -266,6 +278,14 @@ export async function createMockupJobForDraftDesign(
   draftDesign: ReturnType<typeof resolvePrimaryDraftDesign>,
 ): Promise<BatchMockupJobResult> {
   const { draft } = context;
+  const colorFilter = getColorFilterForDraftDesign(context, draftDesign.id);
+  const variantIds = resolveVariantIdsForColorFilter({
+    enabledVariantIds: prepared.enabledVariantIds,
+    variantColorLookup: prepared.variantColorLookup,
+    storeColors: draft.store?.colors ?? [],
+    colorFilter,
+  });
+
   const imageId = await ensurePrintifyImage({
     client: prepared.client,
     designStoragePath: draftDesign.design.storagePath,
@@ -278,7 +298,7 @@ export async function createMockupJobForDraftDesign(
     productId: draftDesign.printifyDraftProductId,
     blueprintId: prepared.template.printifyBlueprintId,
     printProviderId: prepared.template.printifyPrintProviderId,
-    variantIds: prepared.enabledVariantIds,
+    variantIds,
     imageId,
     placementData: prepared.effectivePlacementData,
     title: `[DRAFT] ${draftDesign.design.originalFilename ?? draftDesign.design.id}`,
@@ -313,6 +333,8 @@ export async function createMockupJobForDraftDesign(
       status: "running",
       totalImages: 0,
       placementSnapshot: prepared.placementSnapshot,
+      colorFilterIds: colorFilter.colorIds as Prisma.InputJsonValue,
+      colorGroup: colorFilter.colorGroup,
     },
   });
 
@@ -323,6 +345,8 @@ export async function createMockupJobForDraftDesign(
     designId: draftDesign.designId,
     storeId: draft.storeId!,
     productId: product.productId,
+    colorFilterIds: colorFilter.colorIds,
+    colorGroup: colorFilter.colorGroup,
   });
 
   return {
@@ -348,12 +372,13 @@ export async function createCustomMockupJobForDraftDesign(
 ): Promise<BatchMockupJobResult> {
   const { draft } = context;
   const template = prepared.template;
+  const colorFilter = getColorFilterForDraftDesign(context, draftDesign.id);
 
   // Reuse variant-color lookup from prepare step (avoids duplicate Printify API call)
   const variantColorLookup = prepared.variantColorLookup;
 
   // Resolve custom sources for selected colors
-  const enabledColorSet = new Set(draft.enabledColorIds);
+  const enabledColorSet = new Set(colorFilter.colorIds);
   const storeColors = draft.store?.colors ?? [];
   const colorsById = new Map(
     storeColors.filter((c) => enabledColorSet.has(c.id)).map((c) => [c.id, { name: c.name }]),
@@ -476,6 +501,8 @@ export async function createCustomMockupJobForDraftDesign(
       completedImages: completedCount,
       failedImages: 0,
       placementSnapshot: prepared.placementSnapshot,
+      colorFilterIds: colorFilter.colorIds as Prisma.InputJsonValue,
+      colorGroup: colorFilter.colorGroup,
     },
   });
 
@@ -534,6 +561,59 @@ export async function createCustomMockupJobForDraftDesign(
     designName: draftDesign.design.name,
     status: hasPending ? "running" : "completed",
   };
+}
+
+function getColorFilterForDraftDesign(
+  context: MockupGenerationContext,
+  draftDesignId: string | null,
+): PairColorFilterResult {
+  const { draft } = context;
+  const filter = resolveColorFilterForDraftDesign({
+    draftDesignId,
+    selectedColorIds: draft.enabledColorIds,
+    storeColors: draft.store?.colors ?? [],
+    pairs: draft.designPairs ?? [],
+  });
+
+  assertColorFilterHasColors(filter);
+  return filter;
+}
+
+function resolveVariantIdsForColorFilter(input: {
+  enabledVariantIds: number[];
+  variantColorLookup: Map<number, { colorName: string }>;
+  storeColors: Array<{ id: string; name: string }>;
+  colorFilter: PairColorFilterResult;
+}): number[] {
+  if (!input.colorFilter.colorGroup) return input.enabledVariantIds;
+
+  const colorNames = new Set(
+    input.storeColors
+      .filter((color) => input.colorFilter.colorIds.includes(color.id))
+      .map((color) => normalizeColorName(color.name)),
+  );
+  const variantIds = input.enabledVariantIds.filter((variantId) => {
+    const variantColor = input.variantColorLookup.get(variantId);
+    return variantColor && colorNames.has(normalizeColorName(variantColor.colorName));
+  });
+
+  if (variantIds.length === 0) {
+    throw new MockupGenerationError(
+      `No enabled variants for ${input.colorFilter.colorGroup} colors`,
+      400,
+      "NO_VARIANTS_FOR_COLOR_GROUP",
+    );
+  }
+
+  return variantIds;
+}
+
+function normalizeColorName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 async function validateCustomMockupCoverage(

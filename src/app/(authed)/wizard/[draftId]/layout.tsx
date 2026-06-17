@@ -183,8 +183,18 @@ export default function WizardLayout({
           <button
             className="btn btn-primary"
             onClick={async () => {
-              if (currentStep === 2 && getDraftDesignIdsFromDraft(useWizardStore.getState().draft).length === 0) {
-                return;
+              if (currentStep === 2) {
+                const store = useWizardStore.getState();
+                const selectedDesignCount = getDraftDesignIdsFromDraft(store.draft).length;
+                if (selectedDesignCount === 0) return;
+
+                await store.saveDraftImmediately();
+
+                const freshDraft = useWizardStore.getState().draft;
+                const pairCount = freshDraft?.designPairs?.length ?? 0;
+                if (pairCount === 0 || selectedDesignCount !== pairCount * 2) {
+                  return;
+                }
               }
               if (draft) {
                 const store = useWizardStore.getState();

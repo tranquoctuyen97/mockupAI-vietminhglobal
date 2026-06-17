@@ -171,7 +171,7 @@ NGINX_CONFIG="server {
     listen 80;
     server_name ${DOMAIN};
 
-    client_max_body_size 50M;
+    client_max_body_size 500M;
 
     # Static uploads — bypass Node.js
     location /api/files/ {
