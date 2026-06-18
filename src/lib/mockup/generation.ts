@@ -1,13 +1,13 @@
 import type { Prisma } from "@prisma/client";
 import { isMockupFallbackForcedForDev } from "@/lib/config/runtime-controls";
 import { prisma } from "@/lib/db";
+import { resolveEffectiveCompositeRegion } from "@/lib/mockup/custom-library";
+import { resolveCustomMockupSourceSelection } from "@/lib/mockup/custom-source-selection";
 import {
   assertColorFilterHasColors,
-  resolveColorFilterForDraftDesign,
   type PairColorFilterResult,
+  resolveColorFilterForDraftDesign,
 } from "@/lib/mockup/pair-color-filter";
-import { resolveCustomMockupSourceSelection } from "@/lib/mockup/custom-source-selection";
-import { resolveEffectiveCompositeRegion } from "@/lib/mockup/custom-library";
 import { resolveEffectivePlacementData } from "@/lib/mockup/plan";
 import {
   buildCustomMockupImageRows,
@@ -708,9 +708,7 @@ async function validateCustomMockupCoverage(
   // For TEMPLATE scope sources, the placement may live on WizardDraftMockupLibraryPick
   // rather than on CustomMockupSource — merge via resolveEffectiveCompositeRegion.
   const pickRegionBySourceId = new Map(
-    picks
-      .filter((p) => p.compositeRegionPx != null)
-      .map((p) => [p.sourceId, p.compositeRegionPx]),
+    picks.filter((p) => p.compositeRegionPx != null).map((p) => [p.sourceId, p.compositeRegionPx]),
   );
   const templateSourceIds = new Set(templateSources.map((s) => s.id));
   const colorIds = [...new Set(resolvedSelection.selectedSources.map((s) => s.colorId))];

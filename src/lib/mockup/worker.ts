@@ -2,26 +2,26 @@ import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { type Job, Worker } from "bullmq";
 import sharp from "sharp";
+import { redisConnection } from "@/lib/queue/queue";
 import { prisma } from "../db";
 import { DEFAULT_PLACEMENT, type Placement } from "../placement/types";
+import { sseChannels } from "../sse/channel";
 import { getStorage } from "../storage/local-disk";
 import {
   type CustomCompositeRegion,
   compositeImage,
   compositeImageOnCustomMockup,
 } from "./composite";
+import { resolveEffectiveCompositeRegion } from "./custom-library";
 import {
-  computeListingReadyRegion,
   computeCustomPrintAreaPx,
+  computeListingReadyRegion,
   isBadCompositeRegion,
 } from "./placement-region";
 import { isFinalBullMqAttempt, shouldSkipMockupImageProcessing } from "./progress";
 import { MOCKUP_QUEUE_NAME, type MockupJobPayload } from "./queue";
 import { resolveMockupSourceBuffer } from "./source";
 import { parseMockupSourceUrl } from "./source-url";
-import { resolveEffectiveCompositeRegion } from "./custom-library";
-import { sseChannels } from "../sse/channel";
-import { redisConnection } from "@/lib/queue/queue";
 
 const concurrency = parseInt(process.env.MOCKUP_WORKER_CONCURRENCY || "5", 10);
 
@@ -57,7 +57,10 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
         const storage = getStorage();
         const parsed = parseMockupSourceUrl(sourceUrl);
 
-        if (parsed.kind === "custom" && (parsed.renderMode === "COMPOSITE" || parsed.renderMode === "FINAL")) {
+        if (
+          parsed.kind === "custom" &&
+          (parsed.renderMode === "COMPOSITE" || parsed.renderMode === "FINAL")
+        ) {
           const source = await prisma.customMockupSource.findUniqueOrThrow({
             where: { id: parsed.sourceId },
             select: {
@@ -101,7 +104,9 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
 
           // Extract print area mm for this view
           const printAreasByView = source.template?.printAreasByView as
-            Record<string, { widthMm: number; heightMm: number }> | null | undefined;
+            | Record<string, { widthMm: number; heightMm: number }>
+            | null
+            | undefined;
           const viewPrintArea = printAreasByView?.[source.view];
           const printAreaMm = viewPrintArea
             ? { widthMm: viewPrintArea.widthMm, heightMm: viewPrintArea.heightMm }
@@ -158,7 +163,9 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
           // Write to MockupImage.compositeUrl only — no write to CustomMockupSource.outputPath
           await markImageCompleted(mockupImageId, outputKey);
 
-          console.log(`[MockupWorker] Successfully processed custom composite image ${mockupImageId}`);
+          console.log(
+            `[MockupWorker] Successfully processed custom composite image ${mockupImageId}`,
+          );
           return { success: true, relativePath: outputKey };
         }
 
@@ -365,7 +372,12 @@ async function refreshMockupJobStatus(mockupJobId: string): Promise<void> {
         totalImages: job.totalImages,
         completedImages: job.completedImages,
         failedImages: job.failedImages,
-        status: finishedImages >= job.totalImages ? (job.failedImages > 0 ? "failed" : "completed") : "running",
+        status:
+          finishedImages >= job.totalImages
+            ? job.failedImages > 0
+              ? "failed"
+              : "completed"
+            : "running",
         source: "composite",
       },
     });
