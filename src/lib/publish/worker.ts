@@ -20,6 +20,10 @@ import {
 import { parseMockupSourceUrl } from "@/lib/mockup/source-url";
 import { buildListingReadyPlacementData } from "@/lib/placement/auto-place";
 import { DEFAULT_PLACEMENT, DEFAULT_PRINT_AREA, type PlacementData } from "@/lib/placement/types";
+import {
+  mergeDraftAndTemplatePriceMaps,
+  resolveBaseTemplatePrice,
+} from "@/lib/pricing/template-pricing";
 import { getClientForStore } from "@/lib/printify/account";
 import { PrintifyApiError, PrintifyNotFoundError } from "@/lib/printify/client";
 import { createOrUpdatePrintifyProduct, ensurePrintifyImage } from "@/lib/printify/product";
@@ -590,11 +594,11 @@ export async function runPrintifyStage(
       const productType = template?.blueprintTitle ?? draft.productType;
 
       if (blueprintId && printProviderId && productType && externalShopId) {
-        // 1. Fetch pricing template
-        const pricing = await prisma.productPricingTemplate.findFirst({
-          where: { productType },
+        // 1. Resolve template pricing defaults
+        const baseRetailPriceUSD = resolveBaseTemplatePrice({
+          templateBasePriceUsd: template?.basePriceUsd,
+          storeDefaultPriceUsd: (draft.store as any)?.defaultPriceUsd,
         });
-        const baseRetailPriceUSD = pricing?.basePriceUsd ?? 24.99;
 
         // 2. Fetch cache
         const { client: printifyClient } = await getClientForStore(store.id);
@@ -622,7 +626,10 @@ export async function runPrintifyStage(
         );
 
         // 5. Build payload with computed variant IDs determining enabled state
-        const priceBySizeOverride = draft.priceBySizeOverride as Record<string, number> | null;
+        const priceBySizeOverride = mergeDraftAndTemplatePriceMaps({
+          draftPriceBySizeOverride: draft.priceBySizeOverride,
+          templatePriceBySizeDefault: template?.priceBySizeDefault,
+        });
 
         printifyVariantsPayload = buildVariantPayload(
           cachedVariants,
@@ -1108,8 +1115,10 @@ async function resolveShopifyVariantPlan(
   const { client: printifyClient, externalShopId } = await getClientForStore(storeId);
   if (!externalShopId) return null;
 
-  const pricing = await prisma.productPricingTemplate.findFirst({ where: { productType } });
-  const baseRetailPriceUSD = pricing?.basePriceUsd ?? 24.99;
+  const baseRetailPriceUSD = resolveBaseTemplatePrice({
+    templateBasePriceUsd: template?.basePriceUsd,
+    storeDefaultPriceUsd: (draft.store as { defaultPriceUsd?: unknown } | null)?.defaultPriceUsd,
+  });
 
   const cachedVariants = await ensureVariantCostCache({
     client: printifyClient,
@@ -1135,7 +1144,10 @@ async function resolveShopifyVariantPlan(
   );
   if (effectiveVariantIds.length === 0) return null;
 
-  const priceBySizeOverride = draft.priceBySizeOverride as Record<string, number> | null;
+  const priceBySizeOverride = mergeDraftAndTemplatePriceMaps({
+    draftPriceBySizeOverride: draft.priceBySizeOverride,
+    templatePriceBySizeDefault: template?.priceBySizeDefault,
+  });
   const variantPayload = buildVariantPayload(
     cachedVariants,
     selectedColorNames,

@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { formatDescriptionHtml } from "@/lib/content/description-html";
 import { prisma } from "@/lib/db";
+import { normalizeMoneyValue, resolveBaseTemplatePrice } from "@/lib/pricing/template-pricing";
 import { generateIdempotencyKey, runPublishWorker } from "@/lib/publish/worker";
 import { normalizeOrganizationCollections } from "@/lib/wizard/product-organization";
 
@@ -130,19 +131,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "AI content not generated" }, { status: 400 });
   }
 
-  const productType = template?.blueprintTitle || draft.store?.name || "T-Shirt";
-  const pricingTemplate = await prisma.productPricingTemplate.findFirst({
-    where: { tenantId: session.tenantId, productType },
-  });
-  const requestedPrice =
-    typeof body.priceUsd === "number"
-      ? body.priceUsd
-      : typeof body.priceUsd === "string" && body.priceUsd.trim()
-        ? Number(body.priceUsd)
-        : null;
-  const priceUsd = Number.isFinite(requestedPrice as number)
-    ? (requestedPrice as number)
-    : pricingTemplate?.basePriceUsd || draft.store?.defaultPriceUsd?.toNumber() || 24.99;
+  const priceUsd =
+    normalizeMoneyValue(body.priceUsd) ??
+    resolveBaseTemplatePrice({
+      templateBasePriceUsd: template?.basePriceUsd,
+      storeDefaultPriceUsd: draft.store?.defaultPriceUsd,
+    });
 
   const colors =
     draft.store?.colors

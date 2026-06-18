@@ -12,6 +12,12 @@ import {
 import { isRealPrintifyMockupMedia } from "@/lib/mockup/real-printify-media";
 import { viewLabel } from "@/lib/placement/views";
 import {
+  mergeDraftAndTemplatePriceMaps,
+  normalizePriceBySizeDefault,
+  resolveBaseTemplatePrice,
+  resolvePriceForSize,
+} from "@/lib/pricing/template-pricing";
+import {
   AlertTriangle,
   CheckCircle2,
   ClipboardCheck,
@@ -269,36 +275,28 @@ export default function Step5ReviewPage() {
   }, []);
 
   // Stable scalar deps to avoid cascade re-fetches when draft object reference changes.
-  // Previously depended on [draft, draftId] → triggered 3× pricing + 3× sizes calls.
   const stableStoreId = draft?.storeId ?? null;
   const stableTemplateId = draft?.templateId ?? null;
-  const stableProductType = draft?.template?.blueprintTitle ?? draft?.store?.template?.blueprintTitle ?? (draft as any)?.productType ?? null;
+  const templatePricingSource =
+    draft?.template ??
+    draft?.store?.template ??
+    draft?.store?.templates?.find((template) => template.isDefault) ??
+    null;
+  const templateBasePriceUsd = templatePricingSource?.basePriceUsd ?? null;
+  const templatePriceBySizeDefault = templatePricingSource?.priceBySizeDefault ?? null;
+  const storeDefaultPriceUsd = draft?.store?.defaultPriceUsd ?? null;
 
-  // Try to use bundled data from ?expand=pricing,sizes (set by layout for step-5)
-  const { expandedPricing, expandedSizes } = useWizardStore();
+  // Try to use bundled data from ?expand=sizes (set by layout for step-5)
+  const { expandedSizes } = useWizardStore();
 
   useEffect(() => {
     if (!stableStoreId || !draftId || loading) return;
 
-    // If pricing was bundled by layout, use it directly — no API call needed
-    if (expandedPricing?.basePriceUsd) {
-      setPrice(expandedPricing.basePriceUsd.toFixed(2));
-    } else if (stableProductType) {
-      // Fallback: fetch pricing separately (e.g. navigated directly to step-5)
-      const controller = new AbortController();
-      fetch("/api/admin/pricing-templates", { signal: controller.signal })
-        .then((r) => r.json())
-        .then((data) => {
-          if (controller.signal.aborted) return;
-          if (data.templates) {
-            const match = data.templates.find((c: any) => c.productType === stableProductType);
-            if (match) setPrice(match.basePriceUsd.toFixed(2));
-          }
-        })
-        .catch(() => {});
-      return () => controller.abort();
-    }
-  }, [draftId, stableStoreId, stableProductType, expandedPricing, loading]);
+    setPrice(resolveBaseTemplatePrice({
+      templateBasePriceUsd,
+      storeDefaultPriceUsd,
+    }).toFixed(2));
+  }, [draftId, stableStoreId, templateBasePriceUsd, storeDefaultPriceUsd, loading]);
 
   useEffect(() => {
     if (!stableStoreId || !draftId || loading) return;
@@ -324,8 +322,20 @@ export default function Step5ReviewPage() {
 
   // Initialize per-size price override from draft (only when draft is loaded)
   const stablePriceBySizeOverride = draft?.priceBySizeOverride as Record<string, number> | null;
+  const effectivePriceBySizeDefault = useMemo(
+    () => mergeDraftAndTemplatePriceMaps({
+      draftPriceBySizeOverride: stablePriceBySizeOverride,
+      templatePriceBySizeDefault,
+    }),
+    [stablePriceBySizeOverride, templatePriceBySizeDefault],
+  );
   useEffect(() => {
-    if (!stablePriceBySizeOverride || Object.keys(stablePriceBySizeOverride).length === 0) return;
+    if (!stablePriceBySizeOverride || Object.keys(stablePriceBySizeOverride).length === 0) {
+      setPriceBySizeOverride({});
+      setSavedPriceOverride(null);
+      setPriceOverrideDirty(false);
+      return;
+    }
     const asStrings: Record<string, string> = {};
     for (const [k, v] of Object.entries(stablePriceBySizeOverride)) {
       asStrings[k] = v.toFixed(2);
@@ -1044,10 +1054,24 @@ export default function Step5ReviewPage() {
                         <tbody>
                           {enabledSizeList.map((size, index) => {
                             const baseVal = parseFloat(price) || 0;
-                            const autoRetail = baseVal + size.costDeltaCents / 100;
                             const overrideVal = priceBySizeOverride[size.size];
-                            const displayVal = overrideVal ?? autoRetail.toFixed(2);
+                            const templateDefaultVal = effectivePriceBySizeDefault?.[size.size] ?? null;
+                            const effectiveRetail = resolvePriceForSize({
+                              size: size.size,
+                              draftPriceBySizeOverride: normalizePriceBySizeDefault(
+                                Object.fromEntries(
+                                  Object.entries(priceBySizeOverride)
+                                    .filter(([, value]) => value.trim() !== "")
+                                    .map(([key, value]) => [key, Number(value)]),
+                                ),
+                              ),
+                              templatePriceBySizeDefault,
+                              templateBasePriceUsd: baseVal,
+                              storeDefaultPriceUsd,
+                            });
+                            const displayVal = overrideVal ?? templateDefaultVal?.toFixed(2) ?? effectiveRetail.toFixed(2);
                             const isOverridden = overrideVal != null;
+                            const isTemplateDefault = !isOverridden && templateDefaultVal != null;
                             return (
                               <tr key={size.size} style={{ borderBottom: index === enabledSizeList.length - 1 ? "none" : "1px solid var(--border-default)" }}>
                                 <td style={{ padding: "8px 12px", fontWeight: 500 }}>{size.size}</td>
@@ -1070,7 +1094,7 @@ export default function Step5ReviewPage() {
                                         maxWidth: 80,
                                         padding: "4px 6px",
                                         fontSize: "0.8rem",
-                                        fontWeight: isOverridden ? 700 : 400,
+                                        fontWeight: isOverridden || isTemplateDefault ? 700 : 400,
                                         borderColor: isOverridden ? "var(--color-accent)" : undefined,
                                       }}
                                     />

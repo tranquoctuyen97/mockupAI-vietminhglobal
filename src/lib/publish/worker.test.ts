@@ -19,6 +19,13 @@ describe("runPublishWorker organization collections source", () => {
   it("passes Listing organizationCollections to Shopify publish", () => {
     assert.match(source, /organizationCollections:\s*listing\.organizationCollections\s*\?\?\s*\[\]/);
   });
+
+  it("uses template pricing defaults for Printify and Shopify variant plans", () => {
+    assert.match(source, /resolveBaseTemplatePrice/);
+    assert.match(source, /mergeDraftAndTemplatePriceMaps/);
+    assert.match(source, /templatePriceBySizeDefault:\s*template\?\.priceBySizeDefault/);
+    assert.doesNotMatch(source, /productPricingTemplate\.findFirst/);
+  });
 });
 
 describe("normalizeExternalTags", () => {
