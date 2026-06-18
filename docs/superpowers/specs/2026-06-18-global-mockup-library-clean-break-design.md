@@ -48,13 +48,17 @@ Fields:
 - `sceneType`
 - `renderMode`, default `COMPOSITE`
 - `compositeRegionPx`
+- `uploadedById`
+- `mimeType`
+- `fileSizeBytes`
 - `createdAt`
 - `updatedAt`
+- `isActive` and `deletedAt` only if the implementation follows the repo's soft-delete pattern for this model
 
 Rules:
 
 - `renderMode` supports `COMPOSITE` only in this phase.
-- API validation accepts only `COMPOSITE`.
+- Prefer a Prisma enum with the single allowed runtime value `COMPOSITE`. If a string field is used instead, every API and service write path must strictly validate `COMPOSITE` only.
 - `compositeRegionPx` may be nullable during upload/edit, but publish-ready mockups require a valid region.
 - `POST /api/mockups` auto-generates a Smart Fit `compositeRegionPx` when the caller does not provide one, so uploaded mockups are immediately usable.
 - If a library item frame is edited later, the new frame is live for future renders unless a draft pick has its own override.
@@ -83,6 +87,7 @@ Rules:
 - At most one `TemplateMockupItem` per template can have `isPrimary = true`.
 - Template mockup attach APIs only work for CUSTOM templates.
 - `TemplateMockupItem` deletion is restricted if referenced by a draft pick.
+- Relations from downstream rows to template attachments use explicit `onDelete: Restrict`.
 
 ### `WizardDraftMockupLibraryPick`
 
@@ -108,6 +113,7 @@ Rules:
 - Unique key: `[draftId, templateMockupItemId, colorId]`.
 - Snapshot fields are `colorId`, `sortOrder`, and `isPrimary`.
 - `compositeRegionPx` is only a per-draft override when the user edits the frame in the wizard.
+- The relation to `TemplateMockupItem` uses explicit `onDelete: Restrict`.
 
 ## Effective Region Priority
 
@@ -325,6 +331,8 @@ Automated checks:
 - tests for delete restrict
 - tests for duplicate attach `409`
 - tests for `appliesToColorIds` validation
+- source guard that the Store Template Editor does not import/render `CompositeRegionEditor` or write `compositeRegionPx` for template mockups
+- source guard that global frame edits happen only in `/mockups` page/API paths
 - wizard matching tests:
   - exact color match replaces generic
   - generic fallback works
