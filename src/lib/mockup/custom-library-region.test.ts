@@ -80,6 +80,66 @@ test("resolveEffectiveCompositeRegion uses pick before source before template de
   );
 });
 
+test("resolveEffectiveCompositeRegion uses source before pick before template default for draft sources", () => {
+  const templateDefault = {
+    x: 10,
+    y: 10,
+    width: 100,
+    height: 100,
+    rotationDeg: 0,
+    imageWidth: 1000,
+    imageHeight: 1000,
+  };
+  const sourceRegion = {
+    x: 20,
+    y: 20,
+    width: 110,
+    height: 110,
+    rotationDeg: 0,
+    imageWidth: 1000,
+    imageHeight: 1000,
+  };
+  const pickRegion = {
+    x: 30,
+    y: 30,
+    width: 120,
+    height: 120,
+    rotationDeg: 0,
+    imageWidth: 1000,
+    imageHeight: 1000,
+  };
+
+  assert.deepEqual(
+    resolveEffectiveCompositeRegion({
+      scope: "DRAFT",
+      sourceRegion,
+      pickRegion,
+      templateDefaultRegion: templateDefault,
+    }),
+    sourceRegion,
+  );
+
+  assert.deepEqual(
+    resolveEffectiveCompositeRegion({
+      scope: "DRAFT",
+      sourceRegion: null,
+      pickRegion,
+      templateDefaultRegion: templateDefault,
+    }),
+    pickRegion,
+  );
+
+  assert.deepEqual(
+    resolveEffectiveCompositeRegion({
+      scope: "DRAFT",
+      sourceRegion: null,
+      pickRegion: null,
+      templateDefaultRegion: templateDefault,
+    }),
+    templateDefault,
+  );
+});
+
 test("scaleCompositeRegionToImage scales runtime region without mutating saved default", () => {
   const saved = {
     x: 100,
