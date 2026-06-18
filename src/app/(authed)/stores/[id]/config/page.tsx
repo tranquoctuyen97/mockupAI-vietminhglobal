@@ -28,6 +28,8 @@ import {
   Eye,
 } from "lucide-react";
 import Link from "next/link";
+import { CompositeRegionEditor } from "@/components/mockup/CompositeRegionEditor";
+import type { CompositeRegion } from "@/components/mockup/CompositeRegionEditor";
 import { MultiViewPlacementEditor } from "@/components/placement/MultiViewPlacementEditor";
 import type { PlacementData, ViewKey } from "@/lib/placement/types";
 import {
@@ -57,6 +59,9 @@ interface TemplateDetail {
   isDefault: boolean;
   sortOrder: number;
   defaultMockupSource: "PRINTIFY" | "CUSTOM";
+  basePriceUsd: number | null;
+  priceBySizeDefault: Record<string, number> | null;
+  defaultCompositeRegionPx: TemplateCompositeRegion | null;
   blueprintImageUrl?: string | null;
   blueprintBrand?: string | null;
   colors: Array<{
@@ -70,6 +75,11 @@ interface TemplateDetail {
     };
   }>;
 }
+
+type TemplateCompositeRegion = CompositeRegion & {
+  imageWidth: number;
+  imageHeight: number;
+};
 
 interface StoreDetail {
   id: string;
@@ -103,6 +113,36 @@ interface SizeOption {
   isAvailable: boolean;
   costCents: number;
   costDeltaCents: number;
+}
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  border: "1px solid var(--border-default)",
+  borderRadius: 8,
+  padding: "9px 10px",
+  fontSize: "0.84rem",
+  background: "var(--bg-primary)",
+  color: "var(--text-primary)",
+};
+
+const pricingThStyle: React.CSSProperties = {
+  padding: "10px 12px",
+  fontSize: "0.72rem",
+  fontWeight: 900,
+  color: "var(--text-muted)",
+  textTransform: "uppercase",
+};
+
+const pricingTdStyle: React.CSSProperties = {
+  padding: "10px 12px",
+  verticalAlign: "middle",
+};
+
+function parseOptionalMoney(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.round(parsed * 100) / 100;
 }
 
 type Tab = "printify" | "templates" | "overview";
@@ -601,6 +641,9 @@ function createEmptyTemplate(sortOrder: number, isDefault = false, name = ""): T
     isDefault,
     sortOrder,
     defaultMockupSource: "PRINTIFY",
+    basePriceUsd: null,
+    priceBySizeDefault: null,
+    defaultCompositeRegionPx: null,
     colors: [],
   };
 }
@@ -622,7 +665,7 @@ function TemplatesSection({
   const [editingTemplate, setEditingTemplate] = useState<TemplateDetail | null>(null);
   const [originalTemplate, setOriginalTemplate] = useState<TemplateDetail | null>(null);
   const [tempTemplateData, setTempTemplateData] = useState<TemplateDetail | null>(null);
-  type EditorStep = "blueprint" | "variants" | "placement" | "mockups";
+  type EditorStep = "blueprint" | "variants" | "placement" | "mockups" | "pricing";
   const [editorStep, setEditorStep] = useState<EditorStep>("blueprint");
   
   const [pendingMockups, setPendingMockups] = useState<Map<string, { file: File; previewUrl: string }>>(new Map());
@@ -663,9 +706,12 @@ function TemplatesSection({
     };
   }, []);
 
-  // Redirect away from mockups step if it is no longer valid
+  // Redirect away from mockups/placement steps if they are no longer valid
   useEffect(() => {
     if (editorStep === "mockups" && !showMockupStep) {
+      setEditorStep("blueprint");
+    }
+    if (editorStep === "placement" && showMockupStep) {
       setEditorStep("blueprint");
     }
   }, [showMockupStep, editorStep]);
@@ -916,6 +962,9 @@ function TemplatesSection({
         defaultAspectRatio: tempTemplateData.defaultAspectRatio,
         storePresetSnapshot: tempTemplateData.storePresetSnapshot,
         defaultMockupSource: tempTemplateData.defaultMockupSource,
+        basePriceUsd: tempTemplateData.basePriceUsd,
+        priceBySizeDefault: tempTemplateData.priceBySizeDefault,
+        defaultCompositeRegionPx: tempTemplateData.defaultCompositeRegionPx,
       };
 
       const res = await fetch(url, {
@@ -1402,8 +1451,8 @@ function TemplatesSection({
       <div style={{ display: "flex", gap: 16, borderBottom: "2px solid var(--border-default)", marginBottom: 24, overflowX: "auto" }}>
         {(
           showMockupStep
-            ? (["blueprint", "variants", "mockups", "placement"] as const)
-            : (["blueprint", "variants", "placement"] as const)
+            ? (["blueprint", "variants", "mockups", "pricing"] as const)
+            : (["blueprint", "variants", "placement", "pricing"] as const)
         ).map((step) => {
           const isActive = editorStep === step;
           const disabled = step !== "blueprint" && !hasSelectedBlueprint;
@@ -1430,7 +1479,8 @@ function TemplatesSection({
               {step === "blueprint" && "1. Blueprint & Provider"}
               {step === "variants" && "2. Màu sắc & Kích thước"}
               {step === "mockups" && "3. Tải lên Mockup"}
-              {step === "placement" && (showMockupStep ? "4. Vị trí in ấn" : "3. Vị trí in ấn")}
+              {step === "placement" && "3. Vị trí in ấn"}
+              {step === "pricing" && (showMockupStep ? "4. Giá bán" : "4. Giá bán")}
             </button>
           );
         })}
@@ -1462,15 +1512,25 @@ function TemplatesSection({
           onChangePendingMockups={setPendingMockups}
           existingTemplateId={tempTemplateData.id === "new" ? null : tempTemplateData.id}
           storeId={store.id}
+          defaultCompositeRegionPx={tempTemplateData.defaultCompositeRegionPx}
+          onChangeCompositeRegion={(region) => updateTempData({ defaultCompositeRegionPx: region })}
         />
       )}
 
-      {editorStep === "placement" && (
+      {editorStep === "placement" && !showMockupStep && (
         <EditorPlacementStep
           store={store}
           value={tempTemplateData}
           onChange={updateTempData}
           mockupUrlsByView={mockupUrlsByView}
+        />
+      )}
+
+      {editorStep === "pricing" && (
+        <EditorPricingStep
+          store={store}
+          value={tempTemplateData}
+          onChange={updateTempData}
         />
       )}
     </div>
@@ -2340,6 +2400,214 @@ function EditorVariantsStep({
   );
 }
 
+function EditorPricingStep({
+  store,
+  value,
+  onChange,
+}: {
+  store: StoreDetail;
+  value: TemplateDetail;
+  onChange: (data: Partial<TemplateDetail>) => void;
+}) {
+  const [sizes, setSizes] = useState<SizeOption[]>([]);
+  const [loadingSizes, setLoadingSizes] = useState(false);
+  const [warning, setWarning] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!value.printifyBlueprintId || !value.printifyPrintProviderId) return;
+    const controller = new AbortController();
+    setLoadingSizes(true);
+    setWarning(null);
+
+    fetch(`/api/stores/${store.id}/sizes?blueprintId=${value.printifyBlueprintId}&printProviderId=${value.printifyPrintProviderId}`, { signal: controller.signal })
+      .then((res) => res.json())
+      .then((data) => {
+        setSizes(data.sizes ?? []);
+        if (data.warning) setWarning(data.warning);
+      })
+      .catch((err) => {
+        if (err.name !== "AbortError") {
+          console.error("Failed to fetch pricing sizes:", err);
+          toast.error("Không tải được giá cost theo size");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoadingSizes(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, [store.id, value.printifyBlueprintId, value.printifyPrintProviderId]);
+
+  const selectedSizes = useMemo(() => {
+    const enabled = new Set(value.enabledSizes ?? []);
+    const list = enabled.size > 0 ? sizes.filter((size) => enabled.has(size.size)) : sizes.filter((size) => size.isAvailable);
+    return list.length > 0 ? list : sizes;
+  }, [sizes, value.enabledSizes]);
+
+  const storeDefaultPrice = parseOptionalMoney(store.defaultPriceUsd) ?? 24.99;
+  const effectiveBasePrice = value.basePriceUsd ?? storeDefaultPrice;
+
+  function updateBasePrice(rawValue: string) {
+    if (!rawValue.trim()) {
+      onChange({ basePriceUsd: null });
+      return;
+    }
+    const parsed = parseOptionalMoney(rawValue);
+    onChange({ basePriceUsd: parsed });
+  }
+
+  function updateSizePrice(size: string, rawValue: string) {
+    const next = { ...(value.priceBySizeDefault ?? {}) };
+    if (!rawValue.trim()) {
+      delete next[size];
+    } else {
+      const parsed = parseOptionalMoney(rawValue);
+      if (parsed === null) return;
+      next[size] = parsed;
+    }
+    onChange({ priceBySizeDefault: Object.keys(next).length > 0 ? next : null });
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 20 }}>
+      <div>
+        <h3 style={{ fontWeight: 700, margin: 0 }}>Giá bán</h3>
+        <p style={{ opacity: 0.5, fontSize: "0.85rem", marginTop: 4 }}>
+          Giá này được lưu trong template. Wizard sẽ tự kế thừa và vẫn cho phép override trên từng draft.
+        </p>
+      </div>
+
+      <div className="card" style={{ padding: 18, display: "grid", gap: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 260px) auto", gap: 12, alignItems: "end" }}>
+          <label style={{ display: "grid", gap: 6, fontSize: "0.78rem", fontWeight: 700 }}>
+            Giá cơ bản
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={value.basePriceUsd ?? ""}
+              onChange={(event) => updateBasePrice(event.target.value)}
+              placeholder={storeDefaultPrice.toFixed(2)}
+              style={inputStyle}
+            />
+          </label>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => onChange({ basePriceUsd: null, priceBySizeDefault: null })}
+            style={{ justifySelf: "start" }}
+          >
+            <RefreshCw size={14} />
+            Reset về mặc định store
+          </button>
+        </div>
+        <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 700 }}>
+          Giá hiệu lực khi không có override theo size: ${effectiveBasePrice.toFixed(2)}
+        </div>
+      </div>
+
+      {warning && (
+        <div
+          style={{
+            padding: "10px 12px",
+            borderRadius: 8,
+            background: "rgba(245,158,11,0.08)",
+            border: "1px solid rgba(245,158,11,0.2)",
+            color: "#92400e",
+            fontSize: "0.78rem",
+            fontWeight: 700,
+          }}
+        >
+          {warning}
+        </div>
+      )}
+
+      <div className="card" style={{ overflow: "hidden" }}>
+        <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border-default)" }}>
+          <h4 style={{ margin: 0, fontSize: "0.92rem", fontWeight: 800 }}>Giá theo size</h4>
+        </div>
+
+        {loadingSizes ? (
+          <div style={{ padding: 40, display: "flex", justifyContent: "center" }}>
+            <Loader2 className="animate-spin" size={24} />
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+              <thead>
+                <tr style={{ background: "var(--bg-inset, #f6f6f4)", textAlign: "left" }}>
+                  <th style={pricingThStyle}>Size</th>
+                  <th style={pricingThStyle}>Cost Printify</th>
+                  <th style={pricingThStyle}>Giá bán</th>
+                  <th style={pricingThStyle}>Chênh lệch</th>
+                  <th style={pricingThStyle}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {selectedSizes.map((size) => {
+                  const overridePrice = value.priceBySizeDefault?.[size.size] ?? null;
+                  const retailPrice = overridePrice ?? effectiveBasePrice;
+                  const costUsd = size.costCents / 100;
+                  const margin = retailPrice - costUsd;
+
+                  return (
+                    <tr key={size.size} style={{ borderTop: "1px solid var(--border-default)" }}>
+                      <td style={pricingTdStyle}>
+                        <strong>{size.size}</strong>
+                      </td>
+                      <td style={pricingTdStyle}>${costUsd.toFixed(2)}</td>
+                      <td style={pricingTdStyle}>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={overridePrice ?? ""}
+                          onChange={(event) => updateSizePrice(size.size, event.target.value)}
+                          placeholder={effectiveBasePrice.toFixed(2)}
+                          style={{ ...inputStyle, width: 140 }}
+                        />
+                      </td>
+                      <td
+                        style={{
+                          ...pricingTdStyle,
+                          color: margin >= 0 ? "var(--color-wise-green)" : "#dc2626",
+                          fontWeight: 800,
+                        }}
+                      >
+                        ${margin.toFixed(2)}
+                      </td>
+                      <td style={pricingTdStyle}>
+                        {overridePrice !== null && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-secondary"
+                            onClick={() => updateSizePrice(size.size, "")}
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {selectedSizes.length === 0 && (
+                  <tr>
+                    <td colSpan={5} style={{ ...pricingTdStyle, textAlign: "center", color: "var(--text-muted)" }}>
+                      Chọn blueprint/provider và variants trước để xem size.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ========== Editor Placement Step ========== */
 function EditorPlacementStep({
   store,
@@ -2411,16 +2679,21 @@ function EditorMockupsStep({
   onChangePendingMockups,
   existingTemplateId,
   storeId,
+  defaultCompositeRegionPx,
+  onChangeCompositeRegion,
 }: {
   colors: TemplateDetail["colors"];
   pendingMockups: Map<string, { file: File; previewUrl: string }>;
   onChangePendingMockups: React.Dispatch<React.SetStateAction<Map<string, { file: File; previewUrl: string }>>>;
   existingTemplateId: string | null;
   storeId: string;
+  defaultCompositeRegionPx: TemplateDetail["defaultCompositeRegionPx"];
+  onChangeCompositeRegion: (region: TemplateCompositeRegion | null) => void;
 }) {
   // Key format: colorName (lowercase)
-  const [existingMockups, setExistingMockups] = useState<Map<string, string>>(new Map());
+  const [existingMockups, setExistingMockups] = useState<Map<string, { url: string; imageWidth: number | null; imageHeight: number | null }>>(new Map());
   const [loadingExisting, setLoadingExisting] = useState(false);
+  const [referenceImageSize, setReferenceImageSize] = useState<{ width: number; height: number } | null>(null);
 
   useEffect(() => {
     if (!existingTemplateId) return;
@@ -2431,13 +2704,19 @@ function EditorMockupsStep({
       .then((d) => {
         const temp = d.templates?.find((t: any) => t.id === existingTemplateId);
         if (temp) {
-          const mockupMap = new Map<string, string>();
+          const mockupMap = new Map<string, { url: string; imageWidth: number | null; imageHeight: number | null }>();
           for (const c of temp.colors || []) {
             const colorKey = (c.name as string).toLowerCase();
             for (const source of c.sources || []) {
+              const imageUrl = (source as any).imageUrl || (source as any).outputUrl;
+              if (!imageUrl) continue;
               // Use first primary or first available source per color
               if (!mockupMap.has(colorKey) || (source as any).isPrimary) {
-                mockupMap.set(colorKey, (source as any).imageUrl || (source as any).outputUrl);
+                mockupMap.set(colorKey, {
+                  url: imageUrl,
+                  imageWidth: typeof (source as any).imageWidth === "number" ? (source as any).imageWidth : null,
+                  imageHeight: typeof (source as any).imageHeight === "number" ? (source as any).imageHeight : null,
+                });
               }
             }
           }
@@ -2499,13 +2778,54 @@ function EditorMockupsStep({
     const key = c.color.name.toLowerCase();
     return pendingMockups.has(key) || existingMockups.has(key);
   }).length;
+  const referenceMockup = useMemo(() => {
+    for (const color of colors) {
+      const key = color.color.name.toLowerCase();
+      const pending = pendingMockups.get(key);
+      if (pending) {
+        return {
+          url: pending.previewUrl,
+          label: color.color.name,
+          imageWidth: null,
+          imageHeight: null,
+        };
+      }
+
+      const existing = existingMockups.get(key);
+      if (existing) {
+        return {
+          url: existing.url,
+          label: color.color.name,
+          imageWidth: existing.imageWidth,
+          imageHeight: existing.imageHeight,
+        };
+      }
+    }
+    return null;
+  }, [colors, existingMockups, pendingMockups]);
+
+  useEffect(() => {
+    setReferenceImageSize(null);
+    if (!referenceMockup?.url || typeof window === "undefined") return;
+
+    const image = new window.Image();
+    image.onload = () => {
+      if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+        setReferenceImageSize({ width: image.naturalWidth, height: image.naturalHeight });
+      }
+    };
+    image.src = referenceMockup.url;
+  }, [referenceMockup?.url]);
+
+  const referenceImageWidth = referenceMockup?.imageWidth ?? referenceImageSize?.width ?? defaultCompositeRegionPx?.imageWidth ?? 0;
+  const referenceImageHeight = referenceMockup?.imageHeight ?? referenceImageSize?.height ?? defaultCompositeRegionPx?.imageHeight ?? 0;
 
   return (
     <div style={{ display: "grid", gap: 20 }}>
       <div>
         <h3 style={{ fontWeight: 700, margin: 0 }}>Tải lên Mockup</h3>
         <p style={{ opacity: 0.5, fontSize: "0.85rem", marginTop: 4 }}>
-          Tải lên ảnh mockup cho từng màu sắc. Mockup sẽ hiển thị làm nền ở bước Vị trí in ấn.
+          Tải lên ảnh mockup cho từng màu sắc. Template CUSTOM dùng vùng tọa độ bên dưới để ghép design vào ảnh.
         </p>
       </div>
 
@@ -2525,7 +2845,7 @@ function EditorMockupsStep({
             const colorKey = c.color.name.toLowerCase();
             const pending = pendingMockups.get(colorKey);
             const existing = existingMockups.get(colorKey);
-            const previewUrl = pending?.previewUrl || existing || null;
+            const previewUrl = pending?.previewUrl || existing?.url || null;
 
             return (
               <div
@@ -2640,7 +2960,52 @@ function EditorMockupsStep({
           <span>Mockup sẽ được lưu cùng template.</span>
         </div>
       </div>
+
+      {referenceMockup && (
+        <div className="card" style={{ padding: 18, display: "grid", gap: 14 }}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 style={{ fontWeight: 700, margin: 0 }}>Tọa độ khung hiển thị design</h3>
+              <p style={{ opacity: 0.55, fontSize: "0.82rem", marginTop: 4, lineHeight: 1.45 }}>
+                Đang dùng mockup màu {referenceMockup.label} làm ảnh tham khảo. Một vùng tọa độ này áp dụng chung cho mọi màu trong template.
+              </p>
+            </div>
+            {defaultCompositeRegionPx && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => onChangeCompositeRegion(null)}
+              >
+                <RefreshCw size={14} />
+                Xóa tọa độ
+              </button>
+            )}
+          </div>
+
+          {referenceImageWidth > 0 && referenceImageHeight > 0 ? (
+            <CompositeRegionEditor
+              imageUrl={referenceMockup.url}
+              imageWidth={referenceImageWidth}
+              imageHeight={referenceImageHeight}
+              value={defaultCompositeRegionPx}
+              onChange={(region) => {
+                onChangeCompositeRegion({
+                  ...region,
+                  imageWidth: referenceImageWidth,
+                  imageHeight: referenceImageHeight,
+                });
+              }}
+              context="library"
+              scope="TEMPLATE"
+              compact
+            />
+          ) : (
+            <div style={{ padding: 24, display: "flex", justifyContent: "center" }}>
+              <Loader2 className="animate-spin" size={22} />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
-
