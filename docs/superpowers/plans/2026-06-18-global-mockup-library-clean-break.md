@@ -77,7 +77,7 @@ test("schema defines global mockup library models", () => {
   assert.match(schema, /fileSizeBytes\s+Int\s+@map\("file_size_bytes"\)/);
   assert.match(schema, /compositeRegionPx\s+Json\?\s+@map\("composite_region_px"\)/);
   assert.match(schema, /model TemplateMockupItem \{/);
-  assert.match(schema, /appliesToColorIds\s+Json\s+@map\("applies_to_color_ids"\)/);
+  assert.match(schema, /appliesToColorIds\s+Json\s+@default\("\[\]"\)\s+@map\("applies_to_color_ids"\)/);
   assert.match(schema, /@@unique\(\[templateId, mockupId\]\)/);
 });
 
@@ -186,7 +186,7 @@ model TemplateMockupItem {
   id                String   @id @default(cuid())
   templateId        String   @map("template_id")
   mockupId          String   @map("mockup_id")
-  appliesToColorIds Json     @map("applies_to_color_ids")
+  appliesToColorIds Json     @default("[]") @map("applies_to_color_ids")
   sortOrder         Int      @default(0) @map("sort_order")
   isPrimary         Boolean  @default(false) @map("is_primary")
   createdAt         DateTime @default(now()) @map("created_at")
@@ -629,7 +629,7 @@ test("global mockup upload is COMPOSITE-only and stores upload metadata", () => 
   assert.match(listRoute, /uploadedById:\s*session\.id/);
   assert.match(listRoute, /mimeType:\s*file\.type/);
   assert.match(listRoute, /fileSizeBytes:\s*file\.size/);
-  assert.match(listRoute, /previewUrl:\s*storageUrl\(item\.previewPath\)/);
+  assert.match(listRoute, /previewUrl:\s*item\.previewPath\s*\?\s*storageUrl\(item\.previewPath\)\s*:\s*null/);
   assert.doesNotMatch(listRoute, /FINAL/);
   assert.doesNotMatch(listRoute, /as never/);
 });
@@ -823,7 +823,7 @@ export async function GET(request: Request) {
     items: items.map((item) => ({
       ...item,
       imageUrl: storageUrl(item.storagePath),
-      previewUrl: storageUrl(item.previewPath),
+      previewUrl: item.previewPath ? storageUrl(item.previewPath) : null,
       templateAttachmentCount: item._count.templateItems,
     })),
   });
@@ -1003,7 +1003,7 @@ test("template mockup attach routes are CUSTOM-only and tenant scoped", () => {
   assert.match(listRoute, /defaultMockupSource:\s*"CUSTOM"/);
   assert.match(listRoute, /tenantId:\s*session\.tenantId/);
   assert.match(listRoute, /normalizeAppliesToColorIds/);
-  assert.match(listRoute, /previewUrl:\s*storageUrl\(item\.mockup\.previewPath\)/);
+  assert.match(listRoute, /previewUrl:\s*item\.mockup\.previewPath\s*\?\s*storageUrl\(item\.mockup\.previewPath\)\s*:\s*null/);
 });
 
 test("template mockup attach creates duplicate conflict and single primary", () => {
@@ -1063,7 +1063,7 @@ export async function GET(
       mockup: {
         ...item.mockup,
         imageUrl: storageUrl(item.mockup.storagePath),
-        previewUrl: storageUrl(item.mockup.previewPath),
+        previewUrl: item.mockup.previewPath ? storageUrl(item.mockup.previewPath) : null,
       },
     })),
   });
