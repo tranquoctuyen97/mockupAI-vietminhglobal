@@ -26,7 +26,8 @@
 - Create: `src/app/api/stores/[id]/mockup-templates/[templateId]/mockups/route.ts` - template attachment list/create.
 - Create: `src/app/api/stores/[id]/mockup-templates/[templateId]/mockups/[itemId]/route.ts` - template attachment update/delete.
 - Create: `src/app/api/stores/template-mockups-route-source.test.ts` - source guard for CUSTOM-only attach, duplicate 409, color validation, primary uniqueness.
-- Create: `src/app/(authed)/mockups/page.tsx` - global Mockups page.
+- Create: `src/app/(authed)/mockups/page.tsx` - server-gated global Mockups page.
+- Create: `src/app/(authed)/mockups/MockupsClient.tsx` - client UI for library list/upload/edit modal.
 - Modify: `src/app/(authed)/AuthedShell.tsx` - add Workspace `Mockups` sidebar item gated by `mockup_library`.
 - Modify: `src/app/(authed)/admin/acl/AclClient.tsx` - keep `mockup_library` permission available.
 - Modify: `src/app/(authed)/stores/[id]/config/page.tsx` - CUSTOM Mockups tab selects/uploads global mockups and maps colors; no direct frame editing.
@@ -78,6 +79,12 @@ test("schema defines global mockup library models", () => {
   assert.match(schema, /model TemplateMockupItem \{/);
   assert.match(schema, /appliesToColorIds\s+Json\s+@map\("applies_to_color_ids"\)/);
   assert.match(schema, /@@unique\(\[templateId, mockupId\]\)/);
+});
+
+test("migration enforces one primary template mockup per template", () => {
+  const migration = readFileSync("prisma/migrations/20260618000000_global_mockup_library_clean_break/migration.sql", "utf8");
+  assert.match(migration, /CREATE UNIQUE INDEX "template_mockup_items_one_primary_per_template_idx"/);
+  assert.match(migration, /WHERE "is_primary" = true/);
 });
 
 test("schema rewires wizard picks to template mockup items", () => {
@@ -255,7 +262,27 @@ model WizardDraftMockupLibraryPick {
 }
 ```
 
-- [ ] **Step 3: Add clean-break migration SQL**
+- [ ] **Step 3: Verify legacy pick column, FK, and index names before writing migration SQL**
+
+Run:
+
+```bash
+rg -n "wizard_draft_mockup_library_picks|source_id|wizard_draft_mockup_library_picks_source_id_fkey|wizard_draft_mockup_library_picks_wizard_draft_id_source_id_key" prisma/migrations prisma/schema.prisma
+```
+
+Expected matches:
+
+```text
+prisma/schema.prisma: WizardDraftMockupLibraryPick.sourceId maps to "source_id"
+prisma/schema.prisma: source CustomMockupSource relation uses fields: [sourceId]
+prisma/migrations/0028_custom_mockup_source_scopes/migration.sql: creates "source_id"
+prisma/migrations/0028_custom_mockup_source_scopes/migration.sql: creates index "wizard_draft_mockup_library_picks_wizard_draft_id_source_id_key"
+prisma/migrations/0028_custom_mockup_source_scopes/migration.sql: creates constraint "wizard_draft_mockup_library_picks_source_id_fkey"
+```
+
+If the actual migration history differs, use the migration-history names in the drop SQL instead of guessed names.
+
+- [ ] **Step 4: Add clean-break migration SQL**
 
 Create `prisma/migrations/20260618000000_global_mockup_library_clean_break/migration.sql`:
 
@@ -315,6 +342,9 @@ ALTER TABLE "template_mockup_items"
   FOREIGN KEY ("mockup_id") REFERENCES "mockup_library_items"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 CREATE UNIQUE INDEX "template_mockup_items_template_id_mockup_id_key" ON "template_mockup_items"("template_id", "mockup_id");
+CREATE UNIQUE INDEX "template_mockup_items_one_primary_per_template_idx"
+  ON "template_mockup_items"("template_id")
+  WHERE "is_primary" = true;
 CREATE INDEX "mockup_library_items_tenant_id_is_active_deleted_at_idx" ON "mockup_library_items"("tenant_id", "is_active", "deleted_at");
 CREATE INDEX "mockup_library_items_tenant_id_name_idx" ON "mockup_library_items"("tenant_id", "name");
 CREATE INDEX "template_mockup_items_template_id_is_primary_sort_order_idx" ON "template_mockup_items"("template_id", "is_primary", "sort_order");
@@ -323,7 +353,7 @@ CREATE INDEX "template_mockup_items_mockup_id_idx" ON "template_mockup_items"("m
 TRUNCATE TABLE "wizard_draft_mockup_library_picks";
 
 ALTER TABLE "wizard_draft_mockup_library_picks" DROP CONSTRAINT IF EXISTS "wizard_draft_mockup_library_picks_source_id_fkey";
-DROP INDEX IF EXISTS "wizard_draft_mockup_library_picks_draft_id_source_id_key";
+DROP INDEX IF EXISTS "wizard_draft_mockup_library_picks_wizard_draft_id_source_id_key";
 ALTER TABLE "wizard_draft_mockup_library_picks" DROP COLUMN IF EXISTS "source_id";
 ALTER TABLE "wizard_draft_mockup_library_picks" ADD COLUMN "template_mockup_item_id" TEXT NOT NULL;
 ALTER TABLE "wizard_draft_mockup_library_picks"
@@ -342,7 +372,7 @@ DROP TYPE IF EXISTS "CustomMockupScene";
 DROP TYPE IF EXISTS "CustomRenderMode";
 ```
 
-- [ ] **Step 4: Run Prisma validation and schema guard**
+- [ ] **Step 5: Run Prisma validation and schema guard**
 
 Run:
 
@@ -353,7 +383,7 @@ npx prisma validate
 
 Expected: both pass.
 
-- [ ] **Step 5: Commit schema and migration**
+- [ ] **Step 6: Commit schema and migration**
 
 ```bash
 git add prisma/schema.prisma prisma/migrations/20260618000000_global_mockup_library_clean_break/migration.sql src/lib/mockup/global-library-schema-source.test.ts
@@ -380,6 +410,8 @@ import {
   chooseTemplateMockupsForColor,
   normalizeAppliesToColorIds,
   normalizeCompositeRenderMode,
+  normalizeMockupLibraryScene,
+  normalizeMockupLibraryView,
   resolveLibraryCompositeRegion,
 } from "./global-library";
 
@@ -388,6 +420,15 @@ test("normalizeCompositeRenderMode accepts only COMPOSITE", () => {
   assert.equal(normalizeCompositeRenderMode(null), "COMPOSITE");
   assert.equal(normalizeCompositeRenderMode("FINAL"), null);
   assert.equal(normalizeCompositeRenderMode("anything"), null);
+});
+
+test("normalizes library view and scene enum values", () => {
+  assert.equal(normalizeMockupLibraryView("front"), "front");
+  assert.equal(normalizeMockupLibraryView("sleeve_left"), "sleeve_left");
+  assert.equal(normalizeMockupLibraryView("bad"), null);
+  assert.equal(normalizeMockupLibraryScene("flat_lay"), "flat_lay");
+  assert.equal(normalizeMockupLibraryScene("model"), "model");
+  assert.equal(normalizeMockupLibraryScene("bad"), null);
 });
 
 test("buildSmartFitCompositeRegion returns a valid centered region", () => {
@@ -444,6 +485,11 @@ Create `src/lib/mockup/global-library.ts`:
 import { normalizeCompositeRegionPx, type CompositeRegionPx } from "@/lib/mockup/custom-library";
 
 export type CompositeRenderMode = "COMPOSITE";
+export type MockupLibraryViewValue = "front" | "back" | "sleeve_left" | "sleeve_right" | "detail" | "lifestyle";
+export type MockupLibrarySceneValue = "flat_lay" | "hanging" | "lifestyle" | "model" | "detail";
+
+const MOCKUP_LIBRARY_VIEWS = new Set<MockupLibraryViewValue>(["front", "back", "sleeve_left", "sleeve_right", "detail", "lifestyle"]);
+const MOCKUP_LIBRARY_SCENES = new Set<MockupLibrarySceneValue>(["flat_lay", "hanging", "lifestyle", "model", "detail"]);
 
 export type TemplateMockupMatchItem = {
   id: string;
@@ -456,6 +502,18 @@ export type TemplateMockupMatchItem = {
 export function normalizeCompositeRenderMode(value: unknown): CompositeRenderMode | null {
   if (value == null || value === "") return "COMPOSITE";
   return value === "COMPOSITE" ? "COMPOSITE" : null;
+}
+
+export function normalizeMockupLibraryView(value: unknown): MockupLibraryViewValue | null {
+  return typeof value === "string" && MOCKUP_LIBRARY_VIEWS.has(value as MockupLibraryViewValue)
+    ? (value as MockupLibraryViewValue)
+    : null;
+}
+
+export function normalizeMockupLibraryScene(value: unknown): MockupLibrarySceneValue | null {
+  return typeof value === "string" && MOCKUP_LIBRARY_SCENES.has(value as MockupLibrarySceneValue)
+    ? (value as MockupLibrarySceneValue)
+    : null;
 }
 
 export function buildSmartFitCompositeRegion(imageWidth: number, imageHeight: number): CompositeRegionPx {
@@ -565,16 +623,29 @@ test("global mockup routes require mockup_library permission", () => {
 
 test("global mockup upload is COMPOSITE-only and stores upload metadata", () => {
   assert.match(listRoute, /normalizeCompositeRenderMode/);
+  assert.match(listRoute, /normalizeMockupLibraryView/);
+  assert.match(listRoute, /normalizeMockupLibraryScene/);
+  assert.match(listRoute, /parseMultipartJson/);
   assert.match(listRoute, /uploadedById:\s*session\.id/);
   assert.match(listRoute, /mimeType:\s*file\.type/);
   assert.match(listRoute, /fileSizeBytes:\s*file\.size/);
+  assert.match(listRoute, /previewUrl:\s*storageUrl\(item\.previewPath\)/);
   assert.doesNotMatch(listRoute, /FINAL/);
+  assert.doesNotMatch(listRoute, /as never/);
+});
+
+test("global mockup patch validates view and scene type", () => {
+  assert.match(itemRoute, /normalizeMockupLibraryView/);
+  assert.match(itemRoute, /normalizeMockupLibraryScene/);
+  assert.match(itemRoute, /view is invalid/);
+  assert.match(itemRoute, /sceneType is invalid/);
 });
 
 test("global mockup delete restricts template attachments and removes storage", () => {
   assert.match(itemRoute, /templateMockupItem\.count/);
   assert.match(itemRoute, /status:\s*409/);
   assert.match(itemRoute, /deleteMockupStorageObjects/);
+  assert.match(readFileSync("src/lib/mockup/mockup-library-service.ts", "utf8"), /isMissingStorageObjectError/);
 });
 ```
 
@@ -597,7 +668,12 @@ import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { buildSmartFitCompositeRegion, normalizeCompositeRenderMode } from "@/lib/mockup/global-library";
+import {
+  buildSmartFitCompositeRegion,
+  normalizeCompositeRenderMode,
+  normalizeMockupLibraryScene,
+  normalizeMockupLibraryView,
+} from "@/lib/mockup/global-library";
 import { normalizeCompositeRegionPx } from "@/lib/mockup/custom-library";
 import { getStorage } from "@/lib/storage/local-disk";
 
@@ -616,13 +692,17 @@ export async function createMockupLibraryItemFromUpload(input: {
   uploadedById: string;
   file: File;
   name: string;
-  view: "front" | "back" | "sleeve_left" | "sleeve_right" | "detail" | "lifestyle";
-  sceneType: "flat_lay" | "hanging" | "lifestyle" | "model" | "detail";
+  view: unknown;
+  sceneType: unknown;
   renderMode: unknown;
   compositeRegionPx: unknown;
 }) {
   const renderMode = normalizeCompositeRenderMode(input.renderMode);
   if (renderMode !== "COMPOSITE") throw new MockupLibraryValidationError("renderMode must be COMPOSITE");
+  const view = normalizeMockupLibraryView(input.view);
+  if (!view) throw new MockupLibraryValidationError("view is invalid");
+  const sceneType = normalizeMockupLibraryScene(input.sceneType);
+  if (!sceneType) throw new MockupLibraryValidationError("sceneType is invalid");
   if (!ALLOWED_TYPES.has(input.file.type)) throw new MockupLibraryValidationError("Only JPEG, PNG, and WebP images are supported");
   if (input.file.size > MAX_UPLOAD_BYTES) throw new MockupLibraryValidationError("File must be 10MB or smaller");
 
@@ -638,7 +718,7 @@ export async function createMockupLibraryItemFromUpload(input: {
   await getStorage().putBuffer(storagePath, normalized, "image/jpeg");
 
   const region =
-    normalizeCompositeRegionPx(input.compositeRegionPx) ??
+    normalizeCompositeRegionPx(parseMultipartJson(input.compositeRegionPx, "compositeRegionPx")) ??
     buildSmartFitCompositeRegion(width, height);
 
   return prisma.mockupLibraryItem.create({
@@ -650,8 +730,8 @@ export async function createMockupLibraryItemFromUpload(input: {
       previewPath: null,
       width,
       height,
-      view: input.view,
-      sceneType: input.sceneType,
+      view,
+      sceneType,
       renderMode,
       compositeRegionPx: region as unknown as Prisma.InputJsonValue,
       uploadedById: input.uploadedById,
@@ -663,10 +743,35 @@ export async function createMockupLibraryItemFromUpload(input: {
 
 export async function deleteMockupStorageObjects(item: { storagePath: string; previewPath: string | null }) {
   const storage = getStorage();
-  await storage.delete(item.storagePath);
+  await deleteStorageObjectIfExists(storage, item.storagePath);
   if (item.previewPath) {
-    await storage.delete(item.previewPath);
+    await deleteStorageObjectIfExists(storage, item.previewPath);
   }
+}
+
+export function parseMultipartJson(value: unknown, fieldName: string): unknown {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new MockupLibraryValidationError(`${fieldName} must be valid JSON`);
+  }
+}
+
+async function deleteStorageObjectIfExists(storage: ReturnType<typeof getStorage>, key: string) {
+  try {
+    await storage.delete(key);
+  } catch (error) {
+    if (isMissingStorageObjectError(error)) return;
+    throw error;
+  }
+}
+
+function isMissingStorageObjectError(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code) : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return code === "ENOENT" || code === "NoSuchKey" || /not found/i.test(message);
 }
 ```
 
@@ -679,9 +784,11 @@ import { NextResponse } from "next/server";
 import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { storageUrl } from "@/lib/mockup/custom-library";
+import { normalizeMockupLibraryScene, normalizeMockupLibraryView } from "@/lib/mockup/global-library";
 import {
   createMockupLibraryItemFromUpload,
   MockupLibraryValidationError,
+  parseMultipartJson,
 } from "@/lib/mockup/mockup-library-service";
 
 export const runtime = "nodejs";
@@ -692,8 +799,12 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const q = url.searchParams.get("q")?.trim();
-  const view = url.searchParams.get("view")?.trim();
-  const sceneType = url.searchParams.get("sceneType")?.trim();
+  const viewParam = url.searchParams.get("view");
+  const sceneTypeParam = url.searchParams.get("sceneType");
+  const view = viewParam ? normalizeMockupLibraryView(viewParam) : null;
+  const sceneType = sceneTypeParam ? normalizeMockupLibraryScene(sceneTypeParam) : null;
+  if (viewParam && !view) return NextResponse.json({ error: "view is invalid" }, { status: 400 });
+  if (sceneTypeParam && !sceneType) return NextResponse.json({ error: "sceneType is invalid" }, { status: 400 });
 
   const items = await prisma.mockupLibraryItem.findMany({
     where: {
@@ -701,8 +812,8 @@ export async function GET(request: Request) {
       isActive: true,
       deletedAt: null,
       ...(q ? { name: { contains: q, mode: "insensitive" } } : {}),
-      ...(view ? { view: view as never } : {}),
-      ...(sceneType ? { sceneType: sceneType as never } : {}),
+      ...(view ? { view } : {}),
+      ...(sceneType ? { sceneType } : {}),
     },
     orderBy: [{ createdAt: "desc" }, { id: "asc" }],
     include: { _count: { select: { templateItems: true } } },
@@ -734,10 +845,10 @@ export async function POST(request: Request) {
       uploadedById: session.id,
       file,
       name: String(form.get("name") ?? ""),
-      view: String(form.get("view") ?? "front") as never,
-      sceneType: String(form.get("sceneType") ?? "flat_lay") as never,
+      view: String(form.get("view") ?? "front"),
+      sceneType: String(form.get("sceneType") ?? "flat_lay"),
       renderMode: form.get("renderMode"),
-      compositeRegionPx: form.get("compositeRegionPx"),
+      compositeRegionPx: parseMultipartJson(form.get("compositeRegionPx"), "compositeRegionPx"),
     });
     return NextResponse.json(item, { status: 201 });
   } catch (error) {
@@ -768,7 +879,11 @@ import type { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
-import { normalizeCompositeRenderMode } from "@/lib/mockup/global-library";
+import {
+  normalizeCompositeRenderMode,
+  normalizeMockupLibraryScene,
+  normalizeMockupLibraryView,
+} from "@/lib/mockup/global-library";
 import { normalizeCompositeRegionPx } from "@/lib/mockup/custom-library";
 import { deleteMockupStorageObjects } from "@/lib/mockup/mockup-library-service";
 
@@ -790,6 +905,14 @@ export async function PATCH(
   if (body.renderMode !== undefined && renderMode !== "COMPOSITE") {
     return NextResponse.json({ error: "renderMode must be COMPOSITE" }, { status: 400 });
   }
+  const view = body.view === undefined ? undefined : normalizeMockupLibraryView(body.view);
+  if (body.view !== undefined && !view) {
+    return NextResponse.json({ error: "view is invalid" }, { status: 400 });
+  }
+  const sceneType = body.sceneType === undefined ? undefined : normalizeMockupLibraryScene(body.sceneType);
+  if (body.sceneType !== undefined && !sceneType) {
+    return NextResponse.json({ error: "sceneType is invalid" }, { status: 400 });
+  }
 
   const compositeRegionPx =
     body.compositeRegionPx === undefined
@@ -803,8 +926,8 @@ export async function PATCH(
     where: { id: mockupId },
     data: {
       name: typeof body.name === "string" && body.name.trim() ? body.name.trim() : undefined,
-      view: body.view ?? undefined,
-      sceneType: body.sceneType ?? undefined,
+      view,
+      sceneType,
       renderMode,
       compositeRegionPx: compositeRegionPx === undefined ? undefined : compositeRegionPx as unknown as Prisma.InputJsonValue,
     },
@@ -880,6 +1003,7 @@ test("template mockup attach routes are CUSTOM-only and tenant scoped", () => {
   assert.match(listRoute, /defaultMockupSource:\s*"CUSTOM"/);
   assert.match(listRoute, /tenantId:\s*session\.tenantId/);
   assert.match(listRoute, /normalizeAppliesToColorIds/);
+  assert.match(listRoute, /previewUrl:\s*storageUrl\(item\.mockup\.previewPath\)/);
 });
 
 test("template mockup attach creates duplicate conflict and single primary", () => {
@@ -1122,6 +1246,7 @@ git commit -m "feat: add template mockup attachment api"
 
 **Files:**
 - Create: `src/app/(authed)/mockups/page.tsx`
+- Create: `src/app/(authed)/mockups/MockupsClient.tsx`
 - Create: `src/components/mockup/GlobalMockupEditorModal.tsx`
 - Modify: `src/app/(authed)/AuthedShell.tsx`
 - Modify: `src/components/mockup/custom-mockup-ui-contract.test.ts`
@@ -1133,10 +1258,15 @@ In `src/components/mockup/custom-mockup-ui-contract.test.ts`, replace old store 
 ```ts
 test("global mockups page owns composite frame editing", () => {
   const pageSource = read("src/app/(authed)/mockups/page.tsx");
+  const clientSource = read("src/app/(authed)/mockups/MockupsClient.tsx");
   const modalSource = read("src/components/mockup/GlobalMockupEditorModal.tsx");
 
-  assert.match(pageSource, /\/api\/mockups/);
-  assert.match(pageSource, /edit=/);
+  assert.doesNotMatch(pageSource, /"use client"/);
+  assert.match(pageSource, /validateSession/);
+  assert.match(pageSource, /hasFeature/);
+  assert.match(pageSource, /MockupsClient/);
+  assert.match(clientSource, /\/api\/mockups/);
+  assert.match(clientSource, /edit=/);
   assert.match(modalSource, /CompositeRegionEditor/);
   assert.match(modalSource, /compositeRegionPx/);
 });
@@ -1261,9 +1391,31 @@ export function GlobalMockupEditorModal({
 }
 ```
 
-- [ ] **Step 5: Create `/mockups` page**
+- [ ] **Step 5: Create server-gated `/mockups` page and client UI**
 
-Create `src/app/(authed)/mockups/page.tsx` with:
+Create `src/app/(authed)/mockups/page.tsx` as a server component:
+
+```tsx
+import { redirect } from "next/navigation";
+import { hasFeature } from "@/lib/auth/roles";
+import { validateSession } from "@/lib/auth/session";
+import MockupsClient from "./MockupsClient";
+
+export const metadata = {
+  title: "Mockups - MockupAI",
+};
+
+export default async function MockupsPage() {
+  const session = await validateSession();
+  if (!session) redirect("/login");
+  const canUseMockups = await hasFeature(session.tenantId, session.role, "mockup_library");
+  if (!canUseMockups) redirect("/dashboard");
+
+  return <MockupsClient />;
+}
+```
+
+Create `src/app/(authed)/mockups/MockupsClient.tsx` with:
 
 ```tsx
 "use client";
@@ -1277,7 +1429,7 @@ interface MockupItem extends GlobalMockupEditorValue {
   templateAttachmentCount: number;
 }
 
-export default function MockupsPage() {
+export default function MockupsClient() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [items, setItems] = useState<MockupItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1426,7 +1578,7 @@ Expected: UI source tests pass and build includes `/mockups`.
 - [ ] **Step 7: Commit global mockups UI**
 
 ```bash
-git add 'src/app/(authed)/mockups/page.tsx' src/components/mockup/GlobalMockupEditorModal.tsx 'src/app/(authed)/AuthedShell.tsx' src/components/mockup/custom-mockup-ui-contract.test.ts
+git add 'src/app/(authed)/mockups/page.tsx' 'src/app/(authed)/mockups/MockupsClient.tsx' src/components/mockup/GlobalMockupEditorModal.tsx 'src/app/(authed)/AuthedShell.tsx' src/components/mockup/custom-mockup-ui-contract.test.ts
 git commit -m "feat: add global mockups page"
 ```
 
@@ -1451,6 +1603,8 @@ test("template editor uses template mockup attachments and links global frame ed
 
   assert.match(configSource, /TemplateMockupPicker/);
   assert.match(pickerSource, /mockup-templates\/\$\{templateId\}\/mockups/);
+  assert.match(pickerSource, /fetch\("\/api\/mockups"/);
+  assert.match(pickerSource, /uploadAndAttach/);
   assert.match(pickerSource, /\/mockups\?edit=\$\{item\.mockup\.id\}/);
   assert.doesNotMatch(configSource, /defaultCompositeRegionPx/);
   assert.doesNotMatch(configSource, /CompositeRegionEditor/);
@@ -1484,7 +1638,7 @@ Create `src/components/mockup/TemplateMockupPicker.tsx`:
 ```tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ImagePlus, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -1519,6 +1673,7 @@ export function TemplateMockupPicker({
   templateId: string;
   colors: StoreColor[];
 }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const [library, setLibrary] = useState<LibraryMockup[]>([]);
   const [items, setItems] = useState<TemplateMockupItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1558,6 +1713,23 @@ export function TemplateMockupPicker({
       return;
     }
     await load();
+  }
+
+  async function uploadAndAttach(file: File) {
+    const form = new FormData();
+    form.set("file", file);
+    form.set("name", file.name.replace(/\.[^.]+$/, ""));
+    form.set("view", "front");
+    form.set("sceneType", "flat_lay");
+    form.set("renderMode", "COMPOSITE");
+
+    const uploadRes = await fetch("/api/mockups", { method: "POST", body: form });
+    const uploadData = await uploadRes.json().catch(() => ({}));
+    if (!uploadRes.ok || !uploadData.id) {
+      toast.error(uploadData.error ?? "Could not upload mockup");
+      return;
+    }
+    await attach(uploadData.id);
   }
 
   async function update(item: TemplateMockupItem, patch: Partial<TemplateMockupItem>) {
@@ -1629,7 +1801,23 @@ export function TemplateMockupPicker({
         </div>
       </section>
       <section className="card" style={{ padding: 16 }}>
-        <h3 style={{ marginTop: 0 }}>Library</h3>
+        <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>Library</h3>
+          <button className="btn btn-secondary btn-sm" type="button" onClick={() => inputRef.current?.click()}>
+            <ImagePlus size={14} /> Upload new
+          </button>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void uploadAndAttach(file);
+              event.currentTarget.value = "";
+            }}
+          />
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
           {library.map((mockup) => (
             <button key={mockup.id} className="card" type="button" onClick={() => attach(mockup.id)} style={{ padding: 10, textAlign: "left" }}>
