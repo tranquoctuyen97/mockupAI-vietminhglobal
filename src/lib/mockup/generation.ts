@@ -102,7 +102,7 @@ export async function loadMockupGenerationContext(draftId: string, tenantId: str
         },
       },
       mockupLibraryPicks: {
-        select: { sourceId: true, isPrimary: true, sortOrder: true },
+        select: { sourceId: true, isPrimary: true, sortOrder: true, compositeRegionPx: true },
       },
     },
   });
@@ -418,15 +418,24 @@ export async function createCustomMockupJobForDraftDesign(
     (s) => s.scope === "TEMPLATE",
   );
 
-  // Skip COMPOSITE sources that have no compositeRegionPx for DRAFT scope —
-  // users must explicitly set a position for their own mockups.
-  // TEMPLATE scope sources with null region are allowed through: the worker will
-  // auto-compute a default center region from the actual image dimensions.
+  const pickRegionBySourceId = new Map(
+    (draft.mockupLibraryPicks ?? [])
+      .filter((p) => p.compositeRegionPx != null)
+      .map((p) => [p.sourceId, p.compositeRegionPx]),
+  );
+
+  // COMPOSITE sources need an effective placement from source, pick, or template default.
   // FINAL-mode sources are always renderable (they use outputPath directly).
-  const isRenderableSource = (source: (typeof draftSources)[number]) =>
-    source.renderMode !== "COMPOSITE" ||
-    Boolean(source.compositeRegionPx) ||
-    source.scope === "TEMPLATE";
+  const isRenderableSource = (source: (typeof draftSources)[number]) => {
+    if (source.renderMode !== "COMPOSITE") return true;
+    const effective = resolveEffectiveCompositeRegion({
+      scope: source.scope as "DRAFT" | "TEMPLATE",
+      sourceRegion: source.compositeRegionPx,
+      pickRegion: pickRegionBySourceId.get(source.id) ?? null,
+      templateDefaultRegion: template.defaultCompositeRegionPx,
+    });
+    return effective !== null;
+  };
 
   const mapSource = (source: (typeof draftSources)[number]) => ({
     id: source.id,

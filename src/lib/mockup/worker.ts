@@ -109,18 +109,13 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
 
           const printAreaPx = computeCustomPrintAreaPx(printAreaMm, imgW, imgH);
 
-          // Merge pick placement for TEMPLATE scope sources.
-          // Pick placement (WizardDraftMockupLibraryPick) is the draft-level override;
-          // source.compositeRegionPx is the template-level default.
-          let pickRegion: unknown = null;
-          if (source.scope === "TEMPLATE") {
-            const draftId = image.mockupJob.draftId;
-            const pick = await prisma.wizardDraftMockupLibraryPick.findUnique({
-              where: { draftId_sourceId: { draftId, sourceId: parsed.sourceId } },
-              select: { compositeRegionPx: true },
-            });
-            pickRegion = pick?.compositeRegionPx ?? null;
-          }
+          // Pick placement is a draft-level override/fallback for both DRAFT and TEMPLATE sources.
+          const draftId = image.mockupJob.draftId;
+          const pick = await prisma.wizardDraftMockupLibraryPick.findUnique({
+            where: { draftId_sourceId: { draftId, sourceId: parsed.sourceId } },
+            select: { compositeRegionPx: true },
+          });
+          const pickRegion: unknown = pick?.compositeRegionPx ?? null;
           const effectiveRegion = resolveEffectiveCompositeRegion({
             scope: source.scope as "DRAFT" | "TEMPLATE",
             sourceRegion: source.compositeRegionPx,

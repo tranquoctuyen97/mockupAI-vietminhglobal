@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 import {
   parseCompositeRegionPx,
@@ -60,4 +62,21 @@ test("scaleCompositeRegionToImage scales runtime region without mutating saved d
 
   assert.deepEqual(scaled, { x: 200, y: 100, width: 600, height: 400, rotationDeg: 7, imageWidth: 2000, imageHeight: 1000 });
   assert.deepEqual(saved, { x: 100, y: 50, width: 300, height: 200, rotationDeg: 7, imageWidth: 1000, imageHeight: 500 });
+});
+
+test("worker loads draft pick placement for every custom composite source", () => {
+  const source = readFileSync(join(process.cwd(), "src/lib/mockup/worker.ts"), "utf8");
+
+  assert.match(source, /wizardDraftMockupLibraryPick\.findUnique/);
+  assert.match(source, /pickRegion(?::\s*unknown)?\s*=\s*pick\?\.compositeRegionPx \?\? null/);
+  assert.doesNotMatch(source, /if\s*\(\s*source\.scope\s*===\s*"TEMPLATE"\s*\)/);
+});
+
+test("generation row creation uses effective region fallback for draft picks", () => {
+  const source = readFileSync(join(process.cwd(), "src/lib/mockup/generation.ts"), "utf8");
+
+  assert.match(source, /mockupLibraryPicks:\s*{\s*select:\s*{\s*sourceId:\s*true,\s*isPrimary:\s*true,\s*sortOrder:\s*true,\s*compositeRegionPx:\s*true/);
+  assert.match(source, /const pickRegionBySourceId = new Map/);
+  assert.match(source, /const effective = resolveEffectiveCompositeRegion\({/);
+  assert.doesNotMatch(source, /Boolean\(source\.compositeRegionPx\)\s*\|\|\s*source\.scope\s*===\s*"TEMPLATE"/);
 });
