@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   Bot,
   ChevronRight,
-  DollarSign,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -58,13 +57,6 @@ const ADMIN_ITEMS: NavItemConfig[] = [
     icon: <Users size={18} />,
     adminOnly: true,
     feature: "users",
-  },
-  {
-    label: "Pricing",
-    href: "/admin/pricing",
-    icon: <DollarSign size={18} />,
-    adminOnly: true,
-    feature: "pricing",
   },
   {
     label: "AI Settings",
