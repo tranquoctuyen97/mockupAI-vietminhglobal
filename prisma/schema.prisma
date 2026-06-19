@@ -217,6 +217,7 @@ model Store {
   wizardDrafts        WizardDraft[]
   listings            Listing[]
   designs             Design[]
+  mockupLibraryItems  MockupLibraryItem[]
 
   @@unique([tenantId, shopifyDomain])
   @@index([tenantId, status])
@@ -356,6 +357,7 @@ enum WizardMockupSourceMode {
 model MockupLibraryItem {
   id                String                  @id @default(cuid())
   tenantId          String                  @map("tenant_id")
+  storeId           String                  @map("store_id")
   name              String
   storagePath       String                  @map("storage_path")
   previewPath       String?                 @map("preview_path")
@@ -374,10 +376,11 @@ model MockupLibraryItem {
   updatedAt         DateTime                @updatedAt @map("updated_at")
 
   tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  store         Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
   uploadedBy    User?                @relation("MockupLibraryUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
   templateItems TemplateMockupItem[]
 
-  @@index([tenantId, isActive, deletedAt])
+  @@index([tenantId, storeId, isActive, deletedAt])
   @@index([tenantId, name])
   @@map("mockup_library_items")
 }
