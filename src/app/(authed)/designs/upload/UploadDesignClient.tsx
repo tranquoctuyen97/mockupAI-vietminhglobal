@@ -37,6 +37,7 @@ interface UploadedDesignResult {
 
 interface Props {
   stores: StoreOption[];
+  initialStoreId: string | null;
 }
 
 function formatSize(bytes: number): string {
@@ -49,8 +50,12 @@ function createFileId(file: File): string {
   return `${file.name}-${file.size}-${file.lastModified}-${crypto.randomUUID()}`;
 }
 
-export default function UploadDesignClient({ stores }: Props) {
-  const [storeId, setStoreId] = useState(stores[0]?.id ?? "");
+export default function UploadDesignClient({ stores, initialStoreId }: Props) {
+  const initialSelectedStoreId =
+    initialStoreId && stores.some((store) => store.id === initialStoreId)
+      ? initialStoreId
+      : stores[0]?.id ?? "";
+  const [storeId, setStoreId] = useState(initialSelectedStoreId);
   const [files, setFiles] = useState<UploadFileItem[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -345,7 +350,7 @@ export default function UploadDesignClient({ stores }: Props) {
       )}
 
       <div style={{ marginTop: 20 }}>
-        <Link href="/designs" className="btn btn-secondary">
+        <Link href={storeId ? `/designs?storeId=${storeId}` : "/designs"} className="btn btn-secondary">
           Xem thư viện
         </Link>
       </div>

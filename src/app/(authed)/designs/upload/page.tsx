@@ -7,9 +7,15 @@ export const metadata = {
   title: "Upload Designs - MockupAI",
 };
 
-export default async function UploadDesignPage() {
+export default async function UploadDesignPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ storeId?: string }>;
+}) {
   const session = await validateSession();
   if (!session) redirect("/login");
+
+  const { storeId } = await searchParams;
 
   const stores = await prisma.store.findMany({
     where: { tenantId: session.tenantId, status: "ACTIVE" },
@@ -17,5 +23,8 @@ export default async function UploadDesignPage() {
     orderBy: { name: "asc" },
   });
 
-  return <UploadDesignClient stores={stores} />;
+  const validatedStore = stores.find((store) => store.id === storeId) ?? null;
+  const initialStoreId = validatedStore?.id ?? null;
+
+  return <UploadDesignClient stores={stores} initialStoreId={initialStoreId} />;
 }
