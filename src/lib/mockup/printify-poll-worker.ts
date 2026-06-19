@@ -6,9 +6,8 @@ import { isFinalBullMqAttempt } from "./progress";
 import type { PrintifyMockupPollPayload } from "./queue";
 import { getMockupCompositeQueue } from "./queue";
 import { cacheRemoteMockupImage } from "./remote-media";
-import { resolveCustomMockupSourceSelection } from "./custom-source-selection";
-import { resolveEffectiveCompositeRegion } from "./custom-library";
-import { buildCustomMockupSourceUrl, type MockupSourceType } from "./source-url";
+// custom-source-selection and resolveEffectiveCompositeRegion removed — now using wizard picks
+import { buildCustomMockupSourceUrl, buildLibraryMockupUrl, type MockupSourceType } from "./source-url";
 import { sseChannels } from "../sse/channel";
 import { redisConnection } from "@/lib/queue/queue";
 
@@ -55,6 +54,16 @@ export async function processPrintifyMockupPollJob(
       data: { status: "running", errorMessage: null },
     });
 
+    const mockupJobFilter = await prisma.mockupJob.findUnique({
+      where: { id: mockupJobId },
+      select: { colorFilterIds: true, colorGroup: true },
+    });
+    const colorFilterIds = coerceStringArray(mockupJobFilter?.colorFilterIds);
+    const allowedColorNames =
+      colorFilterIds.length > 0
+        ? await resolveColorNamesForFilter(draftId, colorFilterIds)
+        : null;
+
     const { client, externalShopId } = await getClientForStore(storeId);
     const mockups = await pollPrintifyMockups({
       client,
@@ -70,11 +79,14 @@ export async function processPrintifyMockupPollJob(
       client,
       externalShopId,
     });
-    const printifyRows = await buildMockupImageRows({ mockups, variantColorLookup });
+    const printifyRows = (await buildMockupImageRows({ mockups, variantColorLookup })).filter(
+      (row) => !allowedColorNames || allowedColorNames.has(normalizeColorKey(row.colorName)),
+    );
     const { draftRows, templateRows, mode } = await buildCustomRowsForDraft({
       draftId,
       storeId,
       variantColorLookup,
+      colorFilterIds,
     });
 
     // Determine which bucket gets default inclusion
@@ -245,6 +257,7 @@ type CustomSourceInput = {
   outputPath: string | null;
   isPrimary: boolean;
   sortOrder: number;
+  templateMockupItemId?: string;
 };
 
 type CustomColorInput = {
@@ -293,7 +306,9 @@ export function buildCustomMockupImageRows(input: {
       variantId: firstMatchingVariantId(color.name, input.variantColorLookup),
       colorName: color.name,
       viewPosition: source.view,
-      sourceUrl: buildCustomMockupSourceUrl(source.id, input.scope, source.renderMode),
+      sourceUrl: source.templateMockupItemId
+        ? buildLibraryMockupUrl(source.templateMockupItemId, source.colorId)
+        : buildCustomMockupSourceUrl(source.id, input.scope, source.renderMode),
       compositeUrl: null,
       compositeStatus: "pending",
       mockupType: source.sceneType,
@@ -348,6 +363,7 @@ async function buildCustomRowsForDraft(input: {
   draftId: string;
   storeId: string;
   variantColorLookup: Map<number, { colorName: string }>;
+  colorFilterIds?: string[];
 }): Promise<{ draftRows: MockupImageRow[]; templateRows: MockupImageRow[]; mode: "PRINTIFY" | "CUSTOM" }> {
   const draft = await prisma.wizardDraft.findUnique({
     where: { id: input.draftId },
@@ -356,7 +372,7 @@ async function buildCustomRowsForDraft(input: {
       store: {
         include: { colors: true },
       },
-      mockupLibraryPicks: { select: { sourceId: true, compositeRegionPx: true } },
+      mockupLibraryPicks: { select: { templateMockupItemId: true, compositeRegionPx: true, colorId: true } },
     },
   });
   if (!draft) return { draftRows: [], templateRows: [], mode: "PRINTIFY" };
@@ -371,7 +387,11 @@ async function buildCustomRowsForDraft(input: {
 
   const defaultMockupSource = template.defaultMockupSource ?? "PRINTIFY";
 
-  const enabledColorSet = new Set(draft.enabledColorIds);
+  const enabledColorSet = new Set(
+    input.colorFilterIds && input.colorFilterIds.length > 0
+      ? input.colorFilterIds
+      : draft.enabledColorIds,
+  );
   const colorsById = new Map(
     (draft.store?.colors ?? [])
       .filter((color) => enabledColorSet.has(color.id))
@@ -381,85 +401,51 @@ async function buildCustomRowsForDraft(input: {
 
   const colorIds = [...colorsById.keys()];
 
-  // Load DRAFT sources
-  const draftSources = await prisma.customMockupSource.findMany({
+  // Load picks for the draft (these cover both draft-specific and template-attached mockups)
+  const picks = await prisma.wizardDraftMockupLibraryPick.findMany({
     where: {
-      scope: "DRAFT",
       draftId: input.draftId,
       colorId: { in: colorIds },
-      isActive: true,
-      deletedAt: null,
     },
-    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-  });
-
-  const templateSources = await prisma.customMockupSource.findMany({
-    where: {
-      scope: "TEMPLATE",
-      templateId: template.id,
-      colorId: { in: colorIds },
-      isActive: true,
-      deletedAt: null,
+    orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    include: {
+      templateMockupItem: {
+        include: { mockup: true },
+      },
     },
-    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
 
-  const resolvedSelection = resolveCustomMockupSourceSelection({
-    sources: [...draftSources, ...templateSources],
-    picks: draft.mockupLibraryPicks ?? [],
+  // Map picks to source-like entries for the row builder
+  const mapPick = (pick: typeof picks[number]) => ({
+    id: pick.id,
+    colorId: pick.colorId,
+    label: pick.templateMockupItem.mockup.name,
+    view: pick.templateMockupItem.mockup.view,
+    sceneType: pick.templateMockupItem.mockup.sceneType,
+    renderMode: pick.templateMockupItem.mockup.renderMode as "COMPOSITE",
+    outputPath: null as string | null,
+    isPrimary: pick.isPrimary,
+    sortOrder: pick.sortOrder,
+    templateMockupItemId: pick.templateMockupItemId,
   });
-  const selectedDraftSources = resolvedSelection.selectedSources.filter(
-    (source) => source.scope === "DRAFT",
-  );
-  const selectedTemplateSources = resolvedSelection.selectedSources.filter(
-    (source) => source.scope === "TEMPLATE",
-  );
-
-  // Build pick placement lookup: TEMPLATE scope sources may have their
-  // placement stored on WizardDraftMockupLibraryPick, not on the source itself.
-  const pickRegionBySourceId = new Map(
-    (draft.mockupLibraryPicks ?? [])
-      .filter((p) => p.compositeRegionPx != null)
-      .map((p) => [p.sourceId, p.compositeRegionPx]),
-  );
-
-  const mapSource = (source: typeof draftSources[number]) => ({
-    id: source.id,
-    colorId: source.colorId,
-    label: source.label,
-    view: source.view,
-    sceneType: source.sceneType,
-    renderMode: source.renderMode,
-    outputPath: source.outputPath,
-    isPrimary: source.isPrimary,
-    sortOrder: source.sortOrder,
-  });
-  const isRenderableSource = (source: typeof draftSources[number]) => {
-    if (source.renderMode !== "COMPOSITE") return true; // FINAL mode is always renderable
-    // COMPOSITE: needs effective placement (source or pick, depending on scope)
-    const effective = resolveEffectiveCompositeRegion({
-      scope: source.scope as "DRAFT" | "TEMPLATE",
-      sourceRegion: source.compositeRegionPx,
-      pickRegion: pickRegionBySourceId.get(source.id) ?? null,
-    });
+  const isRenderablePick = (pick: typeof picks[number]) => {
+    // COMPOSITE picks need a valid region (on pick or on the library item)
+    if (pick.templateMockupItem.mockup.renderMode !== "COMPOSITE") return true;
+    const effective = pick.compositeRegionPx ?? pick.templateMockupItem.mockup.compositeRegionPx;
     return effective !== null;
   };
 
+  const renderablePicks = picks.filter(isRenderablePick).map(mapPick);
+
   const draftRows = buildCustomMockupImageRows({
-    sources: selectedDraftSources.filter(isRenderableSource).map(mapSource),
+    sources: renderablePicks,
     colorsById,
     variantColorLookup: input.variantColorLookup,
     scope: "DRAFT",
     sortOffset: 0,
   });
 
-  const templateRows = buildCustomMockupImageRows({
-    sources: selectedTemplateSources.filter(isRenderableSource).map(mapSource),
-    colorsById,
-    variantColorLookup: input.variantColorLookup,
-    scope: "TEMPLATE",
-    sortOffset: 10000,
-  });
+  const templateRows: ReturnType<typeof buildCustomMockupImageRows> = [];
 
   return { draftRows, templateRows, mode: defaultMockupSource };
 }
@@ -673,4 +659,26 @@ function normalizeColorKey(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+function coerceStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+async function resolveColorNamesForFilter(
+  draftId: string,
+  colorFilterIds: string[],
+): Promise<Set<string>> {
+  const draft = await prisma.wizardDraft.findUnique({
+    where: { id: draftId },
+    include: { store: { include: { colors: true } } },
+  });
+  const colorIdSet = new Set(colorFilterIds);
+  return new Set(
+    (draft?.store?.colors ?? [])
+      .filter((color) => colorIdSet.has(color.id))
+      .map((color) => normalizeColorKey(color.name)),
+  );
 }

@@ -24,6 +24,7 @@ model Tenant {
   rolePermissions  TenantRolePermission[]
   inkhubCredential InkhubCredential?
   twCredentials    TripleWhaleCredential[]
+  mockupLibraryItems MockupLibraryItem[]
 
   @@map("tenants")
 }
@@ -40,10 +41,9 @@ model User {
   createdAt          DateTime   @default(now()) @map("created_at")
   updatedAt          DateTime   @updatedAt @map("updated_at")
 
-  tenant                Tenant               @relation(fields: [tenantId], references: [id])
-  sessions              Session[]
-  customMockupsUploaded CustomMockupSource[] @relation("CustomMockupUploadedBy")
-  customMockupsUpdated  CustomMockupSource[] @relation("CustomMockupUpdatedBy")
+  tenant                     Tenant              @relation(fields: [tenantId], references: [id])
+  sessions                   Session[]
+  uploadedMockupLibraryItems MockupLibraryItem[] @relation("MockupLibraryUploadedBy")
 
   @@index([tenantId])
   @@index([email, status])
@@ -216,7 +216,7 @@ model Store {
   templates           StoreMockupTemplate[]
   wizardDrafts        WizardDraft[]
   listings            Listing[]
-  customMockupSources CustomMockupSource[]
+  designs             Design[]
 
   @@unique([tenantId, shopifyDomain])
   @@index([tenantId, status])
@@ -247,14 +247,14 @@ model StoreColor {
   storeId         String  @map("store_id")
   name            String
   hex             String
+  colorGroup      String  @default("auto") @map("color_group")
   printifyColorId String? @map("printify_color_id")
   enabled         Boolean @default(true)
   sortOrder       Int     @default(0) @map("sort_order")
 
-  store               Store                          @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  templateColors      TemplateColor[]
-  customMockupSources CustomMockupSource[]
-  libraryPicks        WizardDraftMockupLibraryPick[]
+  store          Store                          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  templateColors TemplateColor[]
+  libraryPicks   WizardDraftMockupLibraryPick[]
 
   @@unique([storeId, name])
   @@index([storeId])
@@ -288,12 +288,14 @@ model StoreMockupTemplate {
   blueprintImageUrl       String?          @map("blueprint_image_url")
   blueprintBrand          String?          @map("blueprint_brand")
   defaultMockupSource     TemplateDefaultMockupSource @default(PRINTIFY) @map("default_mockup_source")
+  basePriceUsd            Decimal? @map("base_price_usd") @db.Decimal(10, 2)
+  priceBySizeDefault      Json?    @map("price_by_size_default")
 
-  store               Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  colors              TemplateColor[]
-  listings            Listing[]
-  wizardDrafts        WizardDraft[]
-  customMockupSources CustomMockupSource[]
+  store        Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  colors       TemplateColor[]
+  listings     Listing[]
+  wizardDrafts WizardDraft[]
+  mockupItems  TemplateMockupItem[]
 
   @@index([storeId])
   @@map("store_mockup_templates")
@@ -324,12 +326,11 @@ enum TemplateDefaultMockupSource {
   CUSTOM
 }
 
-enum CustomMockupScope {
-  TEMPLATE
-  DRAFT
+enum MockupLibraryRenderMode {
+  COMPOSITE
 }
 
-enum CustomMockupView {
+enum MockupLibraryView {
   front
   back
   sleeve_left
@@ -338,17 +339,12 @@ enum CustomMockupView {
   lifestyle
 }
 
-enum CustomMockupScene {
+enum MockupLibraryScene {
   flat_lay
   hanging
   lifestyle
   model
   detail
-}
-
-enum CustomRenderMode {
-  FINAL
-  COMPOSITE
 }
 
 enum WizardMockupSourceMode {
@@ -357,56 +353,53 @@ enum WizardMockupSourceMode {
   DRAFT_CUSTOM
 }
 
-model CustomMockupSource {
-  id    String            @id @default(cuid())
-  scope CustomMockupScope @default(TEMPLATE)
+model MockupLibraryItem {
+  id                String                  @id @default(cuid())
+  tenantId          String                  @map("tenant_id")
+  name              String
+  storagePath       String                  @map("storage_path")
+  previewPath       String?                 @map("preview_path")
+  width             Int
+  height            Int
+  view              MockupLibraryView
+  sceneType         MockupLibraryScene      @map("scene_type")
+  renderMode        MockupLibraryRenderMode @default(COMPOSITE) @map("render_mode")
+  compositeRegionPx Json?                   @map("composite_region_px")
+  uploadedById      String?                 @map("uploaded_by_id")
+  mimeType          String                  @map("mime_type")
+  fileSizeBytes     Int                     @map("file_size_bytes")
+  isActive          Boolean                 @default(true) @map("is_active")
+  deletedAt         DateTime?               @map("deleted_at")
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
 
-  storeId String @map("store_id")
-  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  uploadedBy    User?                @relation("MockupLibraryUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  templateItems TemplateMockupItem[]
 
-  // Required when scope=TEMPLATE. Optional snapshot/display field for scope=DRAFT.
-  templateId String?              @map("template_id")
-  template   StoreMockupTemplate? @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  @@index([tenantId, isActive, deletedAt])
+  @@index([tenantId, name])
+  @@map("mockup_library_items")
+}
 
-  // Required when scope=DRAFT. Null when scope=TEMPLATE.
-  draftId String?      @map("wizard_draft_id")
-  draft   WizardDraft? @relation(fields: [draftId], references: [id], onDelete: Cascade)
+model TemplateMockupItem {
+  id                String   @id @default(cuid())
+  templateId        String   @map("template_id")
+  mockupId          String   @map("mockup_id")
+  appliesToColorIds Json     @default("[]") @map("applies_to_color_ids")
+  sortOrder         Int      @default(0) @map("sort_order")
+  isPrimary         Boolean  @default(false) @map("is_primary")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
 
-  colorId String     @map("color_id")
-  color   StoreColor @relation(fields: [colorId], references: [id], onDelete: Cascade)
+  template StoreMockupTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  mockup   MockupLibraryItem   @relation(fields: [mockupId], references: [id], onDelete: Restrict)
+  picks    WizardDraftMockupLibraryPick[]
 
-  storagePath String  @map("storage_path")
-  // normalized upload source
-
-  outputPath String? @map("output_path")
-  // FINAL only: stable finished image copied from normalized source.
-  // COMPOSITE: always null. Per-job output is MockupImage.compositeUrl.
-
-  label             String?
-  view              CustomMockupView
-  sceneType         CustomMockupScene @map("scene_type")
-  renderMode        CustomRenderMode  @map("render_mode")
-  compositeRegionPx Json?             @map("composite_region_px")
-
-  isPrimary Boolean   @default(false) @map("is_primary")
-  isActive  Boolean   @default(true) @map("is_active")
-  deletedAt DateTime? @map("deleted_at")
-  sortOrder Int       @default(0) @map("sort_order")
-
-  uploadedById String? @map("uploaded_by_id")
-  uploadedBy   User?   @relation("CustomMockupUploadedBy", fields: [uploadedById], references: [id])
-  updatedById  String? @map("updated_by_id")
-  updatedBy    User?   @relation("CustomMockupUpdatedBy", fields: [updatedById], references: [id])
-
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  libraryPicks WizardDraftMockupLibraryPick[]
-
-  @@index([scope, storeId, templateId, colorId, isActive])
-  @@index([scope, draftId, colorId, isActive])
-  @@index([templateId, colorId])
-  @@map("custom_mockup_sources")
+  @@unique([templateId, mockupId])
+  @@index([templateId, isPrimary, sortOrder])
+  @@index([mockupId])
+  @@map("template_mockup_items")
 }
 
 // ============================================================
@@ -416,6 +409,7 @@ model CustomMockupSource {
 model Design {
   id               String       @id @default(cuid())
   tenantId         String       @map("tenant_id")
+  storeId          String?      @map("store_id")
   ownerUserId      String       @map("owner_user_id")
   name             String
   originalFilename String       @map("original_filename")
@@ -431,12 +425,14 @@ model Design {
   createdAt        DateTime     @default(now()) @map("created_at")
   updatedAt        DateTime     @updatedAt @map("updated_at")
 
+  store        Store?              @relation(fields: [storeId], references: [id], onDelete: SetNull)
   usages       DesignUsage[]
   wizardDrafts WizardDraft[]
   draftDesigns WizardDraftDesign[]
   mockupJobs   MockupJob[]
 
   @@index([tenantId, status])
+  @@index([tenantId, storeId, status])
   @@index([tenantId, name])
   @@map("designs")
 }
@@ -490,13 +486,13 @@ model WizardDraft {
 
   mockupJobs          MockupJob[]
   draftDesigns        WizardDraftDesign[]
+  designPairs         WizardDraftDesignPair[]
   listings            Listing[]
   design              Design?                       @relation(fields: [designId], references: [id])
   tenant              Tenant                        @relation(fields: [tenantId], references: [id])
   store               Store?                        @relation(fields: [storeId], references: [id])
   templateId          String?                       @map("template_id")
   template            StoreMockupTemplate?          @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  customMockupSources CustomMockupSource[]
   mockupLibraryPicks  WizardDraftMockupLibraryPick[]
 
   @@index([tenantId, updatedAt])
@@ -518,6 +514,8 @@ model WizardDraftDesign {
   design   Design      @relation(fields: [designId], references: [id], onDelete: Cascade)
   jobs     MockupJob[]
   listings Listing[]
+  lightPairs WizardDraftDesignPair[] @relation("PairLightDesign")
+  darkPairs  WizardDraftDesignPair[] @relation("PairDarkDesign")
 
   @@unique([draftId, designId])
   @@index([draftId, sortOrder])
@@ -525,22 +523,46 @@ model WizardDraftDesign {
   @@map("wizard_draft_designs")
 }
 
+model WizardDraftDesignPair {
+  id                 String   @id @default(cuid())
+  draftId            String   @map("wizard_draft_id")
+  baseName           String   @map("base_name")
+  lightDraftDesignId String   @map("light_draft_design_id")
+  darkDraftDesignId  String   @map("dark_draft_design_id")
+  sortOrder          Int      @default(0) @map("sort_order")
+  aiContent          Json?    @map("ai_content")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  draft       WizardDraft       @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  lightDesign WizardDraftDesign @relation("PairLightDesign", fields: [lightDraftDesignId], references: [id], onDelete: Cascade)
+  darkDesign  WizardDraftDesign @relation("PairDarkDesign", fields: [darkDraftDesignId], references: [id], onDelete: Cascade)
+  listing     Listing?
+
+  @@unique([draftId, baseName])
+  @@unique([draftId, lightDraftDesignId])
+  @@unique([draftId, darkDraftDesignId])
+  @@index([draftId, sortOrder])
+  @@map("wizard_draft_design_pairs")
+}
+
 model WizardDraftMockupLibraryPick {
-  id        String   @id @default(cuid())
-  draftId   String   @map("wizard_draft_id")
-  sourceId  String   @map("source_id")
-  colorId   String   @map("color_id")
-  isPrimary Boolean  @default(false) @map("is_primary")
+  id                   String   @id @default(cuid())
+  draftId              String   @map("wizard_draft_id")
+  templateMockupItemId String   @map("template_mockup_item_id")
+  colorId              String   @map("color_id")
+  isPrimary            Boolean  @default(false) @map("is_primary")
   sortOrder         Int      @default(0) @map("sort_order")
   compositeRegionPx Json?    @map("composite_region_px")
   createdAt         DateTime @default(now()) @map("created_at")
 
-  draft  WizardDraft        @relation(fields: [draftId], references: [id], onDelete: Cascade)
-  source CustomMockupSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  color  StoreColor         @relation(fields: [colorId], references: [id], onDelete: Cascade)
+  draft              WizardDraft       @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  templateMockupItem TemplateMockupItem @relation(fields: [templateMockupItemId], references: [id], onDelete: Restrict)
+  color              StoreColor         @relation(fields: [colorId], references: [id], onDelete: Cascade)
 
-  @@unique([draftId, sourceId])
+  @@unique([draftId, templateMockupItemId, colorId])
   @@index([draftId, colorId])
+  @@index([templateMockupItemId])
   @@map("wizard_draft_mockup_library_picks")
 }
 
@@ -589,6 +611,8 @@ model MockupJob {
   failedImages      Int      @default(0) @map("failed_images")
   errorMessage      String?  @map("error_message")
   placementSnapshot Json     @map("placement_snapshot") // PlacementData at job creation time
+  colorFilterIds    Json?    @map("color_filter_ids")
+  colorGroup        String?  @map("color_group")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
@@ -717,6 +741,7 @@ model Listing {
   templateId        String?       @map("template_id")
   wizardDraftId     String?       @map("wizard_draft_id")
   wizardDraftDesignId String?     @unique @map("wizard_draft_design_id")
+  wizardDraftDesignPairId String? @unique @map("wizard_draft_design_pair_id")
   shopifyProductId  String?       @map("shopify_product_id")
   printifyProductId String?       @map("printify_product_id")
   status            ListingStatus @default(PUBLISHING)
@@ -734,6 +759,7 @@ model Listing {
   template          StoreMockupTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   wizardDraft       WizardDraft?         @relation(fields: [wizardDraftId], references: [id], onDelete: SetNull)
   wizardDraftDesign WizardDraftDesign?   @relation(fields: [wizardDraftDesignId], references: [id], onDelete: SetNull)
+  wizardDraftDesignPair WizardDraftDesignPair? @relation(fields: [wizardDraftDesignPairId], references: [id], onDelete: SetNull)
   variants          ListingVariant[]
   publishJobs       PublishJob[]
 

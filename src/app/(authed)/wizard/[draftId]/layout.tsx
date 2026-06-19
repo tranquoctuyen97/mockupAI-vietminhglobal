@@ -43,10 +43,9 @@ export default function WizardLayout({
 
   useEffect(() => {
     if (!draftId) return;
-    // When on step-5, bundle pricing + sizes data into the draft response
-    // to eliminate 2 extra API calls from the review page.
+    // When on step-5, bundle size data into the draft response.
     const isStep5 = pathname.includes("step-5");
-    loadDraft(draftId, isStep5 ? "pricing,sizes" : undefined);
+    loadDraft(draftId, isStep5 ? "sizes" : undefined);
   }, [draftId, loadDraft, pathname]);
 
   // Determine current step from URL
@@ -183,8 +182,20 @@ export default function WizardLayout({
           <button
             className="btn btn-primary"
             onClick={async () => {
-              if (currentStep === 2 && getDraftDesignIdsFromDraft(useWizardStore.getState().draft).length === 0) {
-                return;
+              if (currentStep === 2) {
+                const store = useWizardStore.getState();
+                const selectedDesignCount = getDraftDesignIdsFromDraft(store.draft).length;
+                if (selectedDesignCount === 0) return;
+
+                await store.saveDraftImmediately();
+
+                const freshDraft = useWizardStore.getState().draft;
+                const pairCount = freshDraft?.designPairs?.length ?? 0;
+                // Only block when pairs exist and design count doesn't match pair expectation.
+                // Independent designs (pairCount === 0) are always valid.
+                if (pairCount > 0 && selectedDesignCount !== pairCount * 2) {
+                  return;
+                }
               }
               if (draft) {
                 const store = useWizardStore.getState();

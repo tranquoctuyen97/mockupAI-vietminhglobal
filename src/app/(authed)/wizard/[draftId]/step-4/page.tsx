@@ -35,11 +35,25 @@ interface AiContent {
   source?: "ai" | "manual";
 }
 
+interface PairContentEntry {
+  id: string;
+  baseName: string;
+  aiContent?: unknown | null;
+  lightDesign?: { design?: { name?: string | null } | null } | null;
+  darkDesign?: { design?: { name?: string | null } | null } | null;
+}
+
 export default function Step5ContentPage() {
   const { draftId } = useParams<{ draftId: string }>();
-  const { draft, updateDraft } = useWizardStore();
+  const { draft, updateDraft, loadDraft } = useWizardStore();
 
-  const existing = (draft?.aiContent as AiContent | null) || null;
+  const pairs = ((draft?.designPairs ?? []) as PairContentEntry[]).sort(
+    (a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
+  );
+  const pairMode = pairs.length > 0;
+  const [activePairId, setActivePairId] = useState("");
+  const activePair = pairs.find((pair) => pair.id === activePairId) ?? pairs[0] ?? null;
+  const existing = ((pairMode ? activePair?.aiContent : draft?.aiContent) as AiContent | null) || null;
 
   const [state, setState] = useState<ContentState>(existing?.title ? "ready" : "empty");
   const [content, setContent] = useState<AiContent>({
@@ -58,19 +72,23 @@ export default function Step5ContentPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
+  useEffect(() => {
+    if (!activePairId && pairs[0]) {
+      setActivePairId(pairs[0].id);
+    }
+  }, [activePairId, pairs]);
+
   // Sync from draft (e.g. after navigation back)
   useEffect(() => {
-    if (existing?.title && state === "empty") {
-      setContent({
-        title: existing.title || "",
-        description: existing.description || "",
-        tags: existing.tags || [],
-        collections: normalizeOrganizationCollections(existing.collections || []),
-        altText: existing.altText || "",
-      });
-      setState("ready");
-    }
-  }, [existing?.title, state]);
+    setContent({
+      title: existing?.title || "",
+      description: existing?.description || "",
+      tags: existing?.tags || [],
+      collections: normalizeOrganizationCollections(existing?.collections || []),
+      altText: existing?.altText || "",
+    });
+    setState(existing?.title ? "ready" : "empty");
+  }, [activePairId, draft?.id, existing?.title]);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,13 +108,25 @@ export default function Step5ContentPage() {
   // Ready content keeps current auto-save behavior. Manual edit content stays
   // pending in the wizard store for Save/Next, but does not debounce-write DB.
   useEffect(() => {
+    if (pairMode) return;
     if (state === "ready") {
       updateDraft({ aiContent: content });
     }
     if (state === "manual-edit") {
       updateDraft({ aiContent: { ...content, source: "manual" } }, { debounce: false });
     }
-  }, [content, state, updateDraft]);
+  }, [content, pairMode, state, updateDraft]);
+
+  async function savePairContent(nextContent: AiContent) {
+    if (!activePair) return;
+    const res = await fetch(`/api/wizard/drafts/${draftId}/design-pairs/${activePair.id}/content`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(nextContent),
+    });
+    if (!res.ok) throw new Error("Không lưu được nội dung pair");
+    await loadDraft(draftId);
+  }
 
   // ── AI generate ──────────────────────────────────────────────────────────
   async function handleGenerateAI() {
@@ -110,6 +140,8 @@ export default function Step5ContentPage() {
     try {
       const res = await fetch(`/api/wizard/drafts/${draftId}/generate-content`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
@@ -128,7 +160,12 @@ export default function Step5ContentPage() {
         return;
       }
 
-      const c = data.content as AiContent;
+      const pairContent = pairMode && activePair
+        ? (data.pairs as Array<{ id: string; content: AiContent }> | undefined)
+            ?.find((pair) => pair.id === activePair.id)
+            ?.content
+        : null;
+      const c = (pairContent ?? data.content) as AiContent;
       setContent({
         title: c.title || "",
         description: c.description || "",
@@ -138,6 +175,7 @@ export default function Step5ContentPage() {
       });
       setCached(data.cached ?? false);
       setState("ready");
+      if (pairMode) await loadDraft(draftId);
     } catch (err: any) {
       clearTimeout(timeoutId);
       if (err?.name === "AbortError") {
@@ -166,8 +204,12 @@ export default function Step5ContentPage() {
         source: "manual" as const,
       };
       setContent(manualContent);
-      updateDraft({ aiContent: manualContent });
-      await useWizardStore.getState().saveDraftImmediately();
+      if (pairMode) {
+        await savePairContent(manualContent);
+      } else {
+        updateDraft({ aiContent: manualContent });
+        await useWizardStore.getState().saveDraftImmediately();
+      }
       setState("ready");
     } catch {
       setSaveError("Không thể kết nối server.");
@@ -180,14 +222,17 @@ export default function Step5ContentPage() {
   async function handleSaveReady() {
     setSaving(true);
     try {
-      updateDraft({
-        aiContent: {
-          ...content,
-          tags: mergeOptimizedTags([], content.tags),
-          collections: normalizeOrganizationCollections(content.collections),
-        },
-      });
-      await useWizardStore.getState().saveDraftImmediately();
+      const nextContent = {
+        ...content,
+        tags: mergeOptimizedTags([], content.tags),
+        collections: normalizeOrganizationCollections(content.collections),
+      };
+      if (pairMode) {
+        await savePairContent(nextContent);
+      } else {
+        updateDraft({ aiContent: nextContent });
+        await useWizardStore.getState().saveDraftImmediately();
+      }
     } catch {
       // ignore
     } finally {
@@ -221,7 +266,9 @@ export default function Step5ContentPage() {
           canonicalProductType: null,
           currentTags: content.tags,
           currentCollections: content.collections,
-          designContext: draft?.design?.name ?? null,
+          designContext: activePair
+            ? `${activePair.baseName} ${activePair.lightDesign?.design?.name ?? ""} ${activePair.darkDesign?.design?.name ?? ""}`
+            : draft?.design?.name ?? null,
           niche: null,
         }),
       });
@@ -446,8 +493,60 @@ export default function Step5ContentPage() {
         )}
       </div>
       <p style={{ opacity: 0.5, fontSize: "0.85rem", margin: "0 0 20px" }}>
-        Tạo nội dung SEO bằng AI hoặc viết tay
+        {pairMode ? "Tạo nội dung riêng cho từng cặp design" : "Tạo nội dung SEO bằng AI hoặc viết tay"}
       </p>
+
+      {pairMode && (
+        <div
+          className="card"
+          style={{
+            padding: 12,
+            marginBottom: 16,
+            display: "flex",
+            gap: 8,
+            overflowX: "auto",
+          }}
+        >
+          {pairs.map((pair) => {
+            const active = pair.id === activePair?.id;
+            const ready = Boolean((pair.aiContent as AiContent | null)?.title);
+            return (
+              <button
+                key={pair.id}
+                type="button"
+                onClick={() => setActivePairId(pair.id)}
+                style={{
+                  minWidth: 180,
+                  textAlign: "left",
+                  padding: "9px 11px",
+                  borderRadius: "var(--radius-sm)",
+                  border: active
+                    ? "1px solid var(--color-wise-green)"
+                    : "1px solid var(--border-default)",
+                  backgroundColor: active ? "rgba(146, 198, 72, 0.08)" : "transparent",
+                  cursor: "pointer",
+                }}
+              >
+                <p
+                  style={{
+                    margin: 0,
+                    fontWeight: 800,
+                    fontSize: "0.82rem",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {pair.baseName}
+                </p>
+                <p style={{ margin: "3px 0 0", fontSize: "0.7rem", opacity: 0.55 }}>
+                  {ready ? "Đã có content" : "Chưa có content"}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── EMPTY STATE ── */}
       {state === "empty" && (

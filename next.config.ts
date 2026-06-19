@@ -4,7 +4,7 @@ const nextConfig: NextConfig = {
   output: "standalone",
   allowedDevOrigins: ["*.ngrok-free.dev"],
   experimental: {
-    proxyClientMaxBodySize: '100mb',
+    proxyClientMaxBodySize: '500mb',
   },
   images: {
     remotePatterns: [

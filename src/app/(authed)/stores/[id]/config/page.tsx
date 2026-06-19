@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { MultiViewPlacementEditor } from "@/components/placement/MultiViewPlacementEditor";
+import { TemplateMockupPicker, type PendingAssignment } from "@/components/mockup/TemplateMockupPicker";
 import type { PlacementData, ViewKey } from "@/lib/placement/types";
 import {
   formatPlacementViewCount,
@@ -57,6 +58,8 @@ interface TemplateDetail {
   isDefault: boolean;
   sortOrder: number;
   defaultMockupSource: "PRINTIFY" | "CUSTOM";
+  basePriceUsd: number | null;
+  priceBySizeDefault: Record<string, number> | null;
   blueprintImageUrl?: string | null;
   blueprintBrand?: string | null;
   colors: Array<{
@@ -103,6 +106,36 @@ interface SizeOption {
   isAvailable: boolean;
   costCents: number;
   costDeltaCents: number;
+}
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  border: "1px solid var(--border-default)",
+  borderRadius: 8,
+  padding: "9px 10px",
+  fontSize: "0.84rem",
+  background: "var(--bg-primary)",
+  color: "var(--text-primary)",
+};
+
+const pricingThStyle: React.CSSProperties = {
+  padding: "10px 12px",
+  fontSize: "0.72rem",
+  fontWeight: 900,
+  color: "var(--text-muted)",
+  textTransform: "uppercase",
+};
+
+const pricingTdStyle: React.CSSProperties = {
+  padding: "10px 12px",
+  verticalAlign: "middle",
+};
+
+function parseOptionalMoney(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.round(parsed * 100) / 100;
 }
 
 type Tab = "printify" | "templates" | "overview";
@@ -601,6 +634,8 @@ function createEmptyTemplate(sortOrder: number, isDefault = false, name = ""): T
     isDefault,
     sortOrder,
     defaultMockupSource: "PRINTIFY",
+    basePriceUsd: null,
+    priceBySizeDefault: null,
     colors: [],
   };
 }
@@ -622,10 +657,16 @@ function TemplatesSection({
   const [editingTemplate, setEditingTemplate] = useState<TemplateDetail | null>(null);
   const [originalTemplate, setOriginalTemplate] = useState<TemplateDetail | null>(null);
   const [tempTemplateData, setTempTemplateData] = useState<TemplateDetail | null>(null);
-  type EditorStep = "blueprint" | "variants" | "placement" | "mockups";
+  type EditorStep = "blueprint" | "variants" | "placement" | "mockups" | "pricing";
   const [editorStep, setEditorStep] = useState<EditorStep>("blueprint");
-  
-  const [pendingMockups, setPendingMockups] = useState<Map<string, { file: File; previewUrl: string }>>(new Map());
+
+  // Create mode: pending mockup assignments per color
+  const [pendingAssignments, setPendingAssignments] = useState<Map<string, PendingAssignment>>(new Map());
+
+  // Reset pending assignments when opening editor or switching templates
+  const resetPendingAssignments = useCallback(() => {
+    setPendingAssignments(new Map());
+  }, []);
 
   const showMockupStep = useMemo(() => {
     if (!tempTemplateData) return false;
@@ -635,37 +676,12 @@ function TemplatesSection({
     );
   }, [tempTemplateData]);
 
-  // Clear pending mockups when switching to PRINTIFY
-  const currentMockupSource = tempTemplateData?.defaultMockupSource;
-  useEffect(() => {
-    if (currentMockupSource === "PRINTIFY") {
-      setPendingMockups((prev) => {
-        if (prev.size === 0) return prev;
-        prev.forEach((entry) => {
-          URL.revokeObjectURL(entry.previewUrl);
-        });
-        return new Map();
-      });
-    }
-  }, [currentMockupSource]);
-
-  // Clean up object URLs on unmount
-  const pendingMockupsRef = useRef(pendingMockups);
-  useEffect(() => {
-    pendingMockupsRef.current = pendingMockups;
-  }, [pendingMockups]);
-
-  useEffect(() => {
-    return () => {
-      pendingMockupsRef.current.forEach((entry) => {
-        URL.revokeObjectURL(entry.previewUrl);
-      });
-    };
-  }, []);
-
-  // Redirect away from mockups step if it is no longer valid
+  // Redirect away from mockups/placement steps if they are no longer valid
   useEffect(() => {
     if (editorStep === "mockups" && !showMockupStep) {
+      setEditorStep("blueprint");
+    }
+    if (editorStep === "placement" && showMockupStep) {
       setEditorStep("blueprint");
     }
   }, [showMockupStep, editorStep]);
@@ -679,19 +695,14 @@ function TemplatesSection({
   }, []);
 
   const handleCloseEditor = useCallback(() => {
-    // Cleanup preview URLs
-    pendingMockups.forEach((entry) => {
-      URL.revokeObjectURL(entry.previewUrl);
-    });
-    setPendingMockups(new Map());
     setEditingTemplate(null);
     setTempTemplateData(null);
     setOriginalTemplate(null);
     setEditorStep("blueprint");
-  }, [pendingMockups]);
+  }, []);
 
-  // Build mockup URLs by view for placement preview
-  // Both modes: always try blueprintImageUrl as fallback background
+  // Build mockup URLs by view for placement preview background
+  // Uses blueprintImageUrl as fallback for both PRINTIFY and CUSTOM modes
   const mockupUrlsByView = useMemo<Record<string, string | null>>(() => {
     if (!tempTemplateData) return {};
 
@@ -699,35 +710,11 @@ function TemplatesSection({
     const views = getEnabledViews(placementData);
     const blueprintUrl = tempTemplateData.blueprintImageUrl || null;
 
-    // CUSTOM mode: try pending uploads first, then fallback to blueprintImageUrl
-    if (tempTemplateData.defaultMockupSource === "CUSTOM") {
-      const firstColorName = tempTemplateData.colors?.[0]?.color?.name?.toLowerCase();
-      let bestUrl: string | null = null;
-      if (firstColorName) {
-        const pendingFirst = pendingMockups.get(firstColorName);
-        if (pendingFirst) {
-          bestUrl = pendingFirst.previewUrl;
-        } else {
-          for (const c of tempTemplateData.colors) {
-            const p = pendingMockups.get(c.color.name.toLowerCase());
-            if (p) { bestUrl = p.previewUrl; break; }
-          }
-        }
-      }
-      // Fallback to blueprintImageUrl if no pending uploads
-      const url = bestUrl || blueprintUrl;
-      if (!url) return {};
-      const result: Record<string, string | null> = {};
-      for (const view of views) result[view] = url;
-      return result;
-    }
-
-    // Printify mode: use blueprint image as background
     if (!blueprintUrl) return {};
     const result: Record<string, string | null> = {};
     for (const view of views) result[view] = blueprintUrl;
     return result;
-  }, [tempTemplateData, pendingMockups]);
+  }, [tempTemplateData]);
 
   const isDirty = useMemo(() => {
     if (!tempTemplateData || !originalTemplate) return false;
@@ -892,8 +879,43 @@ function TemplatesSection({
         })
         .filter((id): id is string => !!id);
 
-      // 2. Save template details
+      // 2. Validate mockup coverage for CUSTOM templates in create mode
       const isNew = tempTemplateData.id === "new";
+      if (
+        isNew &&
+        tempTemplateData.defaultMockupSource === "CUSTOM" &&
+        tempTemplateData.colors.length > 0
+      ) {
+        const colorIds = tempTemplateData.colors
+          .map((tc) => {
+            const found = allStoreColors.find(
+              (c) => c.name.trim().toLowerCase() === tc.color.name.trim().toLowerCase(),
+            );
+            return found?.id;
+          })
+          .filter((id): id is string => !!id);
+
+        const uncoveredColors = colorIds.filter(
+          (colorId) => !pendingAssignments.has(colorId),
+        );
+        if (uncoveredColors.length > 0) {
+          const uncoveredNames = tempTemplateData.colors
+            .filter((tc) => {
+              const found = allStoreColors.find(
+                (c) => c.name.trim().toLowerCase() === tc.color.name.trim().toLowerCase(),
+              );
+              return found && uncoveredColors.includes(found.id);
+            })
+            .map((tc) => tc.color.name);
+          toast.error(
+            `Chưa chọn mockup cho: ${uncoveredNames.join(", ")}. Chọn mockup ở tab Mockups hoặc thêm mockup cho tất cả màu.`,
+          );
+          setSavingTemplate(false);
+          return;
+        }
+      }
+
+      // 3. Save template details
       const url = isNew
         ? `/api/stores/${store.id}/mockup-templates`
         : `/api/stores/${store.id}/mockup-templates/${tempTemplateData.id}`;
@@ -916,6 +938,8 @@ function TemplatesSection({
         defaultAspectRatio: tempTemplateData.defaultAspectRatio,
         storePresetSnapshot: tempTemplateData.storePresetSnapshot,
         defaultMockupSource: tempTemplateData.defaultMockupSource,
+        basePriceUsd: tempTemplateData.basePriceUsd,
+        priceBySizeDefault: tempTemplateData.priceBySizeDefault,
       };
 
       const res = await fetch(url, {
@@ -925,59 +949,12 @@ function TemplatesSection({
       });
 
       if (res.ok) {
-        let savedTemplate = null;
-        try {
-          savedTemplate = await res.json();
-        } catch (e) {
-          console.error("Failed to parse saved template JSON:", e);
-        }
-        const savedTemplateId = savedTemplate?.id || tempTemplateData.id;
+        const savedTemplate = await res.json().catch(() => null);
+        const savedTemplateId = savedTemplate?.id || (isNew ? null : tempTemplateData.id);
 
-        if (pendingMockups.size > 0 && savedTemplateId) {
-          const colorNameToId = new Map<string, string>(
-            allStoreColors.map((c) => [c.name.trim().toLowerCase(), c.id])
-          );
-
-          let successCount = 0;
-          let failCount = 0;
-
-          for (const [colorName, { file }] of pendingMockups) {
-            const colorId = colorNameToId.get(colorName.trim().toLowerCase());
-            if (!colorId) {
-              failCount++;
-              continue;
-            }
-            const form = new FormData();
-            form.set("file", file);
-            form.set("templateId", savedTemplateId);
-            form.set("colorId", colorId);
-            form.set("view", "front");
-            form.set("sceneType", "flat_lay");
-            form.set("renderMode", "FINAL");
-            form.set("isPrimary", "true");
-
-            try {
-              const uploadRes = await fetch(`/api/stores/${store.id}/mockup-library`, {
-                method: "POST",
-                body: form,
-              });
-              if (uploadRes.ok) {
-                successCount++;
-              } else {
-                failCount++;
-              }
-            } catch (err) {
-              console.error(err);
-              failCount++;
-            }
-          }
-
-          if (successCount > 0) {
-            toast.success(`Đã upload thành công ${successCount} mockup!`);
-          }
-          if (failCount > 0) {
-            toast.error(`Không thể upload ${failCount} mockup. Vui lòng vào Thư viện mockup để upload lại.`);
-          }
+        // After creating a CUSTOM template, attach mockups from pending assignments
+        if (isNew && savedTemplateId && tempTemplateData.defaultMockupSource === "CUSTOM") {
+          await attachPendingMockupsAfterCreate(savedTemplateId);
         }
 
         toast.success(isNew ? "Đã tạo template thành công!" : "Đã cập nhật template thành công!");
@@ -995,13 +972,33 @@ function TemplatesSection({
     }
   }
 
+  // Attach pending mockup assignments after template creation
+  async function attachPendingMockupsAfterCreate(savedTemplateId: string) {
+    const attachUrl = `/api/stores/${store.id}/mockup-templates/${savedTemplateId}/mockups`;
+
+    for (const [colorId, assignment] of pendingAssignments) {
+      try {
+        await fetch(attachUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mockupId: assignment.mockupId, appliesToColorIds: [colorId], isPrimary: false, sortOrder: 0 }),
+        });
+      } catch (err) {
+        console.error("Failed to attach mockup for color:", colorId, err);
+      }
+    }
+
+    resetPendingAssignments();
+  }
+
   // Set local state when editing template starts
   const startEditing = useCallback((template: TemplateDetail) => {
     setEditingTemplate(template);
     setOriginalTemplate(template);
     setTempTemplateData(JSON.parse(JSON.stringify(template)));
     setEditorStep("blueprint");
-  }, []);
+    resetPendingAssignments();
+  }, [resetPendingAssignments]);
 
   // Filter templates list
   const filteredTemplates = useMemo(() => {
@@ -1402,8 +1399,8 @@ function TemplatesSection({
       <div style={{ display: "flex", gap: 16, borderBottom: "2px solid var(--border-default)", marginBottom: 24, overflowX: "auto" }}>
         {(
           showMockupStep
-            ? (["blueprint", "variants", "mockups", "placement"] as const)
-            : (["blueprint", "variants", "placement"] as const)
+            ? (["blueprint", "variants", "mockups", "pricing"] as const)
+            : (["blueprint", "variants", "placement", "pricing"] as const)
         ).map((step) => {
           const isActive = editorStep === step;
           const disabled = step !== "blueprint" && !hasSelectedBlueprint;
@@ -1429,8 +1426,9 @@ function TemplatesSection({
             >
               {step === "blueprint" && "1. Blueprint & Provider"}
               {step === "variants" && "2. Màu sắc & Kích thước"}
-              {step === "mockups" && "3. Tải lên Mockup"}
-              {step === "placement" && (showMockupStep ? "4. Vị trí in ấn" : "3. Vị trí in ấn")}
+              {step === "mockups" && "3. Mockups"}
+              {step === "placement" && "3. Vị trí in ấn"}
+              {step === "pricing" && (showMockupStep ? "4. Giá bán" : "4. Giá bán")}
             </button>
           );
         })}
@@ -1456,21 +1454,35 @@ function TemplatesSection({
       )}
 
       {editorStep === "mockups" && showMockupStep && (
-        <EditorMockupsStep
-          colors={tempTemplateData.colors}
-          pendingMockups={pendingMockups}
-          onChangePendingMockups={setPendingMockups}
-          existingTemplateId={tempTemplateData.id === "new" ? null : tempTemplateData.id}
+        <TemplateMockupPicker
           storeId={store.id}
+          templateId={tempTemplateData.id}
+          colors={tempTemplateData.colors
+            .filter((entry) => entry.color?.id)
+            .map((entry) => ({
+              id: entry.color.id,
+              name: entry.color.name,
+              hex: entry.color.hex,
+            }))}
+          pendingAssignments={tempTemplateData.id === "new" ? pendingAssignments : undefined}
+          onAssignmentsChange={tempTemplateData.id === "new" ? setPendingAssignments : undefined}
         />
       )}
 
-      {editorStep === "placement" && (
+      {editorStep === "placement" && !showMockupStep && (
         <EditorPlacementStep
           store={store}
           value={tempTemplateData}
           onChange={updateTempData}
           mockupUrlsByView={mockupUrlsByView}
+        />
+      )}
+
+      {editorStep === "pricing" && (
+        <EditorPricingStep
+          store={store}
+          value={tempTemplateData}
+          onChange={updateTempData}
         />
       )}
     </div>
@@ -1822,7 +1834,7 @@ function MockupSourceSection({
             opacity: 0.7,
           }}
         >
-          Mockup sẽ được upload ở bước <strong>"Tải lên Mockup"</strong> khi chỉnh sửa template.
+          Mockup được quản lý ở bước <strong>"Mockups"</strong> khi chỉnh sửa template.
         </div>
       )}
     </div>
@@ -2340,6 +2352,214 @@ function EditorVariantsStep({
   );
 }
 
+function EditorPricingStep({
+  store,
+  value,
+  onChange,
+}: {
+  store: StoreDetail;
+  value: TemplateDetail;
+  onChange: (data: Partial<TemplateDetail>) => void;
+}) {
+  const [sizes, setSizes] = useState<SizeOption[]>([]);
+  const [loadingSizes, setLoadingSizes] = useState(false);
+  const [warning, setWarning] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!value.printifyBlueprintId || !value.printifyPrintProviderId) return;
+    const controller = new AbortController();
+    setLoadingSizes(true);
+    setWarning(null);
+
+    fetch(`/api/stores/${store.id}/sizes?blueprintId=${value.printifyBlueprintId}&printProviderId=${value.printifyPrintProviderId}`, { signal: controller.signal })
+      .then((res) => res.json())
+      .then((data) => {
+        setSizes(data.sizes ?? []);
+        if (data.warning) setWarning(data.warning);
+      })
+      .catch((err) => {
+        if (err.name !== "AbortError") {
+          console.error("Failed to fetch pricing sizes:", err);
+          toast.error("Không tải được giá cost theo size");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoadingSizes(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, [store.id, value.printifyBlueprintId, value.printifyPrintProviderId]);
+
+  const selectedSizes = useMemo(() => {
+    const enabled = new Set(value.enabledSizes ?? []);
+    const list = enabled.size > 0 ? sizes.filter((size) => enabled.has(size.size)) : sizes.filter((size) => size.isAvailable);
+    return list.length > 0 ? list : sizes;
+  }, [sizes, value.enabledSizes]);
+
+  const storeDefaultPrice = parseOptionalMoney(store.defaultPriceUsd) ?? 24.99;
+  const effectiveBasePrice = value.basePriceUsd ?? storeDefaultPrice;
+
+  function updateBasePrice(rawValue: string) {
+    if (!rawValue.trim()) {
+      onChange({ basePriceUsd: null });
+      return;
+    }
+    const parsed = parseOptionalMoney(rawValue);
+    onChange({ basePriceUsd: parsed });
+  }
+
+  function updateSizePrice(size: string, rawValue: string) {
+    const next = { ...(value.priceBySizeDefault ?? {}) };
+    if (!rawValue.trim()) {
+      delete next[size];
+    } else {
+      const parsed = parseOptionalMoney(rawValue);
+      if (parsed === null) return;
+      next[size] = parsed;
+    }
+    onChange({ priceBySizeDefault: Object.keys(next).length > 0 ? next : null });
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 20 }}>
+      <div>
+        <h3 style={{ fontWeight: 700, margin: 0 }}>Giá bán</h3>
+        <p style={{ opacity: 0.5, fontSize: "0.85rem", marginTop: 4 }}>
+          Giá này được lưu trong template. Wizard sẽ tự kế thừa và vẫn cho phép override trên từng draft.
+        </p>
+      </div>
+
+      <div className="card" style={{ padding: 18, display: "grid", gap: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 260px) auto", gap: 12, alignItems: "end" }}>
+          <label style={{ display: "grid", gap: 6, fontSize: "0.78rem", fontWeight: 700 }}>
+            Giá cơ bản
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={value.basePriceUsd ?? ""}
+              onChange={(event) => updateBasePrice(event.target.value)}
+              placeholder={storeDefaultPrice.toFixed(2)}
+              style={inputStyle}
+            />
+          </label>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => onChange({ basePriceUsd: null, priceBySizeDefault: null })}
+            style={{ justifySelf: "start" }}
+          >
+            <RefreshCw size={14} />
+            Reset về mặc định store
+          </button>
+        </div>
+        <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 700 }}>
+          Giá hiệu lực khi không có override theo size: ${effectiveBasePrice.toFixed(2)}
+        </div>
+      </div>
+
+      {warning && (
+        <div
+          style={{
+            padding: "10px 12px",
+            borderRadius: 8,
+            background: "rgba(245,158,11,0.08)",
+            border: "1px solid rgba(245,158,11,0.2)",
+            color: "#92400e",
+            fontSize: "0.78rem",
+            fontWeight: 700,
+          }}
+        >
+          {warning}
+        </div>
+      )}
+
+      <div className="card" style={{ overflow: "hidden" }}>
+        <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border-default)" }}>
+          <h4 style={{ margin: 0, fontSize: "0.92rem", fontWeight: 800 }}>Giá theo size</h4>
+        </div>
+
+        {loadingSizes ? (
+          <div style={{ padding: 40, display: "flex", justifyContent: "center" }}>
+            <Loader2 className="animate-spin" size={24} />
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+              <thead>
+                <tr style={{ background: "var(--bg-inset, #f6f6f4)", textAlign: "left" }}>
+                  <th style={pricingThStyle}>Size</th>
+                  <th style={pricingThStyle}>Cost Printify</th>
+                  <th style={pricingThStyle}>Giá bán</th>
+                  <th style={pricingThStyle}>Chênh lệch</th>
+                  <th style={pricingThStyle}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {selectedSizes.map((size) => {
+                  const overridePrice = value.priceBySizeDefault?.[size.size] ?? null;
+                  const retailPrice = overridePrice ?? effectiveBasePrice;
+                  const costUsd = size.costCents / 100;
+                  const margin = retailPrice - costUsd;
+
+                  return (
+                    <tr key={size.size} style={{ borderTop: "1px solid var(--border-default)" }}>
+                      <td style={pricingTdStyle}>
+                        <strong>{size.size}</strong>
+                      </td>
+                      <td style={pricingTdStyle}>${costUsd.toFixed(2)}</td>
+                      <td style={pricingTdStyle}>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={overridePrice ?? ""}
+                          onChange={(event) => updateSizePrice(size.size, event.target.value)}
+                          placeholder={effectiveBasePrice.toFixed(2)}
+                          style={{ ...inputStyle, width: 140 }}
+                        />
+                      </td>
+                      <td
+                        style={{
+                          ...pricingTdStyle,
+                          color: margin >= 0 ? "var(--color-wise-green)" : "#dc2626",
+                          fontWeight: 800,
+                        }}
+                      >
+                        ${margin.toFixed(2)}
+                      </td>
+                      <td style={pricingTdStyle}>
+                        {overridePrice !== null && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-secondary"
+                            onClick={() => updateSizePrice(size.size, "")}
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {selectedSizes.length === 0 && (
+                  <tr>
+                    <td colSpan={5} style={{ ...pricingTdStyle, textAlign: "center", color: "var(--text-muted)" }}>
+                      Chọn blueprint/provider và variants trước để xem size.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ========== Editor Placement Step ========== */
 function EditorPlacementStep({
   store,
@@ -2405,242 +2625,4 @@ function EditorPlacementStep({
   );
 }
 
-function EditorMockupsStep({
-  colors,
-  pendingMockups,
-  onChangePendingMockups,
-  existingTemplateId,
-  storeId,
-}: {
-  colors: TemplateDetail["colors"];
-  pendingMockups: Map<string, { file: File; previewUrl: string }>;
-  onChangePendingMockups: React.Dispatch<React.SetStateAction<Map<string, { file: File; previewUrl: string }>>>;
-  existingTemplateId: string | null;
-  storeId: string;
-}) {
-  // Key format: colorName (lowercase)
-  const [existingMockups, setExistingMockups] = useState<Map<string, string>>(new Map());
-  const [loadingExisting, setLoadingExisting] = useState(false);
-
-  useEffect(() => {
-    if (!existingTemplateId) return;
-    const controller = new AbortController();
-    setLoadingExisting(true);
-    fetch(`/api/stores/${storeId}/mockup-library`, { signal: controller.signal })
-      .then((r) => r.json())
-      .then((d) => {
-        const temp = d.templates?.find((t: any) => t.id === existingTemplateId);
-        if (temp) {
-          const mockupMap = new Map<string, string>();
-          for (const c of temp.colors || []) {
-            const colorKey = (c.name as string).toLowerCase();
-            for (const source of c.sources || []) {
-              // Use first primary or first available source per color
-              if (!mockupMap.has(colorKey) || (source as any).isPrimary) {
-                mockupMap.set(colorKey, (source as any).imageUrl || (source as any).outputUrl);
-              }
-            }
-          }
-          setExistingMockups(mockupMap);
-        }
-      })
-      .catch((err) => {
-        if (err.name !== "AbortError") {
-          console.error("Error loading existing mockups:", err);
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setLoadingExisting(false);
-        }
-      });
-    return () => controller.abort();
-  }, [existingTemplateId, storeId]);
-
-  const handleFileChange = (colorKey: string, file: File | null) => {
-    if (!file) {
-      onChangePendingMockups((prev) => {
-        const next = new Map(prev);
-        const entry = next.get(colorKey);
-        if (entry) {
-          URL.revokeObjectURL(entry.previewUrl);
-          next.delete(colorKey);
-        }
-        return next;
-      });
-      return;
-    }
-
-    const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-    if (!ALLOWED_TYPES.has(file.type)) {
-      toast.error("Chỉ hỗ trợ ảnh dạng JPEG, PNG, và WebP");
-      return;
-    }
-    const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
-    if (file.size > MAX_UPLOAD_BYTES) {
-      toast.error("File phải nhỏ hơn hoặc bằng 10MB");
-      return;
-    }
-
-    const previewUrl = URL.createObjectURL(file);
-    onChangePendingMockups((prev) => {
-      const next = new Map(prev);
-      const entry = next.get(colorKey);
-      if (entry) {
-        URL.revokeObjectURL(entry.previewUrl);
-      }
-      next.set(colorKey, { file, previewUrl });
-      return next;
-    });
-  };
-
-  const totalColors = colors.length;
-  const readyCount = colors.filter((c) => {
-    const key = c.color.name.toLowerCase();
-    return pendingMockups.has(key) || existingMockups.has(key);
-  }).length;
-
-  return (
-    <div style={{ display: "grid", gap: 20 }}>
-      <div>
-        <h3 style={{ fontWeight: 700, margin: 0 }}>Tải lên Mockup</h3>
-        <p style={{ opacity: 0.5, fontSize: "0.85rem", marginTop: 4 }}>
-          Tải lên ảnh mockup cho từng màu sắc. Mockup sẽ hiển thị làm nền ở bước Vị trí in ấn.
-        </p>
-      </div>
-
-      {loadingExisting ? (
-        <div style={{ padding: 40, display: "flex", justifyContent: "center" }}>
-          <Loader2 className="animate-spin" size={24} />
-        </div>
-      ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-            gap: 16,
-          }}
-        >
-          {colors.map((c) => {
-            const colorKey = c.color.name.toLowerCase();
-            const pending = pendingMockups.get(colorKey);
-            const existing = existingMockups.get(colorKey);
-            const previewUrl = pending?.previewUrl || existing || null;
-
-            return (
-              <div
-                key={c.color.name}
-                className="card"
-                style={{
-                  padding: 16,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  textAlign: "center",
-                  border: pending
-                    ? "2px dashed var(--color-wise-green)"
-                    : "1px solid var(--border-default)",
-                }}
-              >
-                <div className="flex items-center gap-2" style={{ width: "100%", justifyContent: "center" }}>
-                  <span
-                    style={{
-                      width: 14,
-                      height: 14,
-                      borderRadius: "50%",
-                      backgroundColor: c.color.hex,
-                      border: "1px solid rgba(0,0,0,0.15)",
-                    }}
-                  />
-                  <strong style={{ fontSize: "0.88rem" }}>{c.color.name}</strong>
-                </div>
-
-                <div
-                  style={{
-                    width: 120,
-                    height: 120,
-                    borderRadius: 8,
-                    backgroundColor: "var(--bg-secondary, #F9F9F9)",
-                    border: "1px dashed var(--border-default)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    position: "relative",
-                    overflow: "hidden",
-                  }}
-                >
-                  {previewUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={previewUrl}
-                      alt={c.color.name}
-                      style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                    />
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, opacity: 0.4 }}>
-                      <Image size={24} />
-                      <span style={{ fontSize: "0.72rem" }}>Chưa có ảnh</span>
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ width: "100%", display: "grid", gap: 6 }}>
-                  <label className="btn btn-secondary btn-sm" style={{ cursor: "pointer", width: "100%", justifyContent: "center" }}>
-                    <Upload size={12} />
-                    {previewUrl ? "Thay đổi" : "Tải ảnh"}
-                    <input
-                      type="file"
-                      accept="image/png, image/jpeg, image/webp"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0] || null;
-                        handleFileChange(colorKey, file);
-                      }}
-                      style={{ display: "none" }}
-                    />
-                  </label>
-
-                  {pending && (
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      onClick={() => handleFileChange(colorKey, null)}
-                      style={{
-                        width: "100%",
-                        justifyContent: "center",
-                        color: "var(--text-danger, #ef4444)",
-                        backgroundColor: "rgba(239, 68, 68, 0.05)",
-                        border: "1px solid rgba(239, 68, 68, 0.15)",
-                      }}
-                    >
-                      <X size={12} />
-                      Hủy chọn
-                    </button>
-                  )}
-
-                  {!pending && existing && (
-                    <span style={{ fontSize: "0.72rem", color: "var(--color-wise-green)", fontWeight: 600 }}>
-                      ✓ Đã upload
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between" style={{ borderTop: "1px solid var(--border-default)", paddingTop: 16 }}>
-        <span style={{ fontSize: "0.84rem", fontWeight: 600 }}>
-          Trạng thái: {readyCount} / {totalColors} màu đã có mockup
-        </span>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", opacity: 0.7, fontSize: "0.8rem" }}>
-          <CheckCircle2 size={14} style={{ color: "var(--color-wise-green)" }} />
-          <span>Mockup sẽ được lưu cùng template.</span>
-        </div>
-      </div>
-    </div>
-  );
-}
 

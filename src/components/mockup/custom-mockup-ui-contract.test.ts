@@ -42,28 +42,19 @@ test("custom mockup upload modal keeps metadata simple and uses canvas only for 
   assert.match(source, /borderRadius: 24/);
 });
 
-test("library upload modal is asset-only and leaves usage decisions to wizard", () => {
-  const modalSource = read("src/components/mockup/UploadMockupModal.tsx");
-  const pageSource = read("src/app/(authed)/stores/[id]/mockup-library/page.tsx");
-  const filterSource = read("src/components/mockup/MockupLibraryFilterBar.tsx");
-  const routeSource = read("src/app/api/stores/[id]/mockup-library/route.ts");
+test("store template editor does not edit mockup composite regions directly", () => {
+  const configSource = read("src/app/(authed)/stores/[id]/config/page.tsx");
 
-  assert.match(modalSource, /isTemplateScope/);
-  assert.match(modalSource, /ReadOnlyField/);
-  assert.match(pageSource, /form\.set\("view", "front"\)/);
-  assert.match(pageSource, /form\.set\("sceneType", "flat_lay"\)/);
-  assert.match(pageSource, /form\.set\("renderMode", "FINAL"\)/);
-  assert.doesNotMatch(pageSource, /form\.set\("sortOrder", String\(value\.sortOrder\)\)/);
-  assert.doesNotMatch(pageSource, /Ảnh hoàn chỉnh|Ảnh trống cần ghép|Copy vùng/);
-  assert.doesNotMatch(filterSource, /Hoàn chỉnh|Cần ghép|final|composite/);
-  assert.match(routeSource, /hasExistingSource/);
-  assert.match(routeSource, /isPrimary: isPrimary \|\| !hasExistingSource/);
+  assert.doesNotMatch(configSource, /CompositeRegionEditor/);
+  assert.doesNotMatch(configSource, /defaultCompositeRegionPx/);
+  assert.doesNotMatch(configSource, /onChangeCompositeRegion/);
+  assert.match(configSource, /TemplateMockupPicker/);
 });
 
 test("wizard custom default blocks missing custom colors without printify fallback copy", () => {
   const stepSource = read("src/app/(authed)/wizard/[draftId]/step-3/page.tsx");
   const panelSource = read("src/components/mockup/WizardMockupSourcePanel.tsx");
-  const jobRouteSource = read("src/app/api/mockup-jobs/route.ts");
+  const generationSource = read("src/lib/mockup/generation.ts");
   const workerSource = read("src/lib/mockup/printify-poll-worker.ts");
 
   assert.match(stepSource, /customAvailabilityByColorId/);
@@ -74,8 +65,8 @@ test("wizard custom default blocks missing custom colors without printify fallba
   assert.match(panelSource, /Mở Thư viện mockup/);
   assert.match(panelSource, /Đổi nguồn ảnh mặc định sang Printify/);
   assert.doesNotMatch(panelSource, /fallback sang Printify/);
-  assert.match(jobRouteSource, /CUSTOM_MOCKUP_MISSING_COLOR/);
-  assert.match(jobRouteSource, /chưa có mockup custom/);
+  assert.match(generationSource, /CUSTOM_MOCKUP_MISSING_COLOR/);
+  assert.match(generationSource, /chưa có mockup custom/);
   assert.match(workerSource, /bucket === "none"/);
 });
 
@@ -96,27 +87,6 @@ test("wizard printify mode exposes canvas placement editor and keeps custom libr
   assert.match(canvasSource, /rotationDeg/);
 });
 
-test("library page uses filter bar and centered modal instead of drawer", () => {
-  const source = read("src/app/(authed)/stores/[id]/mockup-library/page.tsx");
-
-  assert.match(source, /MockupLibraryFilterBar/);
-  assert.match(source, /UploadMockupModal/);
-  assert.match(source, /Cặp đã có mockup/);
-  assert.match(source, /Mockup tái sử dụng chỉ ảnh hưởng tới ảnh listing/);
-  assert.doesNotMatch(source, /justifyContent: "flex-end"/);
-});
-
-test("library page defaults to custom templates and honors template deep links", () => {
-  const source = read("src/app/(authed)/stores/[id]/mockup-library/page.tsx");
-  const configSource = read("src/app/(authed)/stores/[id]/config/page.tsx");
-
-  assert.match(source, /useSearchParams/);
-  assert.match(source, /templateIdFromUrl/);
-  assert.match(source, /defaultMockupSource === "CUSTOM"/);
-  assert.match(source, /template\.id === templateIdFromUrl/);
-  assert.match(source, /openTemplateColorDetail/);
-  assert.match(configSource, /mockup-library\?templateId=\$\{t\.id\}/);
-});
 
 test("composite editor exposes zoom toolbar, presets, live preview, and wizard context", () => {
   const source = read("src/components/mockup/CompositeRegionEditor.tsx");
@@ -135,8 +105,8 @@ test("draft upload modal edits composite placement inline and uploads region wit
   const modalSource = read("src/components/mockup/UploadMockupModal.tsx");
 
   assert.match(stepSource, /CanvasPlacementEditor/);
-  assert.match(stepSource, /designImageUrl=\{designPreviewUrl\}/);
-  assert.match(panelSource, /designImageUrl\?: string \| null/);
+  assert.match(stepSource, /designImageUrl=\{activeDesignPreviewUrl\}/);
+  assert.match(panelSource, /designImageUrl\?: string | null/);
   assert.match(panelSource, /designImageUrl=\{designImageUrl\}/);
   assert.match(panelSource, /form\.set\("view", "front"\)/);
   assert.match(panelSource, /form\.set\("sceneType", "flat_lay"\)/);
@@ -174,7 +144,7 @@ test("wizard official gallery filters by template default source", () => {
   assert.match(stepSource, /shouldShowInOfficialGallery/);
   assert.match(stepSource, /selectedTemplate\?\.defaultMockupSource \?\? "PRINTIFY"/);
   assert.match(stepSource, /isCustomTemplateDefault\s*\?\s*"Custom đang chuẩn bị mockup/);
-  assert.match(stepSource, /Khi sẵn sàng, nhấn "Tạo Mockups" để render ảnh listing\./);
+  assert.match(stepSource, /Khi sẵn sàng, nhấn "Tạo Mockups" để render ảnh listing/);
   assert.doesNotMatch(stepSource, /isCustomSource \|\| isPrintifySource/);
 });
 
@@ -215,6 +185,34 @@ test("preview tiles only show user labels and explicit placement state", () => {
   assert.match(tileSource, /Chỉnh lại/);
 });
 
+test("global mockups page owns composite frame editing", () => {
+  const pageSource = read("src/app/(authed)/mockups/page.tsx");
+  const clientSource = read("src/app/(authed)/mockups/MockupsClient.tsx");
+  const modalSource = read("src/components/mockup/GlobalMockupEditorModal.tsx");
+
+  assert.doesNotMatch(pageSource, /"use client"/);
+  assert.match(pageSource, /validateSession/);
+  assert.match(pageSource, /hasFeature/);
+  assert.match(pageSource, /MockupsClient/);
+  assert.match(clientSource, /\/api\/mockups/);
+  assert.match(clientSource, /params\.get\("edit"\)/);
+  assert.match(modalSource, /CompositeRegionEditor/);
+  assert.match(modalSource, /compositeRegionPx/);
+});
+
+test("template editor uses template mockup attachments and links global frame editor", () => {
+  const configSource = read("src/app/(authed)/stores/[id]/config/page.tsx");
+  const pickerSource = read("src/components/mockup/TemplateMockupPicker.tsx");
+
+  assert.match(configSource, /TemplateMockupPicker/);
+  assert.match(pickerSource, /mockup-templates\/\$\{templateId\}\/mockups/);
+  assert.match(pickerSource, /fetch\("\/api\/mockups"/);
+  assert.match(pickerSource, /uploadForColor/);
+  assert.match(pickerSource, /\/mockups\?edit=\$\{assignment\.mockupId\}/);
+  assert.doesNotMatch(configSource, /defaultCompositeRegionPx/);
+  assert.doesNotMatch(configSource, /CompositeRegionEditor/);
+});
+
 test("wizard edit action opens a dedicated placement editor instead of the upload modal", () => {
   const panelSource = read("src/components/mockup/WizardMockupSourcePanel.tsx");
 
@@ -236,11 +234,11 @@ test("mockup results do not fall back to sourceUrl in the result viewer", () => 
 });
 
 test("mockup generation blocks composite sources without placement", () => {
-  const routeSource = read("src/app/api/mockup-jobs/route.ts");
+  const generationSource = read("src/lib/mockup/generation.ts");
 
-  assert.match(routeSource, /CUSTOM_MOCKUP_MISSING_REGION/);
-  assert.match(routeSource, /Chỉnh vị trí design/);
-  assert.match(routeSource, /renderMode === "COMPOSITE" && !source\.compositeRegionPx/);
+  assert.match(generationSource, /CUSTOM_MOCKUP_MISSING_REGION/);
+  assert.match(generationSource, /Chỉnh vị trí design/);
+  assert.match(generationSource, /p\.templateMockupItem\.mockup\.renderMode === "COMPOSITE"/);
 });
 
 test("custom template live preview and result section use template-specific copy", () => {
@@ -248,19 +246,19 @@ test("custom template live preview and result section use template-specific copy
   const gallerySource = read("src/components/mockup/MockupGallery.tsx");
 
   assert.match(stepSource, /showFullLivePreview = !isCustomTemplateDefault/);
-  assert.match(stepSource, /hasTriggeredMockupRender/);
+  assert.match(stepSource, /hasTriggeredBatchRender/);
   assert.match(stepSource, /Vị trí design trên template/);
   assert.match(stepSource, /Mockup tham khảo từ Printify\. Bạn có thể chỉnh vị trí design trước khi tạo mockup\./);
   assert.match(stepSource, /Vị trí design trên template — dùng để kiểm tra vị trí in\. Ảnh listing cuối sẽ dùng mockup custom bên dưới\./);
   assert.match(stepSource, /Preview lớn và nút <strong>Chỉnh vị trí<\/strong> nằm ở khối mockup bên dưới, bám theo mockup đang chọn\./);
   assert.match(stepSource, /Kết quả mockup/);
-  assert.match(stepSource, /Khi sẵn sàng, nhấn "Tạo Mockups" để render ảnh listing\./);
-  assert.match(stepSource, /mockupImages\.length > 0/);
+  assert.match(stepSource, /Khi sẵn sàng, nhấn "Tạo Mockups" để render ảnh listing/);
+  assert.match(stepSource, /allMockupImages\.length > 0/);
   assert.doesNotMatch(stepSource, /Mockup tham khảo — chất lượng cuối cùng từ Printify/);
   assert.doesNotMatch(stepSource, /Mockup chính thức/);
   assert.doesNotMatch(stepSource, /!mockupJobId && !isGenerating/);
 
-  assert.match(gallerySource, /Chưa có kết quả mockup\. Khi sẵn sàng, nhấn "Tạo Mockups" để render ảnh listing\./);
+  assert.match(gallerySource, /Chưa có kết quả mockup\. Khi sẵn sàng, nhấn "Tạo Mockups" để render ảnh listing/);
   assert.match(gallerySource, /Ảnh listing không còn truy cập được/);
   assert.match(gallerySource, /Cần tạo lại/);
   assert.match(gallerySource, /Đang render mockups/);
@@ -276,7 +274,7 @@ test("step-3 uses ColorMockupCardGrid for custom templates", () => {
   assert.match(stepSource, /<ColorMockupCardGrid/);
   // grid receives the expected props
   assert.match(stepSource, /selectedColors=\{storeColors\.filter/);
-  assert.match(stepSource, /designImageUrl=\{designPreviewUrl\}/);
+  assert.match(stepSource, /designImageUrl=\{activeDesignPreviewUrl\}/);
   assert.match(stepSource, /onGenerate=\{handleGenerate\}/);
   assert.match(stepSource, /isGenerating=\{isGenerating\}/);
   assert.match(stepSource, /generateButtonLabel=\{generateButtonLabel\}/);

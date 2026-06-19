@@ -5,11 +5,18 @@ export type MockupSourceType =
       renderMode: "FINAL" | "COMPOSITE";
       sourceId: string;
     }
+  | {
+      kind: "library";
+      templateMockupItemId: string;
+      colorId: string;
+    }
   | { kind: "synthetic"; view: string }
   | { kind: "printify" };
 
 // New scope-aware URL format: mockup://custom/{scope}/{mode}/{sourceId}
 const CUSTOM_PREFIX = "mockup://custom/";
+// New library format: mockup://library/<templateMockupItemId>/<colorId>
+const LIBRARY_PREFIX = "mockup://library/";
 const SYNTHETIC_PREFIX = "mockup://solid/";
 
 // Legacy URL prefixes (pre-rev3, treated as scope=template)
@@ -55,6 +62,19 @@ export function parseMockupSourceUrl(sourceUrl: string): MockupSourceType {
     };
   }
 
+  // New library format: mockup://library/<templateMockupItemId>/<colorId>
+  if (sourceUrl.startsWith(LIBRARY_PREFIX)) {
+    const remainder = sourceUrl.slice(LIBRARY_PREFIX.length);
+    const parts = remainder.split("/");
+    if (parts.length >= 2) {
+      const templateMockupItemId = parts[0];
+      const colorId = parts[1];
+      if (templateMockupItemId && colorId) {
+        return { kind: "library", templateMockupItemId, colorId };
+      }
+    }
+  }
+
   if (sourceUrl.startsWith(SYNTHETIC_PREFIX)) {
     return {
       kind: "synthetic",
@@ -71,4 +91,8 @@ export function buildCustomMockupSourceUrl(
   renderMode: "FINAL" | "COMPOSITE",
 ): string {
   return `mockup://custom/${scope.toLowerCase()}/${renderMode.toLowerCase()}/${sourceId}`;
+}
+
+export function buildLibraryMockupUrl(templateMockupItemId: string, colorId: string): string {
+  return `mockup://library/${templateMockupItemId}/${colorId}`;
 }

@@ -147,13 +147,16 @@ interface ColorMockupCardProps {
   generatedOutputUrl?: string | null;
   designImageUrl?: string | null;
   draftId: string;
-  onUploadClick: () => void;         // parent opens upload modal for this color
-  onPlacementSaved: () => void;      // refresh after saving placement
-  onDeselectColor?: () => void;      // toggle color off in sidebar
-  /** Callback when a TEMPLATE source placement is saved. Grid persists to pick. */
+  onUploadClick: () => void;
+  onPlacementSaved: () => void;
+  onDeselectColor?: () => void;
   onSaveTemplatePlacement?: (sourceId: string, region: CanvasRegionPx) => Promise<void>;
-  /** Dynamic print area in millimeter dimensions. Falls back to full image when absent. */
   printAreaMm?: { widthMm: number; heightMm: number } | null;
+  // Mapping display props
+  mappedDesignName?: string;
+  mappedMockupName?: string;
+  isHighlightedByActiveDesign?: boolean;
+  activeInspectDesignName?: string;
 }
 
 export function ColorMockupCard({
@@ -167,6 +170,10 @@ export function ColorMockupCard({
   onDeselectColor,
   onSaveTemplatePlacement,
   printAreaMm,
+  mappedDesignName,
+  mappedMockupName,
+  isHighlightedByActiveDesign = true,
+  activeInspectDesignName,
 }: ColorMockupCardProps) {
   const state = getCardState(source, generatedOutputUrl);
   const [placementOpen, setPlacementOpen] = useState(false);
@@ -270,12 +277,13 @@ export function ColorMockupCard({
           border: state === "READY" || state === "GENERATED"
             ? "1px solid rgba(146,198,72,0.4)"
             : "1px solid var(--border-default)",
+          opacity: isHighlightedByActiveDesign ? 1 : 0.92,
+          transition: "opacity 0.2s",
         }}
       >
         {/* Header */}
         <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
           <div className="flex items-center gap-2">
-            {/* Color selection checkbox */}
             {onDeselectColor ? (
               <button
                 type="button"
@@ -293,6 +301,14 @@ export function ColorMockupCard({
           </div>
           {statusIcon}
         </div>
+
+        {/* Mapping info */}
+        {(mappedDesignName || mappedMockupName) && (
+          <div style={{ marginBottom: 10, fontSize: "0.73rem", opacity: 0.55, display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {mappedDesignName && <span>Design: <strong>{mappedDesignName}</strong></span>}
+            {mappedMockupName && <span>Mockup: <strong>{mappedMockupName}</strong></span>}
+          </div>
+        )}
 
         {/* State 1: No source */}
         {state === "NO_SOURCE" && (
@@ -357,7 +373,7 @@ export function ColorMockupCard({
               )}
               {state === "READY" && (
                 <p style={{ margin: "0 0 4px", fontSize: "0.78rem", opacity: 0.6 }}>
-                  {source?.scope === "TEMPLATE" ? "Dùng mockup thư viện" : "Mockup riêng · Đã chỉnh vị trí"}
+                  {source?.scope === "TEMPLATE" ? (mappedMockupName ? `Mockup: ${mappedMockupName}` : "Dùng mockup thư viện") : "Mockup riêng · Đã chỉnh vị trí"}
                 </p>
               )}
               {state === "GENERATED" && (
@@ -366,10 +382,10 @@ export function ColorMockupCard({
                 </p>
               )}
 
-              {/* Source scope label */}
+              {/* Source scope label — dynamic from mappedMockupName */}
               {source && (
                 <p style={{ margin: "0 0 8px", fontSize: "0.72rem", opacity: 0.4 }}>
-                  Mockup: {source.scope === "TEMPLATE" ? "Từ thư viện" : "Riêng cho listing này"}
+                  Mockup: {mappedMockupName || (source.scope === "TEMPLATE" ? "Từ thư viện" : "Riêng cho listing này")}
                 </p>
               )}
 

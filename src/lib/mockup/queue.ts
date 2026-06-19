@@ -11,6 +11,8 @@ export interface PrintifyMockupPollPayload {
   designId?: string | null;
   storeId: string;
   productId: string;
+  colorFilterIds?: string[];
+  colorGroup?: "light" | "dark" | null;
 }
 
 // Singleton queue instances

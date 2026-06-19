@@ -1,4 +1,5 @@
 import { PRODUCT_DEFAULTS } from "@/lib/config/runtime-controls";
+import { resolveColorGroups, type EffectiveColorGroup } from "@/lib/designs/color-classifier";
 import { getLatestJobByDraftDesignId } from "@/lib/mockup/multi-design";
 import { isRealPrintifyMockupMedia } from "@/lib/mockup/real-printify-media";
 import { migratePlacementOnRead } from "@/lib/placement/migrate";
@@ -8,7 +9,7 @@ import type { PlacementData, DesignMeta } from "@/lib/placement/types";
 
 export async function buildChecklist(draft: any) {
   const selectedColorIds = new Set((draft.enabledColorIds ?? []) as string[]);
-  const selectedColors = ((draft.store?.colors ?? []) as Array<{ id: string; name: string }>)
+  const selectedColors = ((draft.store?.colors ?? []) as Array<{ id: string; name: string; hex: string; colorGroup?: string }>)
     .filter((color) => selectedColorIds.has(color.id));
   const selectedDraftDesignKeys = getChecklistDesignKeys(draft);
   const latestJobsByDesign = getLatestJobByDraftDesignId(
@@ -28,32 +29,123 @@ export async function buildChecklist(draft: any) {
   );
 
   const requireRealPrintifyMockups = PRODUCT_DEFAULTS.mockup.requireRealPrintifyMockups;
-  const mockupsMatchColors =
-    selectedColors.length > 0 &&
-    selectedDraftDesignKeys.length > 0 &&
-    selectedDraftDesignKeys.every((draftDesignKey) => {
-      const latestJob = latestJobsByDesign.get(draftDesignKey);
-      if (!latestJob || latestJob.status.toLowerCase() !== "completed") return false;
 
-      const includedImages = (latestJob.images ?? [])
-        .filter((image) => image.included)
-        .filter((image) => !requireRealPrintifyMockups || isRealPrintifyMockup(image));
+  // Pair-aware checklist: when design pairs exist, validate per-pair mockup coverage
+  const designPairs: Array<{
+    id: string;
+    baseName: string;
+    lightDraftDesignId: string;
+    darkDraftDesignId: string;
+    aiContent?: { title?: string } | null;
+  }> = Array.isArray(draft.designPairs) ? draft.designPairs : [];
+  const hasPairs = designPairs.length > 0;
 
-      const colorsWithMockup = new Set(
-        includedImages.map((image) => normalizeColorName(image.colorName)),
-      );
+  // Resolve effective color groups when pairs exist
+  let effectiveColorGroups: Map<string, EffectiveColorGroup> | null = null;
+  if (hasPairs && selectedColors.length > 0) {
+    effectiveColorGroups = resolveColorGroups(
+      selectedColors.map((c) => ({
+        id: c.id,
+        hex: c.hex,
+        colorGroup: (c as any).colorGroup ?? "auto",
+      })),
+    );
+  }
 
-      return selectedColors.every((color) => colorsWithMockup.has(normalizeColorName(color.name)));
+  let mockupsMatchColors: boolean;
+
+  if (hasPairs) {
+    // Each pair needs completed mockup jobs for both light and dark draft designs
+    mockupsMatchColors =
+      selectedColors.length > 0 &&
+      designPairs.every((pair) => {
+        // Check light design job covers light colors
+        const lightJob = latestJobsByDesign.get(pair.lightDraftDesignId);
+        const darkJob = latestJobsByDesign.get(pair.darkDraftDesignId);
+
+        if (!lightJob || lightJob.status.toLowerCase() !== "completed") return false;
+        if (!darkJob || darkJob.status.toLowerCase() !== "completed") return false;
+
+        // If we have color groups, validate color coverage per side
+        if (effectiveColorGroups) {
+          const lightColorNames = selectedColors
+            .filter((c) => effectiveColorGroups!.get(c.id) === "light")
+            .map((c) => normalizeColorName(c.name));
+          const darkColorNames = selectedColors
+            .filter((c) => effectiveColorGroups!.get(c.id) === "dark")
+            .map((c) => normalizeColorName(c.name));
+
+          const lightMockupColors = new Set(
+            (lightJob.images ?? [])
+              .filter((img) => img.included && (!requireRealPrintifyMockups || isRealPrintifyMockup(img)))
+              .map((img) => normalizeColorName(img.colorName)),
+          );
+          const darkMockupColors = new Set(
+            (darkJob.images ?? [])
+              .filter((img) => img.included && (!requireRealPrintifyMockups || isRealPrintifyMockup(img)))
+              .map((img) => normalizeColorName(img.colorName)),
+          );
+
+          const lightCovered = lightColorNames.every((name) => lightMockupColors.has(name));
+          const darkCovered = darkColorNames.every((name) => darkMockupColors.has(name));
+          return lightCovered && darkCovered;
+        }
+
+        return true;
+      });
+  } else {
+    // Legacy single-design checklist
+    mockupsMatchColors =
+      selectedColors.length > 0 &&
+      selectedDraftDesignKeys.length > 0 &&
+      selectedDraftDesignKeys.every((draftDesignKey) => {
+        const latestJob = latestJobsByDesign.get(draftDesignKey);
+        if (!latestJob || latestJob.status.toLowerCase() !== "completed") return false;
+
+        const includedImages = (latestJob.images ?? [])
+          .filter((image) => image.included)
+          .filter((image) => !requireRealPrintifyMockups || isRealPrintifyMockup(image));
+
+        const colorsWithMockup = new Set(
+          includedImages.map((image) => normalizeColorName(image.colorName)),
+        );
+
+        return selectedColors.every((color) => colorsWithMockup.has(normalizeColorName(color.name)));
+      });
+  }
+
+  // Content completeness: pair-aware
+  let contentComplete: boolean;
+  if (hasPairs) {
+    // Every pair must have aiContent.title
+    contentComplete = designPairs.every((pair) => {
+      const pairContent = pair.aiContent as { title?: string } | null;
+      return Boolean(pairContent?.title?.trim());
     });
+  } else {
+    const content = draft.aiContent as {
+      title?: string;
+      description?: string;
+      tags?: string[];
+    } | null;
+    contentComplete = Boolean(content?.title?.trim());
+  }
 
-  const content = draft.aiContent as {
-    title?: string;
-    description?: string;
-    tags?: string[];
-  } | null;
-  const contentComplete = Boolean(
-    content?.title?.trim(),
-  );
+  // Pairing completeness: no unpaired designs when pairs exist
+  let pairingComplete = true;
+  if (hasPairs) {
+    const totalDraftDesigns = Array.isArray(draft.draftDesigns) ? draft.draftDesigns.length : 0;
+    // Each pair uses 2 draft designs
+    pairingComplete = totalDraftDesigns === designPairs.length * 2;
+  }
+
+  // Color group balance: when pairs exist, must have at least one light and one dark color
+  let colorGroupsBalanced = true;
+  if (hasPairs && effectiveColorGroups) {
+    const hasLight = selectedColors.some((c) => effectiveColorGroups!.get(c.id) === "light");
+    const hasDark = selectedColors.some((c) => effectiveColorGroups!.get(c.id) === "dark");
+    colorGroupsBalanced = hasLight && hasDark;
+  }
 
   let placementValid = true;
   try {
@@ -84,13 +176,20 @@ export async function buildChecklist(draft: any) {
 
   const mockupsNotStale = !draft.mockupsStale;
   const readyToPublish =
-    mockupsMatchColors && contentComplete && placementValid && mockupsNotStale;
+    mockupsMatchColors &&
+    contentComplete &&
+    placementValid &&
+    mockupsNotStale &&
+    pairingComplete &&
+    colorGroupsBalanced;
 
   return {
     mockupsMatchColors,
     contentComplete,
     placementValid,
     mockupsNotStale,
+    pairingComplete,
+    colorGroupsBalanced,
     readyToPublish,
   };
 }
@@ -120,7 +219,11 @@ function getChecklistDesignKeys(draft: any): string[] {
 }
 
 function isRealPrintifyMockup(image: { compositeUrl?: string | null; sourceUrl?: string | null }): boolean {
-  if (image.sourceUrl?.startsWith("mockup://custom/") || image.sourceUrl?.startsWith("mockup://custom-")) {
+  if (
+    image.sourceUrl?.startsWith("mockup://custom/") ||
+    image.sourceUrl?.startsWith("mockup://custom-") ||
+    image.sourceUrl?.startsWith("mockup://library/")
+  ) {
     return true;
   }
   return isRealPrintifyMockupMedia(image);

@@ -2,9 +2,14 @@
  * Wizard draft state management — server-side CRUD
  */
 
-import { prisma } from "@/lib/db";
 import { Prisma, type DraftStatus } from "@prisma/client";
+import { pairDesigns } from "@/lib/designs/design-pairing";
+import { prisma } from "@/lib/db";
 import { deleteDraftWithPrintifyCleanup } from "./cleanup";
+import {
+  buildPairRowsFromDraftDesigns,
+  stablePairKey,
+} from "./design-pairs";
 import {
   getDraftDesignIds,
   normalizeDesignIds,
@@ -101,6 +106,14 @@ export async function getDraft(id: string, tenantId: string) {
         },
       },
       template: true,
+      designPairs: {
+        orderBy: { sortOrder: "asc" },
+        include: {
+          lightDesign: { include: { design: true } },
+          darkDesign: { include: { design: true } },
+          listing: true,
+        },
+      },
       draftDesigns: draftDesignsWithRelationsInclude,
       mockupJobs: {
         orderBy: { createdAt: "asc" },
@@ -180,25 +193,30 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
     }
   }
 
-  if (nextDesignIds !== undefined && nextDesignIds.length > 0) {
-    const selectedDesigns = await prisma.design.findMany({
-      where: {
-        id: { in: nextDesignIds },
-        tenantId,
-        status: "ACTIVE",
-        deletedAt: null,
-      },
-      select: { id: true },
-    });
-
-    if (selectedDesigns.length !== nextDesignIds.length) {
-      throw new Error("Selected designs not found");
-    }
-  }
-
   return prisma.$transaction(async (tx) => {
     const legacyDesignId =
       nextDesignIds !== undefined ? nextDesignIds[0] ?? null : undefined;
+
+    if (nextDesignIds !== undefined && nextDesignIds.length > 0) {
+      if (!draft.storeId) {
+        throw new Error("Select a store before selecting designs");
+      }
+
+      const selectedDesigns = await tx.design.findMany({
+        where: {
+          id: { in: nextDesignIds },
+          tenantId,
+          storeId: draft.storeId,
+          status: "ACTIVE",
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+
+      if (selectedDesigns.length !== nextDesignIds.length) {
+        throw new Error("Selected designs not found for draft store");
+      }
+    }
 
     await tx.wizardDraft.update({
       where: { id },
@@ -265,15 +283,82 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
           },
         });
       }
+
+      const selectedDraftDesigns = await tx.wizardDraftDesign.findMany({
+        where: { draftId: id },
+        orderBy: { sortOrder: "asc" },
+        select: {
+          id: true,
+          designId: true,
+          design: { select: { id: true, name: true } },
+        },
+      });
+      const pairing = pairDesigns(
+        selectedDraftDesigns.map((draftDesign) => ({
+          id: draftDesign.design.id,
+          name: draftDesign.design.name,
+        })),
+      );
+      const pairRows = buildPairRowsFromDraftDesigns({
+        pairing,
+        draftDesigns: selectedDraftDesigns.map((draftDesign) => ({
+          id: draftDesign.id,
+          designId: draftDesign.designId,
+        })),
+      });
+      const existingPairs = await tx.wizardDraftDesignPair.findMany({
+        where: { draftId: id },
+      });
+      const existingByStableKey = new Map(
+        existingPairs.map((pair) => [stablePairKey(pair), pair]),
+      );
+      const nextPairIds: string[] = [];
+      const pairRowsToCreate: typeof pairRows = [];
+
+      for (const pairRow of pairRows) {
+        const existing = existingByStableKey.get(stablePairKey(pairRow));
+        if (existing) {
+          const saved = await tx.wizardDraftDesignPair.update({
+            where: { id: existing.id },
+            data: { sortOrder: pairRow.sortOrder },
+          });
+          nextPairIds.push(saved.id);
+        } else {
+          pairRowsToCreate.push(pairRow);
+        }
+      }
+
+      await tx.wizardDraftDesignPair.deleteMany({
+        where: {
+          draftId: id,
+          ...(nextPairIds.length > 0 ? { id: { notIn: nextPairIds } } : {}),
+        },
+      });
+
+      for (const pairRow of pairRowsToCreate) {
+        const saved = await tx.wizardDraftDesignPair.create({
+          data: {
+            draftId: id,
+            ...pairRow,
+          },
+        });
+
+        nextPairIds.push(saved.id);
+      }
     }
 
     return tx.wizardDraft.findUniqueOrThrow({
       where: { id },
       include: {
-        draftDesigns: {
+        designPairs: {
           orderBy: { sortOrder: "asc" },
-          include: { design: true },
+          include: {
+            lightDesign: { include: { design: true } },
+            darkDesign: { include: { design: true } },
+            listing: true,
+          },
         },
+        draftDesigns: draftDesignsWithRelationsInclude,
       },
     });
   });

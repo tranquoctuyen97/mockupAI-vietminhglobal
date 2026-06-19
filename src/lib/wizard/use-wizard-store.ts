@@ -52,7 +52,21 @@ interface StoreColor {
   id: string;
   name: string;
   hex: string;
+  colorGroup?: string | null;
   enabled?: boolean;
+}
+
+interface WizardDraftDesignPair {
+  id: string;
+  draftId: string;
+  baseName: string;
+  lightDraftDesignId: string;
+  darkDraftDesignId: string;
+  sortOrder: number;
+  aiContent?: unknown | null;
+  lightDesign?: DraftDesign | null;
+  darkDesign?: DraftDesign | null;
+  listing?: unknown | null;
 }
 
 interface DraftData {
@@ -79,13 +93,18 @@ interface DraftData {
     blueprintTitle?: string;
     defaultPlacement?: unknown;
     enabledVariantIds?: number[];
+    basePriceUsd?: number | string | null;
+    priceBySizeDefault?: Record<string, number> | null;
   } | null;
   store?: {
+    defaultPriceUsd?: number | string | null;
     colors?: StoreColor[];
     template?: {
       blueprintTitle?: string;
       defaultPlacement?: unknown;
       enabledVariantIds?: number[];
+      basePriceUsd?: number | string | null;
+      priceBySizeDefault?: Record<string, number> | null;
     } | null;
     templates?: Array<{
       id: string;
@@ -97,6 +116,8 @@ interface DraftData {
       enabledVariantIds?: number[];
       enabledSizes?: string[];
       enabledSizesByColor?: Record<string, string[]> | null;
+      basePriceUsd?: number | string | null;
+      priceBySizeDefault?: Record<string, number> | null;
     }>;
   } | null;
   placementOverride: unknown | null;
@@ -105,6 +126,7 @@ interface DraftData {
   currentStep: number;
   status: string;
   draftDesigns?: DraftDesign[];
+  designPairs?: WizardDraftDesignPair[];
   mockupJobs: MockupJob[];
   mockupsStale?: boolean;
   mockupsStaleReason?: string | null;
@@ -131,8 +153,7 @@ export interface ChecklistData {
 interface WizardStore {
   draft: DraftData | null;
   checklist: ChecklistData | null;
-  // Step-5 bundled data from ?expand=pricing,sizes
-  expandedPricing: { basePriceUsd: number; productType: string } | null;
+  // Step-5 bundled size data from ?expand=sizes
   expandedSizes: Array<{ size: string; costCents: number; costDeltaCents: number }> | null;
   loading: boolean;
   saving: boolean;
@@ -193,7 +214,6 @@ export const useWizardStore = create<WizardStore>((set, get) => {
   return {
   draft: null,
   checklist: null,
-  expandedPricing: null,
   expandedSizes: null,
   loading: false,
   saving: false,
@@ -218,11 +238,10 @@ export const useWizardStore = create<WizardStore>((set, get) => {
         if (res.ok) {
           const data = await res.json();
           // GET /api/wizard/drafts/:id now includes checklist (Phase 6.9)
-          const { checklist, pricing, sizes, ...draft } = data;
+          const { checklist, sizes, ...draft } = data;
           set({
             draft,
             checklist: checklist ?? null,
-            expandedPricing: pricing ?? null,
             expandedSizes: sizes?.sizes ?? null,
             loading: false,
           });

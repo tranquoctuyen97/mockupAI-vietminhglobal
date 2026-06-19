@@ -13,10 +13,10 @@ test("normalizeDesignIds keeps unique ids in order", () => {
   );
 });
 
-test("normalizeDesignIds rejects more than five designs", () => {
+test("normalizeDesignIds rejects more than eighty designs", () => {
   assert.throws(
-    () => normalizeDesignIds(["design_1", "design_2", "design_3", "design_4", "design_5", "design_6"]),
-    /up to 5 designs/,
+    () => normalizeDesignIds(Array.from({ length: 81 }, (_, index) => `design_${index + 1}`)),
+    /up to 80 designs/,
   );
 });
 

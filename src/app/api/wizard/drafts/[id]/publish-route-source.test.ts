@@ -10,4 +10,10 @@ describe("wizard publish listing organization snapshot source", () => {
     assert.match(source, /organizationCollections/);
     assert.match(source, /normalizeOrganizationCollections/);
   });
+
+  it("resolves publish base price from template pricing defaults", () => {
+    assert.match(source, /resolveBaseTemplatePrice/);
+    assert.match(source, /templateBasePriceUsd:\s*template\?\.basePriceUsd/);
+    assert.doesNotMatch(source, /productPricingTemplate\.findFirst/);
+  });
 });

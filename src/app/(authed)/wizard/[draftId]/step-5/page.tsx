@@ -12,6 +12,12 @@ import {
 import { isRealPrintifyMockupMedia } from "@/lib/mockup/real-printify-media";
 import { viewLabel } from "@/lib/placement/views";
 import {
+  mergeDraftAndTemplatePriceMaps,
+  normalizePriceBySizeDefault,
+  resolveBaseTemplatePrice,
+  resolvePriceForSize,
+} from "@/lib/pricing/template-pricing";
+import {
   AlertTriangle,
   CheckCircle2,
   ClipboardCheck,
@@ -42,6 +48,8 @@ interface Checklist {
   contentComplete: boolean;
   placementValid: boolean;
   mockupsNotStale: boolean;
+  pairingComplete?: boolean;
+  colorGroupsBalanced?: boolean;
   readyToPublish: boolean;
 }
 
@@ -163,7 +171,9 @@ function normalizeColorName(value: string): string {
 
 function isUsableMockupImage(image: MockupImage): boolean {
   const isCustomSource =
-    image.sourceUrl?.startsWith("mockup://custom/") || image.sourceUrl?.startsWith("mockup://custom-");
+    image.sourceUrl?.startsWith("mockup://custom/") ||
+    image.sourceUrl?.startsWith("mockup://custom-") ||
+    image.sourceUrl?.startsWith("mockup://library/");
   const isPrintifySource = isRealPrintifyMockupMedia(image);
   return image.included && (isCustomSource || isPrintifySource);
 }
@@ -267,36 +277,28 @@ export default function Step5ReviewPage() {
   }, []);
 
   // Stable scalar deps to avoid cascade re-fetches when draft object reference changes.
-  // Previously depended on [draft, draftId] → triggered 3× pricing + 3× sizes calls.
   const stableStoreId = draft?.storeId ?? null;
   const stableTemplateId = draft?.templateId ?? null;
-  const stableProductType = draft?.template?.blueprintTitle ?? draft?.store?.template?.blueprintTitle ?? (draft as any)?.productType ?? null;
+  const templatePricingSource =
+    draft?.template ??
+    draft?.store?.template ??
+    draft?.store?.templates?.find((template) => template.isDefault) ??
+    null;
+  const templateBasePriceUsd = templatePricingSource?.basePriceUsd ?? null;
+  const templatePriceBySizeDefault = templatePricingSource?.priceBySizeDefault ?? null;
+  const storeDefaultPriceUsd = draft?.store?.defaultPriceUsd ?? null;
 
-  // Try to use bundled data from ?expand=pricing,sizes (set by layout for step-5)
-  const { expandedPricing, expandedSizes } = useWizardStore();
+  // Try to use bundled data from ?expand=sizes (set by layout for step-5)
+  const { expandedSizes } = useWizardStore();
 
   useEffect(() => {
     if (!stableStoreId || !draftId || loading) return;
 
-    // If pricing was bundled by layout, use it directly — no API call needed
-    if (expandedPricing?.basePriceUsd) {
-      setPrice(expandedPricing.basePriceUsd.toFixed(2));
-    } else if (stableProductType) {
-      // Fallback: fetch pricing separately (e.g. navigated directly to step-5)
-      const controller = new AbortController();
-      fetch("/api/admin/pricing-templates", { signal: controller.signal })
-        .then((r) => r.json())
-        .then((data) => {
-          if (controller.signal.aborted) return;
-          if (data.templates) {
-            const match = data.templates.find((c: any) => c.productType === stableProductType);
-            if (match) setPrice(match.basePriceUsd.toFixed(2));
-          }
-        })
-        .catch(() => {});
-      return () => controller.abort();
-    }
-  }, [draftId, stableStoreId, stableProductType, expandedPricing, loading]);
+    setPrice(resolveBaseTemplatePrice({
+      templateBasePriceUsd,
+      storeDefaultPriceUsd,
+    }).toFixed(2));
+  }, [draftId, stableStoreId, templateBasePriceUsd, storeDefaultPriceUsd, loading]);
 
   useEffect(() => {
     if (!stableStoreId || !draftId || loading) return;
@@ -322,8 +324,20 @@ export default function Step5ReviewPage() {
 
   // Initialize per-size price override from draft (only when draft is loaded)
   const stablePriceBySizeOverride = draft?.priceBySizeOverride as Record<string, number> | null;
+  const effectivePriceBySizeDefault = useMemo(
+    () => mergeDraftAndTemplatePriceMaps({
+      draftPriceBySizeOverride: stablePriceBySizeOverride,
+      templatePriceBySizeDefault,
+    }),
+    [stablePriceBySizeOverride, templatePriceBySizeDefault],
+  );
   useEffect(() => {
-    if (!stablePriceBySizeOverride || Object.keys(stablePriceBySizeOverride).length === 0) return;
+    if (!stablePriceBySizeOverride || Object.keys(stablePriceBySizeOverride).length === 0) {
+      setPriceBySizeOverride({});
+      setSavedPriceOverride(null);
+      setPriceOverrideDirty(false);
+      return;
+    }
     const asStrings: Record<string, string> = {};
     for (const [k, v] of Object.entries(stablePriceBySizeOverride)) {
       asStrings[k] = v.toFixed(2);
@@ -392,7 +406,7 @@ export default function Step5ReviewPage() {
 
   const selectedTemplateBlueprint = draft?.template?.blueprintTitle ?? draft?.store?.template?.blueprintTitle ?? draft?.productType;
   const selectedSizesCount = draft?.enabledSizes?.length ?? 0;
-  const summaryListingsCount = selectedDraftDesigns.length;
+  const summaryListingsCount = (draft?.designPairs as any[] ?? []).length > 0 ? (draft?.designPairs as any[]).length : selectedDraftDesigns.length;
   const selectedMockupColorCount = colors.filter((color) =>
     activeMockups.some((image) => normalizeColorName(image.colorName) === normalizeColorName(color.name)),
   ).length;
@@ -632,7 +646,12 @@ export default function Step5ReviewPage() {
     : activeDesignStatus === "running" || activeDesignStatus === "pending"
       ? "Đang render mockup..."
       : "Chưa có mockup";
-  const overallSummaryLabel = `${selectedDraftDesigns.length} designs × ${colors.length} colors = ${selectedDraftDesigns.length} listings`;
+  const designPairs = (draft?.designPairs ?? []) as Array<{ id: string; baseName: string; lightDesign?: any; darkDesign?: any; aiContent?: any }>;
+  const hasPairs = designPairs.length > 0;
+  const listingsCount = hasPairs ? designPairs.length : selectedDraftDesigns.length;
+  const overallSummaryLabel = hasPairs
+    ? `${designPairs.length} cặp sáng/tối × ${colors.length} colors = ${designPairs.length} listings`
+    : `${selectedDraftDesigns.length} designs × ${colors.length} colors = ${selectedDraftDesigns.length} listings`;
 
   return (
     <div>
@@ -665,6 +684,22 @@ export default function Step5ReviewPage() {
             <span style={{ fontWeight: 600 }}>Kiểm tra trước khi Publish</span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {hasPairs && localChecklist.pairingComplete !== undefined && (
+              <ChecklistItem
+                ok={localChecklist.pairingComplete}
+                label="Tất cả design đã ghép cặp sáng/tối"
+                linkLabel="Fix ở Designs"
+                linkHref={`/wizard/${draftId}/step-2`}
+              />
+            )}
+            {hasPairs && localChecklist.colorGroupsBalanced !== undefined && (
+              <ChecklistItem
+                ok={localChecklist.colorGroupsBalanced}
+                label="Có ít nhất 1 màu sáng và 1 màu tối"
+                linkLabel="Fix ở Mockups"
+                linkHref={`/wizard/${draftId}/step-3`}
+              />
+            )}
             <ChecklistItem
               ok={localChecklist.mockupsMatchColors}
               label={`Mockup khớp số màu của design đang chọn (${selectedMockupColorCount}/${colors.length})`}
@@ -673,7 +708,7 @@ export default function Step5ReviewPage() {
             />
             <ChecklistItem
               ok={localChecklist.contentComplete}
-              label="Nội dung đầy đủ (title)"
+              label={hasPairs ? `Nội dung đầy đủ cho ${designPairs.length} cặp` : "Nội dung đầy đủ (title)"}
               linkLabel="Fix ở Content"
               linkHref={`/wizard/${draftId}/step-4`}
             />
@@ -1021,10 +1056,24 @@ export default function Step5ReviewPage() {
                         <tbody>
                           {enabledSizeList.map((size, index) => {
                             const baseVal = parseFloat(price) || 0;
-                            const autoRetail = baseVal + size.costDeltaCents / 100;
                             const overrideVal = priceBySizeOverride[size.size];
-                            const displayVal = overrideVal ?? autoRetail.toFixed(2);
+                            const templateDefaultVal = effectivePriceBySizeDefault?.[size.size] ?? null;
+                            const effectiveRetail = resolvePriceForSize({
+                              size: size.size,
+                              draftPriceBySizeOverride: normalizePriceBySizeDefault(
+                                Object.fromEntries(
+                                  Object.entries(priceBySizeOverride)
+                                    .filter(([, value]) => value.trim() !== "")
+                                    .map(([key, value]) => [key, Number(value)]),
+                                ),
+                              ),
+                              templatePriceBySizeDefault,
+                              templateBasePriceUsd: baseVal,
+                              storeDefaultPriceUsd,
+                            });
+                            const displayVal = overrideVal ?? templateDefaultVal?.toFixed(2) ?? effectiveRetail.toFixed(2);
                             const isOverridden = overrideVal != null;
+                            const isTemplateDefault = !isOverridden && templateDefaultVal != null;
                             return (
                               <tr key={size.size} style={{ borderBottom: index === enabledSizeList.length - 1 ? "none" : "1px solid var(--border-default)" }}>
                                 <td style={{ padding: "8px 12px", fontWeight: 500 }}>{size.size}</td>
@@ -1047,7 +1096,7 @@ export default function Step5ReviewPage() {
                                         maxWidth: 80,
                                         padding: "4px 6px",
                                         fontSize: "0.8rem",
-                                        fontWeight: isOverridden ? 700 : 400,
+                                        fontWeight: isOverridden || isTemplateDefault ? 700 : 400,
                                         borderColor: isOverridden ? "var(--color-accent)" : undefined,
                                       }}
                                     />

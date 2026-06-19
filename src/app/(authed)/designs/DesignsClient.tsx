@@ -16,6 +16,8 @@ import Link from "next/link";
 interface Design {
   id: string;
   name: string;
+  storeId: string | null;
+  store: { id: string; name: string } | null;
   previewUrl: string | null;
   width: number;
   height: number;
@@ -25,27 +27,42 @@ interface Design {
   createdAt: string;
 }
 
+interface StoreOption {
+  id: string;
+  name: string;
+}
+
 interface Props {
   initialDesigns: Design[];
+  stores: StoreOption[];
+  initialStoreId: string | null;
   initialTotal: number;
   initialTotalPages: number;
 }
 
-export default function DesignsClient({ initialDesigns, initialTotal, initialTotalPages }: Props) {
+export default function DesignsClient({
+  initialDesigns,
+  stores,
+  initialStoreId,
+  initialTotal,
+  initialTotalPages,
+}: Props) {
   const [designs, setDesigns] = useState<Design[]>(initialDesigns);
   const [total, setTotal] = useState(initialTotal);
   const [totalPages, setTotalPages] = useState(initialTotalPages);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [activeStoreId, setActiveStoreId] = useState<string | null>(initialStoreId);
   const [loading, setLoading] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const fetchDesigns = useCallback(async (q: string, p: number) => {
+  const fetchDesigns = useCallback(async (q: string, p: number, storeId: string | null) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (q) params.set("q", q);
+      if (storeId) params.set("storeId", storeId);
       params.set("page", String(p));
       params.set("limit", "20");
 
@@ -76,7 +93,7 @@ export default function DesignsClient({ initialDesigns, initialTotal, initialTot
       }
 
       setDeleteConfirm(null);
-      fetchDesigns(search, page);
+      fetchDesigns(search, page, activeStoreId);
     } catch {
       alert("Lỗi kết nối");
     } finally {
@@ -87,12 +104,18 @@ export default function DesignsClient({ initialDesigns, initialTotal, initialTot
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     setPage(1);
-    fetchDesigns(search, 1);
+    fetchDesigns(search, 1, activeStoreId);
   }
 
   function handlePageChange(newPage: number) {
     setPage(newPage);
-    fetchDesigns(search, newPage);
+    fetchDesigns(search, newPage, activeStoreId);
+  }
+
+  function handleStoreChange(storeId: string | null) {
+    setActiveStoreId(storeId);
+    setPage(1);
+    fetchDesigns(search, 1, storeId);
   }
 
   function formatSize(bytes: number): string {
@@ -121,6 +144,26 @@ export default function DesignsClient({ initialDesigns, initialTotal, initialTot
           <Plus size={16} />
           Upload Design
         </Link>
+      </div>
+
+      <div className="flex gap-2" style={{ marginBottom: 18, flexWrap: "wrap" }}>
+        {[
+          { id: null, label: "All" },
+          { id: "unassigned", label: "Unassigned" },
+          ...stores.map((store) => ({ id: store.id, label: store.name })),
+        ].map((tab) => {
+          const isActive = activeStoreId === tab.id;
+          return (
+            <button
+              key={tab.id ?? "all"}
+              type="button"
+              className={isActive ? "btn btn-primary" : "btn btn-secondary"}
+              onClick={() => handleStoreChange(tab.id)}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Search */}
@@ -262,6 +305,19 @@ export default function DesignsClient({ initialDesigns, initialTotal, initialTot
                     }}
                   >
                     {design.name}
+                  </p>
+                  <p
+                    style={{
+                      fontSize: "0.7rem",
+                      fontWeight: 600,
+                      margin: "0 0 6px",
+                      opacity: 0.55,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {design.store?.name ?? "Unassigned"}
                   </p>
                   <div
                     className="flex items-center justify-between"

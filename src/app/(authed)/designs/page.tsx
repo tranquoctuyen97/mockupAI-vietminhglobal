@@ -13,20 +13,38 @@ export const metadata = {
  * Designs list — Server Component.
  * Fetches initial page of designs on server for instant load.
  */
-export default async function DesignsPage() {
+export default async function DesignsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ storeId?: string }>;
+}) {
   const session = await validateSession();
   if (!session) redirect("/login");
 
+  const { storeId } = await searchParams;
   const limit = 20;
+  const storeFilter =
+    storeId === "unassigned"
+      ? { storeId: null }
+      : storeId
+        ? { storeId }
+        : {};
 
-  const [designs, total] = await Promise.all([
-    prisma.design.findMany({
+  const [stores, designs, total] = await Promise.all([
+    prisma.store.findMany({
       where: { tenantId: session.tenantId, status: "ACTIVE" },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.design.findMany({
+      where: { tenantId: session.tenantId, status: "ACTIVE", ...storeFilter },
       orderBy: { createdAt: "desc" },
       take: limit,
       select: {
         id: true,
         name: true,
+        storeId: true,
+        store: { select: { id: true, name: true } },
         previewPath: true,
         width: true,
         height: true,
@@ -37,7 +55,7 @@ export default async function DesignsPage() {
       },
     }),
     prisma.design.count({
-      where: { tenantId: session.tenantId, status: "ACTIVE" },
+      where: { tenantId: session.tenantId, status: "ACTIVE", ...storeFilter },
     }),
   ]);
 
@@ -51,6 +69,8 @@ export default async function DesignsPage() {
   return (
     <DesignsClient
       initialDesigns={initialDesigns}
+      stores={stores}
+      initialStoreId={storeId ?? null}
       initialTotal={total}
       initialTotalPages={Math.ceil(total / limit)}
     />

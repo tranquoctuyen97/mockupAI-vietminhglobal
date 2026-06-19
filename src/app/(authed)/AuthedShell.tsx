@@ -4,7 +4,7 @@ import {
   ArrowLeft,
   Bot,
   ChevronRight,
-  DollarSign,
+  Image,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -41,6 +41,7 @@ const NAV_ITEMS: NavItemConfig[] = [
   { label: "Dashboard", href: "/dashboard", icon: <LayoutDashboard size={18} /> },
   { label: "Stores", href: "/stores", icon: <Store size={18} />, feature: "stores" },
   { label: "Designs", href: "/designs", icon: <Palette size={18} />, feature: "designs" },
+  { label: "Mockups", href: "/mockups", icon: <Image size={18} />, feature: "mockup_library" },
   { label: "Wizard", href: "/wizard", icon: <Wand2 size={18} />, feature: "wizard" },
   { label: "Listings", href: "/listings", icon: <ShoppingBag size={18} />, feature: "listings" },
   {
@@ -58,13 +59,6 @@ const ADMIN_ITEMS: NavItemConfig[] = [
     icon: <Users size={18} />,
     adminOnly: true,
     feature: "users",
-  },
-  {
-    label: "Pricing",
-    href: "/admin/pricing",
-    icon: <DollarSign size={18} />,
-    adminOnly: true,
-    feature: "pricing",
   },
   {
     label: "AI Settings",

@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { pairDesigns } from "@/lib/designs/design-pairing";
+import { MAX_WIZARD_DESIGNS } from "@/lib/wizard/design-selection";
 import {
   getDraftDesignIdsFromDraft,
   useWizardStore,
 } from "@/lib/wizard/use-wizard-store";
-import { Image as ImageIcon, Check, Loader2, Search, X } from "lucide-react";
+import { Image as ImageIcon, Check, Loader2, Search, X, AlertTriangle } from "lucide-react";
 
 interface Design {
   id: string;
@@ -15,6 +17,26 @@ interface Design {
   height: number;
 }
 
+type DraftDesignEntry = NonNullable<
+  NonNullable<ReturnType<typeof useWizardStore.getState>["draft"]>["draftDesigns"]
+>[number];
+
+function designFromDraftEntry(entry: DraftDesignEntry): Design | null {
+  if (!entry.design) return null;
+  return {
+    id: entry.design.id,
+    name: entry.design.name,
+    previewUrl:
+      typeof entry.design.previewUrl === "string"
+        ? entry.design.previewUrl
+        : typeof entry.design.previewPath === "string"
+          ? entry.design.previewPath
+          : null,
+    width: typeof entry.design.width === "number" ? entry.design.width : 0,
+    height: typeof entry.design.height === "number" ? entry.design.height : 0,
+  };
+}
+
 export default function Step2DesignPage() {
   const { draft, updateDraft } = useWizardStore();
   const [designs, setDesigns] = useState<Design[]>([]);
@@ -22,9 +44,19 @@ export default function Step2DesignPage() {
   const [search, setSearch] = useState("");
   const selectedDesignIds = getDraftDesignIdsFromDraft(draft);
   const selectedDesignIdSet = new Set(selectedDesignIds);
+  const availableDesigns = new Map(designs.map((design) => [design.id, design]));
+  for (const draftDesign of draft?.draftDesigns ?? []) {
+    const design = designFromDraftEntry(draftDesign);
+    if (design && !availableDesigns.has(design.id)) {
+      availableDesigns.set(design.id, design);
+    }
+  }
   const selectedDesigns = selectedDesignIds
-    .map((id) => designs.find((design) => design.id === id))
+    .map((id) => availableDesigns.get(id))
     .filter((design): design is Design => Boolean(design));
+  const pairing = pairDesigns(selectedDesigns);
+  const pairMode = pairing.pairs.length > 0;
+  const hasBlockingUnpairedPairs = pairMode && pairing.unpaired.length > 0;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -33,7 +65,15 @@ export default function Step2DesignPage() {
     (async () => {
       setLoading(true);
       try {
-        const params = new URLSearchParams({ limit: "50" });
+        if (!draft?.storeId) {
+          setDesigns([]);
+          return;
+        }
+
+        const params = new URLSearchParams({
+          limit: String(MAX_WIZARD_DESIGNS),
+          storeId: draft.storeId,
+        });
         if (search) params.set("q", search);
         const res = await fetch(`/api/designs?${params}`, { signal });
         const data = await res.json();
@@ -46,14 +86,14 @@ export default function Step2DesignPage() {
     })();
 
     return () => controller.abort();
-  }, [search]);
+  }, [search, draft?.storeId]);
 
   function handleToggleDesign(designId: string) {
     const selected = getDraftDesignIdsFromDraft(useWizardStore.getState().draft);
     const isSelected = selected.includes(designId);
     const next = isSelected
       ? selected.filter((id) => id !== designId)
-      : selected.length >= 5
+      : selected.length >= MAX_WIZARD_DESIGNS
         ? selected
         : [...selected, designId];
 
@@ -76,11 +116,20 @@ export default function Step2DesignPage() {
   return (
     <div>
       <h2 style={{ fontWeight: 700, fontSize: "1.1rem", margin: "0 0 4px" }}>
-        Chọn Design ({selectedDesignIds.length}/5 đã chọn)
+        Chọn Design ({selectedDesignIds.length}/{MAX_WIZARD_DESIGNS} đã chọn)
       </h2>
       <p style={{ opacity: 0.5, fontSize: "0.85rem", margin: "0 0 20px" }}>
-        Chọn 1-5 designs để tạo listing
+        Bạn có thể chọn 1 design. Nếu dùng biến thể sáng/tối, hãy chọn đủ cặp tương ứng.
       </p>
+
+      {!draft?.storeId && (
+        <div className="card" style={{ padding: 18, marginBottom: 16 }}>
+          <p style={{ fontWeight: 700, margin: 0 }}>Chọn store trước</p>
+          <p style={{ opacity: 0.55, fontSize: "0.85rem", margin: "4px 0 0" }}>
+            Design trong wizard chỉ lấy từ store đã chọn ở Step 1.
+          </p>
+        </div>
+      )}
 
       {selectedDesigns.length > 0 && (
         <div
@@ -161,6 +210,77 @@ export default function Step2DesignPage() {
         </div>
       )}
 
+      {pairing.hasPairIntent && (
+        <div className="card" style={{ padding: 14, marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <p style={{ fontWeight: 700, margin: 0 }}>Cặp sáng/tối</p>
+              <p style={{ opacity: 0.5, fontSize: "0.78rem", margin: "3px 0 0" }}>
+                {pairing.pairs.length} cặp hợp lệ
+                {pairing.independent.length > 0 && ` · ${pairing.independent.length} design độc lập`}
+              </p>
+            </div>
+            {hasBlockingUnpairedPairs && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#b45309", fontSize: "0.78rem", fontWeight: 700 }}>
+                <AlertTriangle size={15} />
+                Thiếu design để ghép cặp
+              </div>
+            )}
+          </div>
+
+          {pairing.pairs.length > 0 && (
+            <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+              {pairing.pairs.map((pair) => (
+                <div
+                  key={`${pair.lightDesignId}:${pair.darkDesignId}`}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+                    gap: 8,
+                    padding: 10,
+                    border: "1px solid var(--border-default)",
+                    borderRadius: "var(--radius-sm)",
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ fontSize: "0.7rem", opacity: 0.5, margin: 0 }}>Sáng · {pair.baseName}</p>
+                    <p style={{ fontWeight: 700, fontSize: "0.82rem", margin: "3px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {pair.lightDesignName}
+                    </p>
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ fontSize: "0.7rem", opacity: 0.5, margin: 0 }}>Tối · {pair.baseName}</p>
+                    <p style={{ fontWeight: 700, fontSize: "0.82rem", margin: "3px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {pair.darkDesignName}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {pairing.unpaired.length > 0 && (
+            <div style={{ marginTop: 12, display: "grid", gap: 6 }}>
+              {pairing.unpaired.map((item) => (
+                <div
+                  key={item.id}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: "var(--radius-sm)",
+                    background: "rgba(180, 83, 9, 0.08)",
+                    color: "#92400e",
+                    fontSize: "0.78rem",
+                    fontWeight: 650,
+                  }}
+                >
+                  {item.name} — thiếu bản sáng/tối còn lại
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={{ position: "relative", marginBottom: 16 }}>
         <Search
           size={16}
@@ -199,7 +319,7 @@ export default function Step2DesignPage() {
         >
           {designs.map((design) => {
             const isSelected = selectedDesignIdSet.has(design.id);
-            const isDisabled = !isSelected && selectedDesignIds.length >= 5;
+            const isDisabled = !isSelected && selectedDesignIds.length >= MAX_WIZARD_DESIGNS;
             return (
               <div
                 key={design.id}

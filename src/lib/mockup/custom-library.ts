@@ -39,7 +39,9 @@ export function isCustomMockupView(value: unknown): value is CustomMockupViewVal
 }
 
 export function isCustomMockupScene(value: unknown): value is CustomMockupSceneValue {
-  return typeof value === "string" && CUSTOM_MOCKUP_SCENES.includes(value as CustomMockupSceneValue);
+  return (
+    typeof value === "string" && CUSTOM_MOCKUP_SCENES.includes(value as CustomMockupSceneValue)
+  );
 }
 
 export function isCustomRenderMode(value: unknown): value is CustomRenderModeValue {
@@ -96,10 +98,7 @@ export function parseCompositeRegionPx(value: unknown): CompositeRegionPx | null
       return null;
     }
     // Validate region stays within image bounds
-    if (
-      region.x + region.width > imageWidth ||
-      region.y + region.height > imageHeight
-    ) {
+    if (region.x + region.width > imageWidth || region.y + region.height > imageHeight) {
       return null;
     }
     region.imageWidth = imageWidth;
@@ -119,12 +118,22 @@ export function isValidCompositeRegionPx(value: unknown): value is CompositeRegi
   if (!value || typeof value !== "object") return false;
   const r = value as Record<string, unknown>;
   return (
-    typeof r.x === "number" && Number.isFinite(r.x) &&
-    typeof r.y === "number" && Number.isFinite(r.y) &&
-    typeof r.width === "number" && Number.isFinite(r.width) && r.width > 0 &&
-    typeof r.height === "number" && Number.isFinite(r.height) && r.height > 0 &&
-    typeof r.imageWidth === "number" && Number.isFinite(r.imageWidth) && r.imageWidth > 0 &&
-    typeof r.imageHeight === "number" && Number.isFinite(r.imageHeight) && r.imageHeight > 0
+    typeof r.x === "number" &&
+    Number.isFinite(r.x) &&
+    typeof r.y === "number" &&
+    Number.isFinite(r.y) &&
+    typeof r.width === "number" &&
+    Number.isFinite(r.width) &&
+    r.width > 0 &&
+    typeof r.height === "number" &&
+    Number.isFinite(r.height) &&
+    r.height > 0 &&
+    typeof r.imageWidth === "number" &&
+    Number.isFinite(r.imageWidth) &&
+    r.imageWidth > 0 &&
+    typeof r.imageHeight === "number" &&
+    Number.isFinite(r.imageHeight) &&
+    r.imageHeight > 0
   );
 }
 
@@ -144,7 +153,7 @@ export function normalizeCompositeRegionPx(value: unknown): CompositeRegionPx | 
     height: r.height as number,
     rotationDeg:
       typeof r.rotationDeg === "number" && Number.isFinite(r.rotationDeg)
-        ? r.rotationDeg as number
+        ? (r.rotationDeg as number)
         : 0,
     imageWidth: r.imageWidth as number,
     imageHeight: r.imageHeight as number,
@@ -155,13 +164,43 @@ export function toJson(value: CompositeRegionPx | null): Prisma.InputJsonValue |
   return value ? (value as unknown as Prisma.InputJsonValue) : undefined;
 }
 
+export function scaleCompositeRegionToImage(
+  region: CompositeRegionPx,
+  imageWidth: number,
+  imageHeight: number,
+): CompositeRegionPx {
+  if (
+    !region.imageWidth ||
+    !region.imageHeight ||
+    (region.imageWidth === imageWidth && region.imageHeight === imageHeight)
+  ) {
+    return { ...region, imageWidth, imageHeight };
+  }
+
+  const scaleX = imageWidth / region.imageWidth;
+  const scaleY = imageHeight / region.imageHeight;
+  return {
+    x: Math.round(region.x * scaleX),
+    y: Math.round(region.y * scaleY),
+    width: Math.max(1, Math.round(region.width * scaleX)),
+    height: Math.max(1, Math.round(region.height * scaleY)),
+    rotationDeg: region.rotationDeg,
+    imageWidth,
+    imageHeight,
+  };
+}
+
+function parseEffectiveCompositeRegion(value: unknown): CompositeRegionPx | null {
+  return normalizeCompositeRegionPx(value) ?? parseCompositeRegionPx(value);
+}
+
 /**
  * Resolve the effective composite region by merging source and pick placements.
  * Pure function — callers are responsible for fetching pick data from the DB.
  *
  * Precedence:
- *   DRAFT:    sourceRegion > pickRegion > null
- *   TEMPLATE: pickRegion > sourceRegion > null
+ *   DRAFT:    sourceRegion > pickRegion > templateDefaultRegion > null
+ *   TEMPLATE: pickRegion > sourceRegion > templateDefaultRegion > null
  *
  * This mirrors the logic in GET mockup-sources serializeWithPickPlacement()
  * and MUST be used by any code path that reads placement for rendering.
@@ -170,29 +209,37 @@ export function resolveEffectiveCompositeRegion(params: {
   scope: "DRAFT" | "TEMPLATE";
   sourceRegion: unknown;
   pickRegion: unknown;
+  templateDefaultRegion?: unknown;
+  imageSize?: { width: number; height: number };
 }): CompositeRegionPx | null {
-  const parsedSource = parseCompositeRegionPx(params.sourceRegion);
-  const parsedPick = parseCompositeRegionPx(params.pickRegion);
+  const parsedSource = parseEffectiveCompositeRegion(params.sourceRegion);
+  const parsedPick = parseEffectiveCompositeRegion(params.pickRegion);
+  const parsedTemplateDefault = parseEffectiveCompositeRegion(params.templateDefaultRegion);
 
-  if (params.scope === "DRAFT") {
-    return parsedSource ?? parsedPick;
-  }
-  // TEMPLATE: pick takes priority (draft-level override)
-  return parsedPick ?? parsedSource;
+  const resolved =
+    params.scope === "DRAFT"
+      ? (parsedSource ?? parsedPick ?? parsedTemplateDefault)
+      : (parsedPick ?? parsedSource ?? parsedTemplateDefault);
+
+  if (!resolved || !params.imageSize) return resolved;
+  return scaleCompositeRegionToImage(resolved, params.imageSize.width, params.imageSize.height);
 }
 
 export function storageUrl(key: string | null | undefined): string | null {
   return key ? getStorage().getPublicUrl(key) : null;
 }
 
-export function serializeCustomMockupSource<T extends {
-  storagePath: string;
-  outputPath: string | null;
-  compositeRegionPx?: unknown;
-}>(source: T, dimensions?: { width: number | null; height: number | null }) {
-  const compositeRegion = source.compositeRegionPx && typeof source.compositeRegionPx === "object"
-    ? source.compositeRegionPx as Partial<CompositeRegionPx>
-    : null;
+export function serializeCustomMockupSource<
+  T extends {
+    storagePath: string;
+    outputPath: string | null;
+    compositeRegionPx?: unknown;
+  },
+>(source: T, dimensions?: { width: number | null; height: number | null }) {
+  const compositeRegion =
+    source.compositeRegionPx && typeof source.compositeRegionPx === "object"
+      ? (source.compositeRegionPx as Partial<CompositeRegionPx>)
+      : null;
   return {
     ...source,
     imageUrl: storageUrl(source.storagePath),

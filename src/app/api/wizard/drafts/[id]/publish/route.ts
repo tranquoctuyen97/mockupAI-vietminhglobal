@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { formatDescriptionHtml } from "@/lib/content/description-html";
 import { prisma } from "@/lib/db";
+import { normalizeMoneyValue, resolveBaseTemplatePrice } from "@/lib/pricing/template-pricing";
 import { generateIdempotencyKey, runPublishWorker } from "@/lib/publish/worker";
 import { normalizeOrganizationCollections } from "@/lib/wizard/product-organization";
 
@@ -23,6 +24,7 @@ type DraftDesignSelection = {
 
 type PublishListingResponse = {
   listingId: string;
+  designPairId?: string | null;
   draftDesignId: string | null;
   designId: string;
   designName: string;
@@ -80,6 +82,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           design: true,
         },
       },
+      designPairs: {
+        orderBy: { sortOrder: "asc" },
+        include: {
+          lightDesign: { include: { design: true } },
+          darkDesign: { include: { design: true } },
+        },
+      },
       template: true,
       store: { include: { colors: true } },
     },
@@ -122,36 +131,134 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "AI content not generated" }, { status: 400 });
   }
 
-  const productType = template?.blueprintTitle || draft.store?.name || "T-Shirt";
-  const pricingTemplate = await prisma.productPricingTemplate.findFirst({
-    where: { tenantId: session.tenantId, productType },
-  });
-  const requestedPrice =
-    typeof body.priceUsd === "number"
-      ? body.priceUsd
-      : typeof body.priceUsd === "string" && body.priceUsd.trim()
-        ? Number(body.priceUsd)
-        : null;
-  const priceUsd = Number.isFinite(requestedPrice as number)
-    ? (requestedPrice as number)
-    : pricingTemplate?.basePriceUsd || draft.store?.defaultPriceUsd?.toNumber() || 24.99;
+  const priceUsd =
+    normalizeMoneyValue(body.priceUsd) ??
+    resolveBaseTemplatePrice({
+      templateBasePriceUsd: template?.basePriceUsd,
+      storeDefaultPriceUsd: draft.store?.defaultPriceUsd,
+    });
 
   const colors =
     draft.store?.colors
       ?.filter((c: any) => (draft.enabledColorIds ?? []).includes(c.id))
       .map((c: any) => ({
-        title: c.name,
+        name: c.name,
         hex: c.hex,
       })) || [];
+
+  if (draft.designPairs.length > 0) {
+    if (selectedDraftDesigns.length !== draft.designPairs.length * 2) {
+      return NextResponse.json(
+        { error: "Resolve unpaired light/dark designs before publishing" },
+        { status: 400 },
+      );
+    }
+
+    const listings: PublishListingResponse[] = [];
+    const workersToStart: Array<{ listingId: string }> = [];
+
+    for (const pair of draft.designPairs) {
+      const pairContent = pair.aiContent as {
+        title?: string;
+        description?: string;
+        tags?: string[];
+        collections?: string[];
+      } | null;
+
+      if (!pairContent?.title) {
+        return NextResponse.json(
+          { error: `AI content not generated for ${pair.baseName}` },
+          { status: 400 },
+        );
+      }
+
+      const existingListing = await prisma.listing.findUnique({
+        where: { wizardDraftDesignPairId: pair.id },
+      });
+
+      if (existingListing) {
+        listings.push({
+          listingId: existingListing.id,
+          designPairId: pair.id,
+          draftDesignId: existingListing.wizardDraftDesignId ?? null,
+          designId: existingListing.designId ?? pair.lightDesign.designId,
+          designName: pair.baseName,
+          status: existingListing.status,
+          alreadyPublished: true,
+        });
+        continue;
+      }
+
+      const listing = await prisma.listing.create({
+        data: {
+          tenantId: session.tenantId,
+          storeId: draft.storeId,
+          designId: pair.lightDesign.designId,
+          templateId: template?.id || null,
+          wizardDraftId: draftId,
+          wizardDraftDesignId: pair.lightDraftDesignId,
+          wizardDraftDesignPairId: pair.id,
+          title: pairContent.title || "",
+          descriptionHtml: formatDescriptionHtml(pairContent.description),
+          tags: pairContent.tags || [],
+          organizationCollections: normalizeOrganizationCollections(pairContent.collections),
+          priceUsd,
+          createdBy: session.id,
+          variants: {
+            create: colors.map((c) => ({
+              colorName: c.name,
+              colorHex: c.hex,
+            })),
+          },
+          publishJobs: {
+            create: [
+              {
+                idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, pair.id)}-shopify`,
+                stage: "SHOPIFY",
+              },
+              {
+                idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, pair.id)}-printify`,
+                stage: "PRINTIFY",
+              },
+            ],
+          },
+        },
+      });
+
+      listings.push({
+        listingId: listing.id,
+        designPairId: pair.id,
+        draftDesignId: listing.wizardDraftDesignId ?? null,
+        designId: pair.lightDesign.designId,
+        designName: pair.baseName,
+        status: "PUBLISHING",
+        alreadyPublished: false,
+      });
+      workersToStart.push({ listingId: listing.id });
+    }
+
+    await prisma.wizardDraft.update({
+      where: { id: draftId },
+      data: { status: "PUBLISHED" },
+    });
+
+    void runPublishWorkersWithConcurrency({
+      workers: workersToStart,
+      draftId,
+      tenantId: session.tenantId,
+    });
+
+    return NextResponse.json({ listings });
+  }
 
   const hasDraftDesignRows = (draft.draftDesigns ?? []).length > 0;
   const listings: PublishListingResponse[] = [];
   const workersToStart: Array<{ listingId: string }> = [];
 
-  for (const draftDesign of selectedDraftDesigns) {
+  for (const legacyDraftDesign of selectedDraftDesigns) {
     let existingListing = hasDraftDesignRows
       ? await prisma.listing.findFirst({
-          where: { tenantId: session.tenantId, wizardDraftDesignId: draftDesign.id },
+          where: { tenantId: session.tenantId, wizardDraftDesignId: legacyDraftDesign.id },
         })
       : null;
 
@@ -160,7 +267,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         where: {
           tenantId: session.tenantId,
           wizardDraftId: draftId,
-          designId: draftDesign.designId,
+          designId: legacyDraftDesign.designId,
         },
       });
     }
@@ -169,8 +276,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       listings.push({
         listingId: existingListing.id,
         draftDesignId: existingListing.wizardDraftDesignId ?? null,
-        designId: existingListing.designId ?? draftDesign.designId,
-        designName: draftDesign.design?.name ?? "Design",
+        designId: existingListing.designId ?? legacyDraftDesign.designId,
+        designName: legacyDraftDesign.design?.name ?? "Design",
         status: existingListing.status,
         alreadyPublished: true,
       });
@@ -181,10 +288,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       data: {
         tenantId: session.tenantId,
         storeId: draft.storeId,
-        designId: draftDesign.designId,
+        designId: legacyDraftDesign.designId,
         templateId: template?.id || null,
         wizardDraftId: draftId,
-        wizardDraftDesignId: hasDraftDesignRows ? draftDesign.id : null,
+        wizardDraftDesignId: hasDraftDesignRows ? legacyDraftDesign.id : null,
         title: aiContent.title || "",
         descriptionHtml: formatDescriptionHtml(aiContent.description),
         tags: aiContent.tags || [],
@@ -193,18 +300,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         createdBy: session.id,
         variants: {
           create: colors.map((c) => ({
-            colorName: c.title,
+            colorName: c.name,
             colorHex: c.hex,
           })),
         },
         publishJobs: {
           create: [
             {
-              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, draftDesign.id)}-shopify`,
+              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, legacyDraftDesign.id)}-shopify`,
               stage: "SHOPIFY",
             },
             {
-              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, draftDesign.id)}-printify`,
+              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, legacyDraftDesign.id)}-printify`,
               stage: "PRINTIFY",
             },
           ],
@@ -215,8 +322,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     listings.push({
       listingId: listing.id,
       draftDesignId: listing.wizardDraftDesignId ?? null,
-      designId: draftDesign.designId,
-      designName: draftDesign.design?.name ?? "Design",
+      designId: legacyDraftDesign.designId,
+      designName: legacyDraftDesign.design?.name ?? "Design",
       status: "PUBLISHING",
       alreadyPublished: false,
     });
@@ -243,4 +350,31 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   })();
 
   return NextResponse.json({ listings });
+}
+
+async function runPublishWorkersWithConcurrency(input: {
+  workers: Array<{ listingId: string }>;
+  draftId: string;
+  tenantId: string;
+}) {
+  let index = 0;
+  async function runNext(): Promise<void> {
+    const worker = input.workers[index];
+    index += 1;
+    if (!worker) return;
+
+    try {
+      await runPublishWorker({
+        listingId: worker.listingId,
+        draftId: input.draftId,
+        tenantId: input.tenantId,
+      });
+    } catch (err) {
+      console.error(`[Publish API] Worker error for listing ${worker.listingId}:`, err);
+    }
+
+    await runNext();
+  }
+
+  await Promise.all(Array.from({ length: Math.min(3, input.workers.length) }, () => runNext()));
 }

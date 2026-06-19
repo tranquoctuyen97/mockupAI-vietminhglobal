@@ -1,14 +1,14 @@
 /**
  * GET    /api/wizard/drafts/:id — Get draft + readiness checklist
- *        ?expand=pricing,sizes — Bundle extra data for step-5 (eliminates 2 API calls)
+ *        ?expand=sizes — Bundle size data for step-5
  * PATCH  /api/wizard/drafts/:id — Update draft (auto-save) + trigger regen if stale
  * DELETE /api/wizard/drafts/:id — Delete draft
  */
 
 import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
-import { getDraft, updateDraft, deleteDraft } from "@/lib/wizard/state";
 import { prisma } from "@/lib/db";
+import { getDraft, updateDraft, deleteDraft } from "@/lib/wizard/state";
 import { getClientForStore } from "@/lib/printify/account";
 import { ensureVariantCostCache, groupSizes } from "@/lib/printify/variant-catalog";
 import { hasActiveMockupJob, regenerateMockupsForDraft } from "@/lib/mockup/regenerate";
@@ -30,28 +30,14 @@ export async function GET(
     return NextResponse.json({ error: "Draft not found" }, { status: 404 });
   }
 
-  // Parse ?expand=pricing,sizes for step-5 data bundling
+  // Parse ?expand=sizes for step-5 data bundling
   const url = new URL(request.url);
   const expandParam = url.searchParams.get("expand") ?? "";
   const expandSet = new Set(expandParam.split(",").map((s) => s.trim()).filter(Boolean));
 
   // Run checklist + expansions in parallel
-  const [checklist, pricingData, sizesData] = await Promise.all([
+  const [checklist, sizesData] = await Promise.all([
     buildChecklist(draft),
-
-    // Expand: pricing template matching the draft's product type
-    expandSet.has("pricing")
-      ? (async () => {
-          const productType =
-            draft.template?.blueprintTitle ??
-            (draft.store?.templates?.find((t) => t.isDefault)?.blueprintTitle) ??
-            null;
-          if (!productType) return null;
-          return prisma.productPricingTemplate.findFirst({
-            where: { tenantId: session.tenantId, productType },
-          });
-        })()
-      : Promise.resolve(undefined),
 
     // Expand: sizes with cost data from variant cache
     expandSet.has("sizes") && draft.storeId
@@ -82,7 +68,6 @@ export async function GET(
   ]);
 
   const response: Record<string, unknown> = { ...draft, checklist };
-  if (pricingData !== undefined) response.pricing = pricingData;
   if (sizesData !== undefined) response.sizes = sizesData;
 
   return NextResponse.json(response);

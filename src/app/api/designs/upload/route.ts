@@ -106,6 +106,28 @@ export async function POST(request: Request) {
       );
     }
 
+    const storeId = fields.storeId?.[0]?.trim();
+    if (!storeId) {
+      await unlink(file.filepath).catch(() => {});
+      return NextResponse.json(
+        { error: "Vui lòng chọn store trước khi upload" },
+        { status: 400 },
+      );
+    }
+
+    const store = await prisma.store.findFirst({
+      where: { id: storeId, tenantId: session.tenantId, status: "ACTIVE" },
+      select: { id: true, name: true },
+    });
+
+    if (!store) {
+      await unlink(file.filepath).catch(() => {});
+      return NextResponse.json(
+        { error: "Store không hợp lệ hoặc không thuộc tenant hiện tại" },
+        { status: 400 },
+      );
+    }
+
     // Read file buffer for probing
     const buffer = await readFile(file.filepath);
 
@@ -134,6 +156,7 @@ export async function POST(request: Request) {
     const design = await prisma.design.create({
       data: {
         tenantId: session.tenantId,
+        storeId: store.id,
         ownerUserId: session.id,
         name,
         originalFilename: file.originalFilename || "unknown",
@@ -156,6 +179,7 @@ export async function POST(request: Request) {
       resourceId: design.id,
       metadata: {
         name,
+        storeId: store.id,
         width: probeResult.width,
         height: probeResult.height,
         dpi: probeResult.dpi,
@@ -172,6 +196,7 @@ export async function POST(request: Request) {
       fileSizeBytes: design.fileSizeBytes,
       previewUrl: storage.getPublicUrl(previewKey),
       originalUrl: storage.getPublicUrl(originalKey),
+      store,
     }, { status: 201 });
   } catch (error: unknown) {
     console.error("[Upload] Error:", error);

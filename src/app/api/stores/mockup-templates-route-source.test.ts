@@ -14,3 +14,9 @@ test("mockup templates route exposes GET with readiness and colors", () => {
   assert.match(source, /include:\s*{\s*colors:\s*{/);
   assert.match(source, /return\s+NextResponse\.json\(\{\s*templates/);
 });
+
+test("mockup templates route no longer exposes template default composite region", () => {
+  const source = readFileSync(join(process.cwd(), routePath), "utf8");
+  assert.doesNotMatch(source, /defaultCompositeRegionPx/);
+  assert.match(source, /mockupItems/);
+});

@@ -1,5 +1,5 @@
 /**
- * GET /api/designs?q=&page=1&limit=20
+ * GET /api/designs?q=&page=1&limit=20&storeId=
  * List designs with search and pagination
  */
 
@@ -16,13 +16,21 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const q = searchParams.get("q") || "";
+  const storeId = searchParams.get("storeId");
   const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
-  const limit = Math.min(50, Math.max(1, parseInt(searchParams.get("limit") || "20", 10)));
+  const limit = Math.min(80, Math.max(1, parseInt(searchParams.get("limit") || "20", 10)));
   const skip = (page - 1) * limit;
+  const storeFilter =
+    storeId === "unassigned"
+      ? { storeId: null }
+      : storeId
+        ? { storeId }
+        : {};
 
   const where = {
     tenantId: session.tenantId,
     status: "ACTIVE" as const,
+    ...storeFilter,
     ...(q ? { name: { contains: q, mode: "insensitive" as const } } : {}),
   };
 
@@ -35,6 +43,8 @@ export async function GET(request: Request) {
       select: {
         id: true,
         name: true,
+        storeId: true,
+        store: { select: { id: true, name: true } },
         previewPath: true,
         width: true,
         height: true,

@@ -15,7 +15,6 @@ const WORKSPACE_FEATURES = [
 
 const ADMIN_FEATURES = [
   { key: "users", label: "Users" },
-  { key: "pricing", label: "Pricing" },
   { key: "integrations", label: "Integrations" },
   { key: "ai_settings", label: "AI Settings" },
   { key: "inkhub_config", label: "InkHub Config" },

@@ -58,25 +58,40 @@ export function buildPrintifyProductPayload(input: {
   imageId: string;
   placementData: PlacementData;
   tags?: string[];
+  imageGroups?: Array<{ imageId: string; variantIds: number[] }>;
 }): Record<string, unknown> {
-  const placeholders = resolvePlacementViews(input.placementData).map((view) => {
-    const placement = resolvePlacement(input.placementData, view);
-    return {
-      position: view,
-      images: [
-        {
-          id: input.imageId,
-          ...mmToPrintifyCoords(placement ?? undefined),
-        },
-      ],
-    };
-  });
+  function buildPlaceholders(imageId: string): Array<Record<string, unknown>> {
+    return resolvePlacementViews(input.placementData).map((view) => {
+      const placement = resolvePlacement(input.placementData, view);
+      return {
+        position: view,
+        images: [
+          {
+            id: imageId,
+            ...mmToPrintifyCoords(placement ?? undefined),
+          },
+        ],
+      };
+    });
+  }
 
   // When explicit variants are provided, print_areas must reference ALL their IDs
   // (Printify requires every variant in `variants[]` to appear in `print_areas[].variant_ids`)
   const effectiveVariantIds = input.variants
     ? input.variants.map(v => v.id)
     : input.variantIds;
+
+  // When imageGroups is provided (dual-design pair publish), create one print_area
+  // per group with its own image. Otherwise, single print_area for all variants.
+  const printAreas = input.imageGroups?.length
+    ? input.imageGroups.map((group) => ({
+        variant_ids: group.variantIds,
+        placeholders: buildPlaceholders(group.imageId),
+      }))
+    : [{
+        variant_ids: effectiveVariantIds,
+        placeholders: buildPlaceholders(input.imageId),
+      }];
 
   return {
     title: input.title,
@@ -88,12 +103,7 @@ export function buildPrintifyProductPayload(input: {
       price: 2000,
       is_enabled: true,
     })),
-    print_areas: [
-      {
-        variant_ids: effectiveVariantIds,
-        placeholders,
-      },
-    ],
+    print_areas: printAreas,
     ...(input.tags && input.tags.length > 0 ? { tags: input.tags } : {}),
   };
 }
