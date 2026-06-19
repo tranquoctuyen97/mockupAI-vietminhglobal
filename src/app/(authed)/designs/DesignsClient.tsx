@@ -1,17 +1,18 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
-  Plus,
-  Search,
-  Trash2,
-  Image as ImageIcon,
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  Image as ImageIcon,
   Loader2,
+  Plus,
+  Search,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 interface Design {
   id: string;
@@ -36,6 +37,7 @@ interface Props {
   initialDesigns: Design[];
   stores: StoreOption[];
   initialStoreId: string | null;
+  invalidStoreSelected: boolean;
   initialTotal: number;
   initialTotalPages: number;
 }
@@ -44,9 +46,11 @@ export default function DesignsClient({
   initialDesigns,
   stores,
   initialStoreId,
+  invalidStoreSelected,
   initialTotal,
   initialTotalPages,
 }: Props) {
+  const router = useRouter();
   const [designs, setDesigns] = useState<Design[]>(initialDesigns);
   const [total, setTotal] = useState(initialTotal);
   const [totalPages, setTotalPages] = useState(initialTotalPages);
@@ -56,6 +60,13 @@ export default function DesignsClient({
   const [loading, setLoading] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  const selectedStore = useMemo(
+    () => stores.find((store) => store.id === activeStoreId) ?? null,
+    [activeStoreId, stores],
+  );
+  const hasStores = stores.length > 0;
+  const uploadHref = selectedStore ? `/designs/upload?storeId=${selectedStore.id}` : "/designs/upload";
 
   const fetchDesigns = useCallback(async (q: string, p: number, storeId: string | null) => {
     setLoading(true);
@@ -103,19 +114,23 @@ export default function DesignsClient({
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
+    if (!activeStoreId) return;
     setPage(1);
     fetchDesigns(search, 1, activeStoreId);
   }
 
   function handlePageChange(newPage: number) {
+    if (!activeStoreId) return;
     setPage(newPage);
     fetchDesigns(search, newPage, activeStoreId);
   }
 
-  function handleStoreChange(storeId: string | null) {
+  function handleStoreChange(storeId: string) {
     setActiveStoreId(storeId);
     setPage(1);
-    fetchDesigns(search, 1, storeId);
+    setSearch("");
+    router.replace(`/designs?storeId=${storeId}`);
+    fetchDesigns("", 1, storeId);
   }
 
   function formatSize(bytes: number): string {
@@ -138,59 +153,88 @@ export default function DesignsClient({
       <div className="flex items-center justify-between" style={{ marginBottom: 24 }}>
         <div>
           <h1 className="page-title">Design Library</h1>
-          <p className="page-subtitle">{total} design{total !== 1 ? "s" : ""}</p>
+          <p className="page-subtitle">
+            {selectedStore
+              ? `${selectedStore.name} · ${total} design${total !== 1 ? "s" : ""}`
+              : "Chọn store để xem design"}
+          </p>
         </div>
-        <Link href="/designs/upload" className="btn btn-primary">
-          <Plus size={16} />
-          Upload Design
-        </Link>
+        {selectedStore ? (
+          <Link href={uploadHref} className="btn btn-primary">
+            <Plus size={16} />
+            Upload Design
+          </Link>
+        ) : (
+          <button type="button" className="btn btn-secondary" disabled>
+            <Plus size={16} />
+            Upload Design
+          </button>
+        )}
       </div>
 
       <div className="flex gap-2" style={{ marginBottom: 18, flexWrap: "wrap" }}>
-        {[
-          { id: null, label: "All" },
-          { id: "unassigned", label: "Unassigned" },
-          ...stores.map((store) => ({ id: store.id, label: store.name })),
-        ].map((tab) => {
-          const isActive = activeStoreId === tab.id;
+        {stores.map((store) => {
+          const isActive = activeStoreId === store.id;
           return (
             <button
-              key={tab.id ?? "all"}
+              key={store.id}
               type="button"
               className={isActive ? "btn btn-primary" : "btn btn-secondary"}
-              onClick={() => handleStoreChange(tab.id)}
+              onClick={() => handleStoreChange(store.id)}
             >
-              {tab.label}
+              {store.name}
             </button>
           );
         })}
       </div>
 
-      {/* Search */}
-      <form onSubmit={handleSearch} style={{ marginBottom: 24 }}>
-        <div className="flex gap-3">
-          <div style={{ position: "relative", flex: 1 }}>
-            <Search
-              size={16}
-              style={{
-                position: "absolute",
-                left: 12,
-                top: "50%",
-                transform: "translateY(-50%)",
-                opacity: 0.4,
-              }}
-            />
-            <input
-              type="text"
-              className="input"
-              placeholder="Tìm design theo tên..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{ paddingLeft: 38 }}
-            />
-          </div>
+      {!hasStores && (
+        <div className="card" style={{ padding: 64, textAlign: "center" }}>
+          <h3 style={{ fontWeight: 700, margin: "0 0 8px" }}>Chưa có store active</h3>
+          <p style={{ opacity: 0.5, fontSize: "0.875rem", margin: 0 }}>
+            Kết nối hoặc kích hoạt store trước khi upload design.
+          </p>
         </div>
-      </form>
+      )}
+
+      {hasStores && !selectedStore && (
+        <div className="card" style={{ padding: 64, textAlign: "center" }}>
+          <ImageIcon size={32} style={{ opacity: 0.3, marginBottom: 14 }} />
+          <h3 style={{ fontWeight: 700, margin: "0 0 8px" }}>
+            {invalidStoreSelected ? "Store không hợp lệ hoặc không còn active" : "Chọn store để xem design"}
+          </h3>
+          <p style={{ opacity: 0.5, fontSize: "0.875rem", margin: 0 }}>
+            Chọn một store phía trên để xem thư viện design của store đó.
+          </p>
+        </div>
+      )}
+
+      {selectedStore && (
+        <form onSubmit={handleSearch} style={{ marginBottom: 24 }}>
+          <div className="flex gap-3">
+            <div style={{ position: "relative", flex: 1 }}>
+              <Search
+                size={16}
+                style={{
+                  position: "absolute",
+                  left: 12,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  opacity: 0.4,
+                }}
+              />
+              <input
+                type="text"
+                className="input"
+                placeholder="Tìm design theo tên..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ paddingLeft: 38 }}
+              />
+            </div>
+          </div>
+        </form>
+      )}
 
       {/* Loading */}
       {loading && (
@@ -203,7 +247,7 @@ export default function DesignsClient({
       )}
 
       {/* Empty State */}
-      {!loading && designs.length === 0 && (
+      {selectedStore && !loading && designs.length === 0 && (
         <div className="card" style={{ padding: 64, textAlign: "center" }}>
           <div
             style={{
@@ -220,15 +264,15 @@ export default function DesignsClient({
             <ImageIcon size={32} style={{ opacity: 0.3 }} />
           </div>
           <h3 style={{ fontWeight: 700, margin: "0 0 8px" }}>
-            {search ? "Không tìm thấy design" : "Chưa có design nào"}
+            {search ? "Không tìm thấy design" : `Chưa có design nào trong ${selectedStore.name}`}
           </h3>
           <p style={{ opacity: 0.5, fontSize: "0.875rem", margin: "0 0 24px" }}>
             {search
-              ? `Không có kết quả cho "${search}"`
-              : "Upload design đầu tiên để bắt đầu"}
+              ? `Không có kết quả cho "${search}" trong ${selectedStore.name}`
+              : "Upload design đầu tiên cho store này để bắt đầu"}
           </p>
           {!search && (
-            <Link href="/designs/upload" className="btn btn-primary">
+            <Link href={uploadHref} className="btn btn-primary">
               <Plus size={16} />
               Upload Design
             </Link>
@@ -237,7 +281,7 @@ export default function DesignsClient({
       )}
 
       {/* Grid */}
-      {!loading && designs.length > 0 && (
+      {selectedStore && !loading && designs.length > 0 && (
         <>
           <div
             style={{
