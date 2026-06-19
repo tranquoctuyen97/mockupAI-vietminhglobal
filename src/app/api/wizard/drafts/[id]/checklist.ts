@@ -219,7 +219,11 @@ function getChecklistDesignKeys(draft: any): string[] {
 }
 
 function isRealPrintifyMockup(image: { compositeUrl?: string | null; sourceUrl?: string | null }): boolean {
-  if (image.sourceUrl?.startsWith("mockup://custom/") || image.sourceUrl?.startsWith("mockup://custom-")) {
+  if (
+    image.sourceUrl?.startsWith("mockup://custom/") ||
+    image.sourceUrl?.startsWith("mockup://custom-") ||
+    image.sourceUrl?.startsWith("mockup://library/")
+  ) {
     return true;
   }
   return isRealPrintifyMockupMedia(image);

@@ -33,6 +33,16 @@ test("custom template official gallery excludes Printify and keeps custom source
     ),
     true,
   );
+  assert.equal(
+    shouldShowInOfficialGallery(
+      {
+        sourceUrl: "mockup://library/templateMockupItem1/color1",
+        compositeUrl: "/media/custom/library1.webp",
+      },
+      "CUSTOM",
+    ),
+    true,
+  );
 });
 
 test("printify template official gallery keeps Printify plus listing overrides only", () => {

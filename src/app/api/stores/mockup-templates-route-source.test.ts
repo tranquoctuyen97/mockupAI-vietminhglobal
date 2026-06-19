@@ -15,10 +15,8 @@ test("mockup templates route exposes GET with readiness and colors", () => {
   assert.match(source, /return\s+NextResponse\.json\(\{\s*templates/);
 });
 
-test("mockup templates route includes template pricing and composite defaults", () => {
+test("mockup templates route no longer exposes template default composite region", () => {
   const source = readFileSync(join(process.cwd(), routePath), "utf8");
-
-  assert.match(source, /basePriceUsd/);
-  assert.match(source, /priceBySizeDefault/);
-  assert.match(source, /defaultCompositeRegionPx/);
+  assert.doesNotMatch(source, /defaultCompositeRegionPx/);
+  assert.match(source, /mockupItems/);
 });

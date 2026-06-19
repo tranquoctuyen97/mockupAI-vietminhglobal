@@ -13,12 +13,6 @@ import {
   type UploadMockupModalValue,
   type UploadMockupTemplate,
 } from "./UploadMockupModal";
-import {
-  computeCustomPrintAreaPx,
-  isSentinelRegion,
-  materializeSmartFitPlacement,
-  shouldAutoApplySmartFit,
-} from "@/lib/mockup/placement-region";
 
 interface WizardMockupSourcePanelProps {
   draftId: string;
@@ -30,24 +24,98 @@ interface WizardMockupSourcePanelProps {
   onRegenerate?: () => void;
   onRemoveColor?: (colorId: string) => void | Promise<void>;
   onMockupsStale?: () => void;
-  /** Print area in millimeter dimensions (from template/blueprint) */
   printAreaMm?: { widthMm: number; heightMm: number } | null;
 }
 
-type SourceApi = PreviewSource & {
-  colorId?: string;
-  color?: { id: string; name: string; hex: string };
-  colorName?: string;
-  colorHex?: string;
-};
+interface PickData {
+  id: string;
+  templateMockupItemId: string;
+  colorId: string;
+  isPrimary: boolean;
+  sortOrder: number;
+  compositeRegionPx: unknown;
+  templateMockupItem: {
+    id: string;
+    mockupId: string;
+    appliesToColorIds: unknown;
+    mockup: {
+      id: string;
+      name: string;
+      storagePath: string;
+      previewPath: string | null;
+      width: number;
+      height: number;
+      view: string;
+      sceneType: string;
+      renderMode: string;
+      compositeRegionPx: unknown;
+    };
+  };
+}
 
-interface SourcesResponse {
-  template: TemplateContext | null;
-  draftSources: SourceApi[];
-  eligibleTemplateSources: SourceApi[];
-  selectedSourceIds: string[];
-  primarySourceId: string | null;
-  templateChangedWarning?: boolean;
+interface TemplateMockupItemData {
+  id: string;
+  templateId: string;
+  mockupId: string;
+  appliesToColorIds: unknown;
+  sortOrder: number;
+  isPrimary: boolean;
+  mockup: {
+    id: string;
+    name: string;
+    storagePath: string;
+    previewPath: string | null;
+    width: number;
+    height: number;
+    view: string;
+    sceneType: string;
+    renderMode: string;
+    compositeRegionPx: unknown;
+  };
+}
+
+function pickToPreviewSource(pick: PickData): PreviewSource {
+  const m = pick.templateMockupItem.mockup;
+  const region = (pick.compositeRegionPx ?? m.compositeRegionPx) as Record<string, number> | null;
+  return {
+    id: pick.id,
+    colorId: pick.colorId,
+    renderMode: m.renderMode,
+    view: m.view ?? "front",
+    sceneType: m.sceneType ?? "flat_lay",
+    label: m.name,
+    imageUrl: `/api/files/${m.storagePath}`,
+    outputUrl: null,
+    imageWidth: m.width,
+    imageHeight: m.height,
+    isPrimary: pick.isPrimary,
+    scope: "TEMPLATE",
+    compositeRegionPx: region
+      ? { x: region.x ?? 0, y: region.y ?? 0, width: region.width ?? 0, height: region.height ?? 0, rotationDeg: region.rotationDeg ?? 0 }
+      : null,
+  };
+}
+
+function templateItemToPreviewSource(item: TemplateMockupItemData, colorId: string): PreviewSource {
+  const m = item.mockup;
+  const region = m.compositeRegionPx as Record<string, number> | null;
+  return {
+    id: item.id,
+    colorId,
+    renderMode: m.renderMode,
+    view: m.view ?? "front",
+    sceneType: m.sceneType ?? "flat_lay",
+    label: m.name,
+    imageUrl: `/api/files/${m.storagePath}`,
+    outputUrl: null,
+    imageWidth: m.width,
+    imageHeight: m.height,
+    isPrimary: item.isPrimary,
+    scope: "TEMPLATE",
+    compositeRegionPx: region
+      ? { x: region.x ?? 0, y: region.y ?? 0, width: region.width ?? 0, height: region.height ?? 0, rotationDeg: region.rotationDeg ?? 0 }
+      : null,
+  };
 }
 
 export function WizardMockupSourcePanel({
@@ -64,24 +132,19 @@ export function WizardMockupSourcePanel({
 }: WizardMockupSourcePanelProps) {
   const [loading, setLoading] = useState(true);
   const [template, setTemplate] = useState<TemplateContext | null>(null);
-  const [draftSources, setDraftSources] = useState<PreviewSource[]>([]);
-  const [templateSources, setTemplateSources] = useState<PreviewSource[]>([]);
-  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
-  const [primarySourceId, setPrimarySourceId] = useState<string | null>(null);
-  const [templateChangedWarning, setTemplateChangedWarning] = useState(false);
+  const [picks, setPicks] = useState<PickData[]>([]);
+  const [templateItems, setTemplateItems] = useState<TemplateMockupItemData[]>([]);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [editingSource, setEditingSource] = useState<PreviewSource | null>(null);
   const [placementEditorSource, setPlacementEditorSource] = useState<PreviewSource | null>(null);
   const [placementEditorImageSize, setPlacementEditorImageSize] = useState<{ width: number; height: number } | null>(null);
   const [lockedUploadColorId, setLockedUploadColorId] = useState<string | null>(null);
-  const [dismissedTemplateWarning, setDismissedTemplateWarning] = useState(false);
-  // AbortController ref: cancels stale mockup-sources fetches on unmount/re-render
-  const abortRef = useRef<AbortController | null>(null);
 
   const selectedColors = useMemo(() => {
-    if (template?.selectedColors.length) return template.selectedColors;
     return storeColors.filter((color) => enabledColorIds.includes(color.id));
-  }, [enabledColorIds, storeColors, template?.selectedColors]);
+  }, [enabledColorIds, storeColors]);
+
+  const selectedColorIds = selectedColors.map((c) => c.id);
 
   const modalTemplates = useMemo<UploadMockupTemplate[]>(() => {
     if (!template) return [];
@@ -96,180 +159,260 @@ export function WizardMockupSourcePanel({
     ];
   }, [selectedColors, template]);
 
-  const loadData = useCallback(async (force = false) => {
-    // If force (user action), abort any in-flight request first
-    if (force && abortRef.current) {
-      abortRef.current.abort();
-    }
+  // Map pick data to preview sources
+  const draftPicksAsSources = useMemo<PreviewSource[]>(() => {
+    return picks.map(pickToPreviewSource);
+  }, [picks]);
 
-    const controller = new AbortController();
-    abortRef.current = controller;
+  // Map template items to preview sources for colors without picks yet
+  const templateItemSources = useMemo<PreviewSource[]>(() => {
+    const pickedColorIds = new Set(picks.map((p) => p.colorId));
+    return templateItems.flatMap((item) => {
+      const colorIds = Array.isArray(item.appliesToColorIds)
+        ? item.appliesToColorIds.filter((v): v is string => typeof v === "string")
+        : [];
+      // If specific colors, show only for those; if empty (all colors), show for uncovered colors
+      if (colorIds.length > 0) {
+        return colorIds
+          .filter((cid) => !pickedColorIds.has(cid) && selectedColorIds.includes(cid))
+          .map((cid) => templateItemToPreviewSource(item, cid));
+      }
+      return selectedColorIds
+        .filter((cid) => !pickedColorIds.has(cid))
+        .map((cid) => templateItemToPreviewSource(item, cid));
+    });
+  }, [templateItems, picks, selectedColorIds]);
 
+  const allSources = useMemo(() => [...draftPicksAsSources, ...templateItemSources], [draftPicksAsSources, templateItemSources]);
+  const selectedSourceIds = useMemo(() => picks.map((p) => p.id), [picks]);
+  const primarySourceId = useMemo(() => picks.find((p) => p.isPrimary)?.id ?? picks[0]?.id ?? null, [picks]);
+
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources`, {
-        signal: controller.signal,
-      });
-      if (controller.signal.aborted) return;
-      if (!res.ok) throw new Error("Failed to fetch");
-      const data = (await res.json()) as SourcesResponse;
-      if (controller.signal.aborted) return;
+      const [picksRes, itemsRes, templateRes] = await Promise.all([
+        fetch(`/api/wizard/drafts/${draftId}/mockup-library-picks`),
+        templateId
+          ? fetch(`/api/stores/${storeId}/mockup-templates/${templateId}/mockups`)
+          : null,
+        templateId
+          ? fetch(`/api/stores/${storeId}/mockup-templates?templateId=${templateId}`)
+          : null,
+      ]);
 
-      const nextDraftSources = (data.draftSources ?? []).map(normalizeSource);
-      const nextTemplateSources = (data.eligibleTemplateSources ?? []).map(normalizeSource);
-      const nextSourceIds = new Set([...nextDraftSources, ...nextTemplateSources].map((source) => source.id));
-      setTemplate(data.template);
-      setDraftSources(nextDraftSources);
-      setTemplateSources(nextTemplateSources);
-      setSelectedSourceIds((data.selectedSourceIds ?? []).filter((id) => nextSourceIds.has(id)));
-      setPrimarySourceId(
-        data.primarySourceId && nextSourceIds.has(data.primarySourceId) ? data.primarySourceId : null,
-      );
-      setTemplateChangedWarning(Boolean(data.templateChangedWarning));
-    } catch (err: unknown) {
-      if ((err as Error)?.name === "AbortError") return;
-      toast.error("Không tải được nguồn mockup");
-    } finally {
-      if (!controller.signal.aborted) {
-        setLoading(false);
+      if (picksRes.ok) {
+        const data = await picksRes.json();
+        setPicks(data.picks ?? []);
       }
+
+      if (itemsRes && itemsRes.ok) {
+        const data = await itemsRes.json();
+        setTemplateItems(data.items ?? []);
+      }
+
+      if (templateRes && templateRes.ok) {
+        const data = await templateRes.json();
+        const tpl = data.templates?.[0] ?? data.template ?? null;
+        if (tpl) {
+          setTemplate({
+            id: tpl.id,
+            name: tpl.name,
+            blueprintTitle: tpl.blueprintTitle ?? "",
+            printProviderTitle: tpl.printProviderTitle ?? "",
+            defaultMockupSource: tpl.defaultMockupSource ?? "PRINTIFY",
+            selectedColors,
+            selectedPlacements: [],
+          });
+        }
+      }
+    } catch {
+      toast.error("Không tải được mockup sources");
+    } finally {
+      setLoading(false);
     }
-  }, [draftId]);
+  }, [draftId, storeId, templateId, selectedColors]);
 
   useEffect(() => {
     void loadData();
-    return () => {
-      abortRef.current?.abort();
-    };
   }, [loadData]);
 
-  // Backfill guard: chỉ chạy một lần per draft load
-  const backfillAppliedRef = useRef(false);
-
-  useEffect(() => {
-    if (backfillAppliedRef.current) return;
-    if (!draftId || !templateId) return;
-    if (!printAreaMm?.widthMm || !printAreaMm?.heightMm) return;
-    if (loading) return; // wait for initial load to complete
-
-    // Collect TEMPLATE sources that need backfill
-    const allSources = [...draftSources, ...templateSources];
-    const needsBackfill: Array<{ sourceId: string; imageW: number; imageH: number }> = [];
-
-    for (const source of allSources) {
-      const scope = normalizePreviewScope(source.scope);
-      // Only TEMPLATE sources — DRAFT sources manage their own placement
-      if (scope !== "TEMPLATE") continue;
-
-      const imageW = source.imageWidth ?? 0;
-      const imageH = source.imageHeight ?? 0;
-      if (!imageW || !imageH) continue;
-
-      const printAreaPx = computeCustomPrintAreaPx(printAreaMm, imageW, imageH);
-      const existingRegion = source.compositeRegionPx
-        ? { x: source.compositeRegionPx.x, y: source.compositeRegionPx.y,
-            width: source.compositeRegionPx.width, height: source.compositeRegionPx.height }
-        : null;
-
-      if (shouldAutoApplySmartFit({
-        existingRegion,
-        printAreaPx,
-        imageWidth: imageW,
-        imageHeight: imageH,
-      })) {
-        needsBackfill.push({ sourceId: source.id, imageW, imageH });
-      }
-    }
-
-    if (needsBackfill.length === 0) {
-      backfillAppliedRef.current = true;
+  // Save picks with template mockup item IDs
+  async function savePickSelection(templateMockupItemIds: string[]) {
+    const uniqueIds = [...new Set(templateMockupItemIds)];
+    if (uniqueIds.length === 0) {
+      toast.error("Phải chọn ít nhất 1 mockup.");
       return;
     }
 
-    // Load design dimensions for Smart Fit computation
-    let cancelled = false;
-    const doBackfill = async () => {
-      let designW = 0;
-      let designH = 0;
-      if (designImageUrl) {
-        try {
-          const dims = await new Promise<{ w: number; h: number }>((resolve, reject) => {
-            const img = new window.Image();
-            img.crossOrigin = "anonymous";
-            img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
-            img.onerror = () => reject(new Error("Failed to load design"));
-            img.src = designImageUrl;
-          });
-          designW = dims.w;
-          designH = dims.h;
-        } catch { /* keep 0 */ }
+    try {
+      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-library-picks`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templateMockupItemIds: uniqueIds }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error || "Không lưu được mockup đã chọn");
       }
+      await loadData();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không lưu được mockup đã chọn");
+    }
+  }
 
-      if (cancelled || backfillAppliedRef.current) return;
-      if (!designW || !designH) {
-        backfillAppliedRef.current = true;
-        return;
-      }
+  // Save placement on a pick
+  async function savePlacementRegion(regionPx: CanvasRegionPx) {
+    if (!placementEditorSource) return;
 
-      const placementsBySourceId: Record<string, {
-        x: number; y: number; width: number; height: number;
-        rotationDeg: number; imageWidth: number; imageHeight: number;
-      }> = {};
-      let skipped = 0;
+    try {
+      const pickId = placementEditorSource.id;
+      const regionToSave = {
+        x: Math.round(regionPx.x),
+        y: Math.round(regionPx.y),
+        width: Math.round(regionPx.width),
+        height: Math.round(regionPx.height),
+        rotationDeg: regionPx.rotationDeg ?? 0,
+        imageWidth: regionPx.imageWidth ?? placementEditorImageSize?.width ?? 0,
+        imageHeight: regionPx.imageHeight ?? placementEditorImageSize?.height ?? 0,
+      };
 
-      for (const { sourceId, imageW, imageH } of needsBackfill) {
-        const region = materializeSmartFitPlacement({
-          printAreaMm: printAreaMm!,
-          imageWidth: imageW,
-          imageHeight: imageH,
-          designWidth: designW,
-          designHeight: designH,
+      // Update pick compositeRegionPx via draft PATCH
+      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-library-picks`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          templateMockupItemIds: picks.map((p) => p.templateMockupItemId),
+          placementsByPickId: { [pickId]: regionToSave },
+        }),
+      });
+
+      if (!res.ok) {
+        // Fallback: try direct pick PATCH
+        const pickRes = await fetch(`/api/wizard/drafts/${draftId}/mockup-library-picks/${pickId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ compositeRegionPx: regionToSave }),
         });
-        if (region) {
-          placementsBySourceId[sourceId] = region;
-        } else {
-          skipped++;
+        if (!pickRes.ok) {
+          const body = await pickRes.json().catch(() => null);
+          throw new Error(body?.error || "Không lưu được vùng ghép");
         }
       }
 
-      const updatedCount = Object.keys(placementsBySourceId).length;
-      if (updatedCount > 0) {
-        console.log("[mockup-placement] Backfilled Smart Fit placements:", {
-          updated: updatedCount,
-          skipped,
-        });
+      // Mark mockups stale
+      await fetch(`/api/wizard/drafts/${draftId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mockupsStale: true, mockupsStaleReason: "placement_changed" }),
+      }).catch(() => {});
 
-        // Persist via API (merge with current selection)
-        try {
-          const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-library-picks`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              sourceIds: selectedSourceIds,
-              primarySourceId,
-              placementsBySourceId,
-            }),
-          });
-          if (res.ok) {
-            // Reload sources to pick up backfilled placements
-            await loadData(true);
-          }
-        } catch { /* silent — backfill is best-effort */ }
+      toast.success("Đã lưu vị trí design");
+      setPlacementEditorSource(null);
+      setPlacementEditorImageSize(null);
+      await loadData();
+      onMockupsStale?.();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không lưu được vùng ghép");
+    }
+  }
+
+  // Upload new mockup → global library → attach to template → select
+  async function handleUploadSave(value: UploadMockupModalValue) {
+    if (!template) return;
+
+    if (value.file) {
+      // New upload: POST /api/mockups → attach to template → select
+      const form = new FormData();
+      form.set("file", value.file);
+      form.set("name", value.file.name.replace(/\.[^.]+$/, ""));
+      form.set("view", "front");
+      form.set("sceneType", "flat_lay");
+      form.set("renderMode", "COMPOSITE");
+
+      if (value.compositeRegionPx) {
+        form.set("compositeRegionPx", JSON.stringify(value.compositeRegionPx));
       }
 
-      backfillAppliedRef.current = true;
-    };
+      const uploadRes = await fetch("/api/mockups", { method: "POST", body: form });
+      if (!uploadRes.ok) {
+        const err = await uploadRes.json().catch(() => ({}));
+        throw new Error(err.error || "Upload thất bại");
+      }
+      const uploaded = await uploadRes.json();
 
-    doBackfill();
+      // Attach to template for this color
+      const attachRes = await fetch(`/api/stores/${storeId}/mockup-templates/${templateId}/mockups`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mockupId: uploaded.id,
+          appliesToColorIds: value.colorId ? [value.colorId] : [],
+        }),
+      });
+      if (!attachRes.ok) {
+        const err = await attachRes.json().catch(() => ({}));
+        throw new Error(err.error || "Không thể đính kèm mockup vào template");
+      }
 
-    return () => {
-      cancelled = true;
-      backfillAppliedRef.current = true;
-    };
-  }, [draftId, templateId, loading, printAreaMm, designImageUrl,
-      draftSources.length, templateSources.length]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+      toast.success("Đã upload mockup");
+    }
 
+    setUploadOpen(false);
+    setEditingSource(null);
+    setLockedUploadColorId(null);
+    await loadData();
+  }
+
+  // Toggle source selection → add/remove template mockup item from picks
+  async function toggleSourceSelection(source: PreviewSource) {
+    // source.id is either a pick.id or a templateMockupItem.id
+    const currentTemplateMockupItemIds = picks.map((p) => p.templateMockupItemId);
+    const isSelected = picks.some((p) => p.id === source.id);
+
+    let nextIds: string[];
+    if (isSelected) {
+      if (currentTemplateMockupItemIds.length <= 1) {
+        toast.error("Phải chọn ít nhất 1 mockup.");
+        return;
+      }
+      // source.id is the pick id; find its templateMockupItemId to remove
+      const pickToRemove = picks.find((p) => p.id === source.id);
+      nextIds = currentTemplateMockupItemIds.filter((id) => id !== pickToRemove?.templateMockupItemId);
+    } else {
+      // source.id is the templateMockupItem id for template item sources
+      nextIds = [...new Set([...currentTemplateMockupItemIds, source.id])];
+    }
+
+    await savePickSelection(nextIds);
+  }
+
+  async function setSourceAsPrimary(source: PreviewSource) {
+    // Primary is determined by isPrimary on the TemplateMockupItem
+    // Just ensure this source is selected, then the API handles primary via templateMockupItem.isPrimary
+    const currentTemplateMockupItemIds = picks.map((p) => p.templateMockupItemId);
+    const itemId = source.id;
+    const nextIds = [...new Set([...currentTemplateMockupItemIds, itemId])];
+    await savePickSelection(nextIds);
+  }
+
+  // Switch template back to PRINTIFY
+  async function switchTemplateToPrintify() {
+    if (!templateId) return;
+    try {
+      const res = await fetch(`/api/stores/${storeId}/mockup-templates/${templateId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ defaultMockupSource: "PRINTIFY" }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success("Template đã chuyển sang Printify");
+      await loadData();
+    } catch {
+      toast.error("Không thể đổi template sang Printify");
+    }
+  }
+
+  // Resolve image size for placement editor
   useEffect(() => {
     if (!placementEditorSource) {
       setPlacementEditorImageSize(null);
@@ -283,7 +426,7 @@ export function WizardMockupSourcePanel({
       return;
     }
 
-    const backgroundUrl = placementEditorSource.imageUrl ?? placementEditorSource.outputUrl ?? null;
+    const backgroundUrl = placementEditorSource.imageUrl ?? null;
     if (!backgroundUrl) {
       setPlacementEditorImageSize(null);
       return;
@@ -307,322 +450,8 @@ export function WizardMockupSourcePanel({
     };
     image.src = backgroundUrl;
 
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [placementEditorSource]);
-
-  async function savePlacementRegion(regionPx: CanvasRegionPx) {
-    if (!placementEditorSource) return;
-
-    try {
-      const scope = normalizePreviewScope(placementEditorSource.scope);
-      const editedId = placementEditorSource.id;
-
-      // Enrich region with imageWidth/imageHeight (API validates these)
-      const normalizedRegionPx = {
-        ...regionPx,
-        rotationDeg: regionPx.rotationDeg ?? 0,
-        imageWidth: regionPx.imageWidth ?? placementEditorImageSize?.width,
-        imageHeight: regionPx.imageHeight ?? placementEditorImageSize?.height,
-      };
-
-      // Narrow types after enrichment to satisfy TypeScript
-      const imageWidth = normalizedRegionPx.imageWidth;
-      const imageHeight = normalizedRegionPx.imageHeight;
-
-      if (
-        !Number.isFinite(imageWidth) ||
-        !Number.isFinite(imageHeight) ||
-        imageWidth <= 0 ||
-        imageHeight <= 0
-      ) {
-        throw new Error("Thiếu kích thước ảnh mockup, không thể lưu vị trí");
-      }
-
-      const regionToSave = {
-        ...normalizedRegionPx,
-        imageWidth,
-        imageHeight,
-      };
-
-      if (scope === "TEMPLATE") {
-        // Guard: only edit already-selected sources
-        if (!selectedSourceIds.includes(editedId)) {
-          throw new Error("Mockup source chưa được chọn");
-        }
-
-        // Preserve valid primarySourceId
-        const sourceIds = Array.from(new Set(selectedSourceIds));
-        const nextPrimarySourceId =
-          primarySourceId && sourceIds.includes(primarySourceId)
-            ? primarySourceId
-            : sourceIds[0] ?? null;
-
-        const res = await fetch(
-          `/api/wizard/drafts/${draftId}/mockup-library-picks`,
-          {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              sourceIds,
-              primarySourceId: nextPrimarySourceId,
-              placementsBySourceId: { [editedId]: regionToSave },
-            }),
-          },
-        );
-        if (!res.ok) {
-          const body = await res.json().catch(() => null);
-          throw new Error(body?.error || "Không lưu được vùng ghép");
-        }
-      } else if (scope === "DRAFT") {
-        // DRAFT: direct PATCH to CustomMockupSource
-        const res = await fetch(
-          `/api/wizard/drafts/${draftId}/mockup-sources/${editedId}`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ compositeRegionPx: regionToSave }),
-          },
-        );
-        if (!res.ok) {
-          const body = await res.json().catch(() => null);
-          throw new Error(body?.error || "Không lưu được vùng ghép");
-        }
-      } else {
-        throw new Error("Scope mockup không hợp lệ");
-      }
-
-      // Auto-regenerate after placement change.
-      await fetch(`/api/wizard/drafts/${draftId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mockupsStale: true,
-          mockupsStaleReason: "placement_changed",
-        }),
-      }).catch((error) => {
-        console.warn("[mockup-placement] Failed to mark mockups stale after placement save", error);
-      });
-
-      toast.success("Đã lưu vị trí design");
-      setPlacementEditorSource(null);
-      setPlacementEditorImageSize(null);
-      await loadData(true);
-      onMockupsStale?.();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Không lưu được vùng ghép");
-    }
-  }
-
-  async function saveUpload(value: UploadMockupModalValue) {
-    if (!template) return;
-    if (value.sourceId) {
-      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources/${value.sourceId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          label: value.label,
-          ...(value.compositeRegionPx ? { compositeRegionPx: value.compositeRegionPx } : {}),
-        }),
-      });
-      if (!res.ok) throw new Error((await res.json()).error || "Không lưu được mockup");
-      toast.success("Đã cập nhật mockup riêng");
-    } else {
-      if (!value.file) throw new Error("Chưa chọn ảnh");
-      const form = new FormData();
-      form.set("file", value.file);
-      form.set("colorId", value.colorId);
-      form.set("view", "front");
-      form.set("sceneType", "flat_lay");
-      form.set("renderMode", "COMPOSITE");
-      form.set("isPrimary", "false");
-      form.set("sortOrder", "0");
-      if (!value.compositeRegionPx) throw new Error("Chưa có vùng ghép design");
-      form.set("compositeRegionPx", JSON.stringify(value.compositeRegionPx));
-      if (value.label.trim()) form.set("label", value.label.trim());
-
-      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources`, {
-        method: "POST",
-        body: form,
-      });
-      if (!res.ok) throw new Error((await res.json()).error || "Upload thất bại");
-      toast.success("Đã upload mockup riêng");
-    }
-
-    setUploadOpen(false);
-    setEditingSource(null);
-    setLockedUploadColorId(null);
-    await loadData(true);
-  }
-
-  async function deleteDraftSource(sourceId: string) {
-    const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources/${sourceId}`, {
-      method: "DELETE",
-    });
-    if (!res.ok) throw new Error("Không xóa được mockup");
-  }
-
-  async function switchTemplateToPrintify() {
-    if (!templateId) return;
-    try {
-      const res = await fetch(`/api/stores/${storeId}/mockup-templates/${templateId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ defaultMockupSource: "PRINTIFY" }),
-      });
-      if (!res.ok) throw new Error();
-      toast.success("Template đã chuyển sang Printify");
-      await loadData(true);
-    } catch {
-      toast.error("Không thể đổi template sang Printify");
-    }
-  }
-
-  async function persistSourceSelection(nextSelectedIds: string[], nextPrimarySourceId: string | null) {
-    const orderedSourceIds = [...draftSources, ...templateSources].map((source) => source.id);
-    const orderedSelectedIds = orderedSourceIds.filter((sourceId) => nextSelectedIds.includes(sourceId));
-    if (orderedSelectedIds.length === 0) {
-      toast.error("Phải chọn ít nhất 1 mockup.");
-      return;
-    }
-
-    const normalizedPrimarySourceId =
-      nextPrimarySourceId && orderedSelectedIds.includes(nextPrimarySourceId)
-        ? nextPrimarySourceId
-        : orderedSelectedIds[0] ?? null;
-
-    // ── Compute Smart Fit for TEMPLATE sources that need it ──
-    const allSources = [...draftSources, ...templateSources];
-
-    // Load design dimensions (needed for Smart Fit aspect ratio)
-    let designWidth = 0;
-    let designHeight = 0;
-    if (designImageUrl) {
-      try {
-        const dims = await new Promise<{ w: number; h: number }>((resolve, reject) => {
-          const img = new window.Image();
-          img.crossOrigin = "anonymous";
-          img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
-          img.onerror = () => reject(new Error("Failed to load design image"));
-          img.src = designImageUrl;
-        });
-        designWidth = dims.w;
-        designHeight = dims.h;
-      } catch {
-        // designWidth/designHeight stay 0 — materializeSmartFitPlacement returns null
-      }
-    }
-
-    const placementsBySourceId: Record<string, {
-      x: number; y: number; width: number; height: number;
-      rotationDeg: number; imageWidth: number; imageHeight: number;
-    }> = {};
-
-    if (designWidth > 0 && designHeight > 0 && printAreaMm?.widthMm && printAreaMm?.heightMm) {
-      for (const sourceId of orderedSelectedIds) {
-        const source = allSources.find((s) => s.id === sourceId);
-        if (!source) continue;
-        // Only auto-compute for TEMPLATE sources where placement is stored on pick
-        if (normalizePreviewScope(source.scope) !== "TEMPLATE") continue;
-
-        const imageW = source.imageWidth ?? 0;
-        const imageH = source.imageHeight ?? 0;
-        if (!imageW || !imageH) continue;
-
-        const printAreaPx = computeCustomPrintAreaPx(printAreaMm, imageW, imageH);
-        const needsSmartFit = shouldAutoApplySmartFit({
-          existingRegion: source.compositeRegionPx
-            ? { x: source.compositeRegionPx.x, y: source.compositeRegionPx.y,
-                width: source.compositeRegionPx.width, height: source.compositeRegionPx.height }
-            : null,
-          printAreaPx,
-          imageWidth: imageW,
-          imageHeight: imageH,
-        });
-
-        if (!needsSmartFit) continue;
-
-        const region = materializeSmartFitPlacement({
-          printAreaMm,
-          imageWidth: imageW,
-          imageHeight: imageH,
-          designWidth,
-          designHeight,
-        });
-
-        if (region) {
-          placementsBySourceId[sourceId] = region;
-        }
-      }
-    }
-    // ── End Smart Fit computation ──
-
-    const previousSelectedIds = selectedSourceIds;
-    const previousPrimarySourceId = primarySourceId;
-
-    setSelectedSourceIds(orderedSelectedIds);
-    setPrimarySourceId(normalizedPrimarySourceId);
-
-    try {
-      const body: Record<string, unknown> = {
-        sourceIds: orderedSelectedIds,
-        primarySourceId: normalizedPrimarySourceId,
-      };
-      if (Object.keys(placementsBySourceId).length > 0) {
-        body.placementsBySourceId = placementsBySourceId;
-      }
-      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-library-picks`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const payload = await res.json().catch(() => null);
-        throw new Error(payload?.error || "Không lưu được mockup đã chọn");
-      }
-    } catch (error) {
-      setSelectedSourceIds(previousSelectedIds);
-      setPrimarySourceId(previousPrimarySourceId);
-      toast.error(error instanceof Error ? error.message : "Không lưu được mockup đã chọn");
-    }
-  }
-
-  async function toggleSourceSelection(source: PreviewSource) {
-    const nextSelectedIds = new Set(selectedSourceIds);
-    const wasSelected = nextSelectedIds.has(source.id);
-
-    if (wasSelected) {
-      if (nextSelectedIds.size <= 1) {
-        toast.error("Phải chọn ít nhất 1 mockup.");
-        return;
-      }
-      nextSelectedIds.delete(source.id);
-    } else {
-      nextSelectedIds.add(source.id);
-    }
-
-    const nextOrderedSelectedIds = [...draftSources, ...templateSources]
-      .map((item) => item.id)
-      .filter((id) => nextSelectedIds.has(id));
-    const nextPrimary =
-      !wasSelected
-        ? source.id
-        : (primarySourceId && nextOrderedSelectedIds.includes(primarySourceId)
-            ? primarySourceId
-            : nextOrderedSelectedIds[0] ?? null);
-
-    await persistSourceSelection(nextOrderedSelectedIds, nextPrimary);
-  }
-
-  async function setSourceAsPrimary(source: PreviewSource) {
-    const nextSelectedIds = new Set(selectedSourceIds);
-    nextSelectedIds.add(source.id);
-    const nextOrderedSelectedIds = [...draftSources, ...templateSources]
-      .map((item) => item.id)
-      .filter((id) => nextSelectedIds.has(id));
-    await persistSourceSelection(nextOrderedSelectedIds, source.id);
-  }
 
   if (loading) {
     return (
@@ -636,15 +465,7 @@ export function WizardMockupSourcePanel({
 
   if (!templateId || !template) {
     return (
-      <div
-        className="card"
-        style={{
-          padding: 18,
-          marginBottom: 16,
-          border: "1px solid rgba(245,158,11,0.35)",
-          background: "rgba(245,158,11,0.08)",
-        }}
-      >
+      <div className="card" style={{ padding: 18, marginBottom: 16, border: "1px solid rgba(245,158,11,0.35)", background: "rgba(245,158,11,0.08)" }}>
         <div className="flex items-start gap-3">
           <AlertTriangle size={18} style={{ color: "#b45309", flexShrink: 0, marginTop: 2 }} />
           <div style={{ flex: 1 }}>
@@ -652,11 +473,8 @@ export function WizardMockupSourcePanel({
             <p style={{ margin: "4px 0 12px", fontSize: "0.78rem", color: "var(--text-muted)" }}>
               Mockup mặc định và mockup riêng đều cần template để giới hạn màu, placement và provider.
             </p>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => document.getElementById("mockup-template-selector")?.scrollIntoView({ behavior: "smooth", block: "start" })}
-            >
+            <button type="button" className="btn btn-secondary"
+              onClick={() => document.getElementById("mockup-template-selector")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
               Quay lại chọn template
             </button>
           </div>
@@ -666,79 +484,31 @@ export function WizardMockupSourcePanel({
   }
 
   const missingColors = selectedColors.filter(
-    (color) => ![...draftSources, ...templateSources].some((source) => source.colorId === color.id || source.colorName === color.name),
+    (color) => !allSources.some((source) => source.colorId === color.id),
   );
-  const missingColorNames = missingColors.map((color) => color.name).join(", ");
-  const hasDraftSources = draftSources.length > 0;
-  const customPreviewSources = [...draftSources, ...templateSources];
-  const showTemplateChanged = templateChangedWarning && hasDraftSources && !dismissedTemplateWarning;
-  const placementEditorBackgroundUrl = placementEditorSource?.imageUrl ?? placementEditorSource?.outputUrl ?? null;
+  const missingColorNames = missingColors.map((c) => c.name).join(", ");
+  const customPreviewSources = allSources;
+  const placementEditorBackgroundUrl = placementEditorSource?.imageUrl ?? null;
   const placementEditorInitialRegion = (() => {
     if (!placementEditorSource || !placementEditorImageSize) return null;
-    const width = placementEditorImageSize.width;
-    const height = placementEditorImageSize.height;
-    const rawRegion = placementEditorSource.compositeRegionPx
+    const w = placementEditorImageSize.width;
+    const h = placementEditorImageSize.height;
+    const raw = placementEditorSource.compositeRegionPx
       ? {
           x: Math.round(placementEditorSource.compositeRegionPx.x),
           y: Math.round(placementEditorSource.compositeRegionPx.y),
           width: Math.round(placementEditorSource.compositeRegionPx.width),
           height: Math.round(placementEditorSource.compositeRegionPx.height),
           rotationDeg: Number(placementEditorSource.compositeRegionPx.rotationDeg ?? 0),
-          imageWidth: width,
-          imageHeight: height,
+          imageWidth: w,
+          imageHeight: h,
         }
-      : sentinelPlacementRegion(width, height);
-    return normalizePlacementRegion(rawRegion, width, height);
+      : sentinelPlacementRegion(w, h);
+    return normalizePlacementRegion(raw, w, h);
   })();
-  const openDraftUpload = (colorId?: string | null) => {
-    setPlacementEditorSource(null);
-    setPlacementEditorImageSize(null);
-    setEditingSource(null);
-    setLockedUploadColorId(colorId ?? null);
-    setUploadOpen(true);
-  };
-  const editPreviewSource = (source: PreviewSource) => {
-    if (source.renderMode !== "COMPOSITE") return;
-    setUploadOpen(false);
-    setEditingSource(null);
-    setLockedUploadColorId(null);
-    setPlacementEditorSource(source);
-  };
 
   return (
     <div style={{ display: "grid", gap: 14, marginBottom: 16 }}>
-      {showTemplateChanged && (
-        <div
-          className="card"
-          style={{
-            padding: 14,
-            border: "1px solid rgba(245,158,11,0.35)",
-            background: "rgba(245,158,11,0.09)",
-          }}
-        >
-          <div className="flex items-start gap-3">
-            <AlertTriangle size={18} style={{ color: "#b45309", flexShrink: 0, marginTop: 2 }} />
-            <div style={{ flex: 1 }}>
-              <strong style={{ fontSize: "0.86rem" }}>
-                Đã đổi mẫu — mockup cần cập nhật
-              </strong>
-              <p style={{ margin: "4px 0 10px", fontSize: "0.76rem", lineHeight: 1.45, color: "var(--text-muted)" }}>
-                Bạn đổi mẫu trước đó. Draft mockup riêng vẫn giữ nguyên nhưng mockup tái sử dụng sẽ load lại cho mẫu mới.
-              </p>
-              <div className="flex items-center gap-2">
-                <button className="btn btn-primary" type="button" onClick={onRegenerate}>
-                  <RefreshCw size={14} />
-                  Tạo lại
-                </button>
-                <button className="btn btn-secondary" type="button" onClick={() => setDismissedTemplateWarning(true)}>
-                  Giữ nguyên
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       <TemplateContextCard
         template={template}
         onChangeTemplate={() => document.getElementById("mockup-template-selector")?.scrollIntoView({ behavior: "smooth", block: "start" })}
@@ -755,12 +525,26 @@ export function WizardMockupSourcePanel({
             activeSourceId={primarySourceId}
             onToggleSelected={toggleSourceSelection}
             onSetPrimary={setSourceAsPrimary}
-            onEditRegion={editPreviewSource}
-            onUploadMissingColor={(color) => openDraftUpload(color.id)}
+            onEditRegion={(source) => {
+              setUploadOpen(false);
+              setEditingSource(null);
+              setLockedUploadColorId(null);
+              setPlacementEditorSource(source);
+            }}
+            onUploadMissingColor={(color) => {
+              setPlacementEditorSource(null);
+              setPlacementEditorImageSize(null);
+              setEditingSource(null);
+              setLockedUploadColorId(color.id);
+              setUploadOpen(true);
+            }}
             onRemoveMissingColor={(color) => {
               void onRemoveColor?.(color.id);
             }}
-            onAddDraftSource={() => openDraftUpload(null)}
+            onAddDraftSource={() => {
+              setLockedUploadColorId(null);
+              setUploadOpen(true);
+            }}
           />
 
           {missingColors.length > 0 && (
@@ -781,14 +565,14 @@ export function WizardMockupSourcePanel({
               }
               action={
                 <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-                  <a className="btn btn-primary" href={`/stores/${storeId}/mockup-library?templateId=${template.id}`}>
+                  <a className="btn btn-primary" href={`/stores/${storeId}/config`}>
                     <ImagePlus size={14} />
-                    Mở Thư viện mockup
+                    Mở cấu hình template
                   </a>
                   <button className="btn btn-secondary" type="button" onClick={switchTemplateToPrintify}>
                     Đổi nguồn ảnh mặc định sang Printify
                   </button>
-                  <OverrideButton onClick={() => openDraftUpload(null)} />
+                  <OverrideButton onClick={() => { setLockedUploadColorId(null); setUploadOpen(true); }} />
                 </div>
               }
             />
@@ -796,35 +580,13 @@ export function WizardMockupSourcePanel({
         </>
       ) : null}
 
-      {/* Override button — shown for both PRINTIFY and CUSTOM modes */}
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <OverrideButton onClick={() => openDraftUpload(null)} />
+        <OverrideButton onClick={() => { setLockedUploadColorId(null); setUploadOpen(true); }} />
       </div>
 
       {placementEditorSource && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 1000,
-            background: "rgba(15, 23, 42, 0.45)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 24,
-          }}
-        >
-          <div
-            className="card"
-            style={{
-              width: "min(1240px, 96vw)",
-              maxHeight: "92vh",
-              overflow: "auto",
-              padding: 20,
-            }}
-          >
+        <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15, 23, 42, 0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div className="card" style={{ width: "min(1240px, 96vw)", maxHeight: "92vh", overflow: "auto", padding: 20 }}>
             <div className="flex items-center justify-between" style={{ marginBottom: 14 }}>
               <div>
                 <h3 style={{ margin: 0, fontWeight: 800 }}>Chỉnh vị trí design</h3>
@@ -832,78 +594,9 @@ export function WizardMockupSourcePanel({
                   Thay đổi tại đây chỉ áp dụng cho listing hiện tại.
                 </p>
               </div>
-              <button
-                className="btn btn-secondary"
-                onClick={() => {
-                  setPlacementEditorSource(null);
-                  setPlacementEditorImageSize(null);
-                }}
-                aria-label="Đóng editor vị trí"
-              >
+              <button className="btn btn-secondary" onClick={() => { setPlacementEditorSource(null); setPlacementEditorImageSize(null); }} aria-label="Đóng editor vị trí">
                 <X size={16} /> Đóng
               </button>
-            </div>
-
-            <div className="flex items-center gap-2" style={{ marginBottom: 12, flexWrap: "wrap" }}>
-              <span
-                style={{
-                  ...statusBadgeStyle,
-                  borderColor: normalizePreviewScope(placementEditorSource.scope) === "DRAFT"
-                    ? "rgba(124,58,237,0.22)"
-                    : "rgba(59,130,246,0.2)",
-                  color: normalizePreviewScope(placementEditorSource.scope) === "DRAFT" ? "#6d28d9" : "#1d4ed8",
-                  background: normalizePreviewScope(placementEditorSource.scope) === "DRAFT"
-                    ? "rgba(124,58,237,0.08)"
-                    : "rgba(59,130,246,0.08)",
-                }}
-              >
-                {normalizePreviewScope(placementEditorSource.scope) === "DRAFT" ? "Mockup riêng" : "Từ thư viện"}
-              </span>
-              {placementEditorSource.label?.trim() && (
-                <strong style={{ fontSize: "0.82rem" }}>{placementEditorSource.label.trim()}</strong>
-              )}
-              <span
-                style={{
-                  ...statusBadgeStyle,
-                  borderColor: placementEditorSource.compositeRegionPx &&
-                    placementEditorImageSize &&
-                    !isSentinelRegion(
-                      placementEditorSource.compositeRegionPx,
-                      placementEditorImageSize.width,
-                      placementEditorImageSize.height,
-                    )
-                    ? "rgba(22,51,0,0.22)"
-                    : "rgba(185,28,28,0.2)",
-                  color: placementEditorSource.compositeRegionPx &&
-                    placementEditorImageSize &&
-                    !isSentinelRegion(
-                      placementEditorSource.compositeRegionPx,
-                      placementEditorImageSize.width,
-                      placementEditorImageSize.height,
-                    )
-                    ? "var(--color-wise-dark-green)"
-                    : "#b91c1c",
-                  background: placementEditorSource.compositeRegionPx &&
-                    placementEditorImageSize &&
-                    !isSentinelRegion(
-                      placementEditorSource.compositeRegionPx,
-                      placementEditorImageSize.width,
-                      placementEditorImageSize.height,
-                    )
-                    ? "rgba(159,232,112,0.18)"
-                    : "#fee2e2",
-                }}
-              >
-                {placementEditorSource.compositeRegionPx &&
-                  placementEditorImageSize &&
-                  !isSentinelRegion(
-                    placementEditorSource.compositeRegionPx,
-                    placementEditorImageSize.width,
-                    placementEditorImageSize.height,
-                  )
-                  ? "Đã chỉnh vị trí"
-                  : "Chưa chỉnh vị trí"}
-              </span>
             </div>
 
             {placementEditorBackgroundUrl && placementEditorInitialRegion && placementEditorImageSize ? (
@@ -913,30 +606,12 @@ export function WizardMockupSourcePanel({
                 imageWidth={placementEditorImageSize.width}
                 imageHeight={placementEditorImageSize.height}
                 mode="CUSTOM_COMPOSITE"
-                printAreaPx={
-                  printAreaMm && placementEditorImageSize
-                    ? computeCustomPrintAreaPx(
-                        printAreaMm,
-                        placementEditorImageSize.width,
-                        placementEditorImageSize.height,
-                      )
-                    : undefined
-                }
                 initialRegionPx={placementEditorInitialRegion}
-                onSave={(regionPx) => {
-                  void savePlacementRegion(regionPx);
-                }}
+                onSave={(regionPx) => { void savePlacementRegion(regionPx); }}
                 showSaveButton
               />
             ) : (
-              <div
-                style={{
-                  minHeight: 280,
-                  display: "grid",
-                  placeItems: "center",
-                  color: "var(--text-muted)",
-                }}
-              >
+              <div style={{ minHeight: 280, display: "grid", placeItems: "center", color: "var(--text-muted)" }}>
                 <Loader2 size={18} className="animate-spin" />
               </div>
             )}
@@ -954,41 +629,14 @@ export function WizardMockupSourcePanel({
         designImageUrl={designImageUrl}
         printAreaMm={printAreaMm}
         initialValue={editingSource ? sourceToModalValue(editingSource, template.id) : null}
-        onClose={() => {
-          setUploadOpen(false);
-          setEditingSource(null);
-          setLockedUploadColorId(null);
-        }}
-        onSave={saveUpload}
-        onDelete={
-          editingSource
-            ? async () => {
-                await deleteDraftSource(editingSource.id);
-                setUploadOpen(false);
-                setEditingSource(null);
-                toast.success("Đã xóa mockup riêng");
-                await loadData(true);
-              }
-            : undefined
-        }
+        onClose={() => { setUploadOpen(false); setEditingSource(null); setLockedUploadColorId(null); }}
+        onSave={handleUploadSave}
       />
     </div>
   );
 }
 
-function normalizeSource(source: SourceApi): PreviewSource {
-  return {
-    ...source,
-    colorId: source.colorId ?? source.color?.id,
-    colorName: source.colorName ?? source.color?.name,
-    colorHex: source.colorHex ?? source.color?.hex,
-    renderMode: source.renderMode,
-  };
-}
-
 function sourceToModalValue(source: PreviewSource, templateId: string): Partial<UploadMockupModalValue> {
-  const imageWidth = source.imageWidth ?? 0;
-  const imageHeight = source.imageHeight ?? 0;
   return {
     sourceId: source.id,
     templateId,
@@ -1005,34 +653,21 @@ function sourceToModalValue(source: PreviewSource, templateId: string): Partial<
           width: Math.round(source.compositeRegionPx.width),
           height: Math.round(source.compositeRegionPx.height),
           rotationDeg: Number(source.compositeRegionPx.rotationDeg ?? 0),
-          imageWidth,
-          imageHeight,
+          imageWidth: source.imageWidth ?? 0,
+          imageHeight: source.imageHeight ?? 0,
         }
       : null,
-    previewUrl: source.imageUrl ?? source.outputUrl ?? null,
-    imageWidth,
-    imageHeight,
+    previewUrl: source.imageUrl ?? null,
+    imageWidth: source.imageWidth ?? 0,
+    imageHeight: source.imageHeight ?? 0,
   };
 }
 
 function sentinelPlacementRegion(imageWidth: number, imageHeight: number): CanvasRegionPx {
-  // Sentinel region: (0,0,w,h) — triggers Smart Fit auto-snap in CanvasPlacementEditor
-  return {
-    x: 0,
-    y: 0,
-    width: imageWidth,
-    height: imageHeight,
-    rotationDeg: 0,
-    imageWidth,
-    imageHeight,
-  };
+  return { x: 0, y: 0, width: imageWidth, height: imageHeight, rotationDeg: 0, imageWidth, imageHeight };
 }
 
-function normalizePlacementRegion(
-  region: CanvasRegionPx,
-  imageWidth: number,
-  imageHeight: number,
-): CanvasRegionPx {
+function normalizePlacementRegion(region: CanvasRegionPx, imageWidth: number, imageHeight: number): CanvasRegionPx {
   return {
     x: clamp(Math.round(region.x), 0, Math.max(0, imageWidth)),
     y: clamp(Math.round(region.y), 0, Math.max(0, imageHeight)),
@@ -1057,14 +692,7 @@ function OverrideButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function StatusCard({
-  tone,
-  icon,
-  title,
-  desc,
-  details,
-  action,
-}: {
+function StatusCard({ tone, icon, title, desc, details, action }: {
   tone: "green" | "amber";
   icon: ReactNode;
   title: string;
@@ -1073,35 +701,16 @@ function StatusCard({
   action?: ReactNode;
 }) {
   const colors = tone === "green"
-    ? {
-        border: "rgba(159,232,112,0.48)",
-        bg: "rgba(159,232,112,0.12)",
-        fg: "var(--color-wise-dark-green)",
-      }
-    : {
-        border: "rgba(245,158,11,0.36)",
-        bg: "rgba(245,158,11,0.1)",
-        fg: "#92400e",
-      };
+    ? { border: "rgba(159,232,112,0.48)", bg: "rgba(159,232,112,0.12)", fg: "var(--color-wise-dark-green)" }
+    : { border: "rgba(245,158,11,0.36)", bg: "rgba(245,158,11,0.1)", fg: "#92400e" };
 
   return (
-    <div
-      className="card"
-      style={{
-        padding: 16,
-        border: `1px solid ${colors.border}`,
-        background: colors.bg,
-        display: "grid",
-        gap: 12,
-      }}
-    >
+    <div className="card" style={{ padding: 16, border: `1px solid ${colors.border}`, background: colors.bg, display: "grid", gap: 12 }}>
       <div className="flex items-start gap-3">
         <span style={{ color: colors.fg, flexShrink: 0, marginTop: 2 }}>{icon}</span>
         <div style={{ flex: 1 }}>
           <h3 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 950 }}>{title}</h3>
-          <p style={{ margin: "4px 0 0", fontSize: "0.78rem", color: "var(--text-muted)", lineHeight: 1.45 }}>
-            {desc}
-          </p>
+          <p style={{ margin: "4px 0 0", fontSize: "0.78rem", color: "var(--text-muted)", lineHeight: 1.45 }}>{desc}</p>
         </div>
       </div>
       {details}
@@ -1111,23 +720,7 @@ function StatusCard({
 }
 
 const missingPillStyle: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 6,
-  padding: "4px 8px",
-  borderRadius: 999,
-  border: "1px solid rgba(245,158,11,0.35)",
-  background: "rgba(255,255,255,0.7)",
-  color: "#92400e",
-  fontSize: "0.72rem",
-  fontWeight: 900,
-};
-
-const statusBadgeStyle: CSSProperties = {
-  flexShrink: 0,
-  border: "1px solid",
-  borderRadius: 999,
-  padding: "2px 7px",
-  fontSize: "0.62rem",
-  fontWeight: 900,
+  display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 999,
+  border: "1px solid rgba(245,158,11,0.35)", background: "rgba(255,255,255,0.7)", color: "#92400e",
+  fontSize: "0.72rem", fontWeight: 900,
 };

@@ -10,7 +10,6 @@ import { validateSession } from "@/lib/auth/session";
 import { createTemplate, updateTemplatePlacement } from "@/lib/stores/store-service";
 import { prisma } from "@/lib/db";
 import { enrichColorHex } from "@/lib/printify/color-hex";
-import { normalizeCompositeRegionPx } from "@/lib/mockup/custom-library";
 import {
   normalizeMoneyValue,
   normalizePriceBySizeDefault,
@@ -42,13 +41,8 @@ export async function GET(
             orderBy: { sortOrder: "asc" },
             include: { color: true },
           },
-          customMockupSources: {
-            where: {
-              scope: "TEMPLATE",
-              isActive: true,
-              deletedAt: null,
-            },
-            select: { colorId: true },
+          mockupItems: {
+            include: { mockup: true },
           },
         },
       },
@@ -79,12 +73,18 @@ export async function GET(
 
   const templates = store.templates.map((template) => {
     const readiness = getTemplateReadiness(template);
-    const customSourceCountByColorId = new Map<string, number>();
-    for (const source of template.customMockupSources) {
-      customSourceCountByColorId.set(
-        source.colorId,
-        (customSourceCountByColorId.get(source.colorId) ?? 0) + 1,
-      );
+    const customMockupCountByColorId = new Map<string, number>();
+    for (const item of template.mockupItems) {
+      const colorIds = Array.isArray(item.appliesToColorIds) ? item.appliesToColorIds.filter((v): v is string => typeof v === "string") : [];
+      if (colorIds.length === 0) {
+        for (const entry of template.colors) {
+          customMockupCountByColorId.set(entry.color.id, (customMockupCountByColorId.get(entry.color.id) ?? 0) + 1);
+        }
+      } else {
+        for (const colorId of colorIds) {
+          customMockupCountByColorId.set(colorId, (customMockupCountByColorId.get(colorId) ?? 0) + 1);
+        }
+      }
     }
 
     return {
@@ -99,7 +99,6 @@ export async function GET(
       defaultMockupSource: template.defaultMockupSource,
       basePriceUsd: template.basePriceUsd ? Number(template.basePriceUsd) : null,
       priceBySizeDefault: template.priceBySizeDefault ?? null,
-      defaultCompositeRegionPx: template.defaultCompositeRegionPx ?? null,
       enabledVariantIds: template.enabledVariantIds,
       enabledSizes: template.enabledSizes,
       defaultPlacement: template.defaultPlacement,
@@ -114,8 +113,8 @@ export async function GET(
         hex: cacheHexMap.get(entry.color.name) || enrichColorHex(entry.color.name, entry.color.hex),
         enabled: entry.color.enabled,
         sortOrder: entry.sortOrder,
-        customMockupCount: customSourceCountByColorId.get(entry.color.id) ?? 0,
-        hasCustomMockup: (customSourceCountByColorId.get(entry.color.id) ?? 0) > 0,
+        customMockupCount: customMockupCountByColorId.get(entry.color.id) ?? 0,
+        hasCustomMockup: (customMockupCountByColorId.get(entry.color.id) ?? 0) > 0,
       })),
     };
   });
@@ -160,7 +159,6 @@ export async function POST(
     blueprintBrand?: string;
     basePriceUsd?: number | string | null;
     priceBySizeDefault?: Record<string, unknown> | null;
-    defaultCompositeRegionPx?: unknown;
   };
 
   if (!data.name || !data.printifyBlueprintId || !data.printifyPrintProviderId) {
@@ -185,15 +183,6 @@ export async function POST(
       { status: 400 },
     );
   }
-  if (
-    data.defaultCompositeRegionPx != null &&
-    normalizeCompositeRegionPx(data.defaultCompositeRegionPx) == null
-  ) {
-    return NextResponse.json(
-      { error: "defaultCompositeRegionPx is invalid" },
-      { status: 400 },
-    );
-  }
 
   const result = await createTemplate(id, {
     ...data,
@@ -201,7 +190,6 @@ export async function POST(
     defaultMockupSource: data.defaultMockupSource,
     basePriceUsd: data.basePriceUsd ?? null,
     priceBySizeDefault: data.priceBySizeDefault ?? null,
-    defaultCompositeRegionPx: data.defaultCompositeRegionPx ?? null,
   });
   return NextResponse.json(result);
 }

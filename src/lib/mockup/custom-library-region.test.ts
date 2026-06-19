@@ -203,25 +203,13 @@ test("resolveEffectiveCompositeRegion preserves relaxed saved pick regions", () 
   );
 });
 
-test("worker loads draft pick placement for every custom composite source", () => {
-  const source = readFileSync(join(process.cwd(), "src/lib/mockup/worker.ts"), "utf8");
+test("generation and worker use template mockup items instead of legacy custom sources", () => {
+  const generation = readFileSync("src/lib/mockup/generation.ts", "utf8");
+  const worker = readFileSync("src/lib/mockup/worker.ts", "utf8");
 
-  assert.match(source, /wizardDraftMockupLibraryPick\.findUnique/);
-  assert.match(source, /pickRegion(?::\s*unknown)?\s*=\s*pick\?\.compositeRegionPx \?\? null/);
-  assert.doesNotMatch(source, /if\s*\(\s*source\.scope\s*===\s*"TEMPLATE"\s*\)/);
-});
-
-test("generation row creation uses effective region fallback for draft picks", () => {
-  const source = readFileSync(join(process.cwd(), "src/lib/mockup/generation.ts"), "utf8");
-
-  assert.match(
-    source,
-    /mockupLibraryPicks:\s*{\s*select:\s*{\s*sourceId:\s*true,\s*isPrimary:\s*true,\s*sortOrder:\s*true,\s*compositeRegionPx:\s*true/,
-  );
-  assert.match(source, /const pickRegionBySourceId = new Map/);
-  assert.match(source, /const effective = resolveEffectiveCompositeRegion\({/);
-  assert.doesNotMatch(
-    source,
-    /Boolean\(source\.compositeRegionPx\)\s*\|\|\s*source\.scope\s*===\s*"TEMPLATE"/,
-  );
+  assert.match(generation, /templateMockupItem/);
+  assert.match(worker, /templateMockupItem/);
+  assert.match(worker, /pick\.compositeRegionPx \?\? pick\.templateMockupItem\.mockup\.compositeRegionPx/);
+  assert.doesNotMatch(generation, /customMockupSource/);
+  assert.doesNotMatch(worker, /customMockupSource/);
 });

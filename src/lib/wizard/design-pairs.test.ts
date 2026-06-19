@@ -65,7 +65,20 @@ test("assertPairingIsPublishable blocks unpaired selections", () => {
       assertPairingIsPublishable({
         pairs: [],
         unpaired: [{ id: "design_1", name: "Cat - sáng", reason: "missing_pair_match" }],
+        independent: [],
+        hasPairIntent: true,
       }),
     /unpaired/i,
+  );
+});
+
+test("assertPairingIsPublishable allows single independent design", () => {
+  assert.doesNotThrow(() =>
+    assertPairingIsPublishable({
+      pairs: [],
+      unpaired: [],
+      independent: [{ id: "design_1", name: "My Design" }],
+      hasPairIntent: false,
+    }),
   );
 });

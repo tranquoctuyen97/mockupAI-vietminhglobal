@@ -1,37 +1,141 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowRight, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { ColorMockupCard, type CardSource } from "./ColorMockupCard";
-import { UploadMockupModal, type UploadMockupModalValue, type UploadMockupTemplate } from "./UploadMockupModal";
-import {
-  computeCustomPrintAreaPx,
-  materializeSmartFitPlacement,
-  shouldAutoApplySmartFit,
-} from "@/lib/mockup/placement-region";
+import { UploadMockupModal, type UploadMockupModalValue } from "./UploadMockupModal";
 
 // --- Types ---
 
 interface ColorInfo { id: string; name: string; hex: string }
 
-interface SourcesResponse {
-  template: {
-    id: string; name: string; blueprintTitle: string; printProviderTitle: string;
-    defaultMockupSource: string;
-    selectedColors: ColorInfo[];
-  } | null;
-  draftSources: SourceWithColor[];
-  eligibleTemplateSources: SourceWithColor[];
-  selectedSourceIds: string[];
-  primarySourceId: string | null;
+interface PickData {
+  id: string;
+  templateMockupItemId: string;
+  colorId: string;
+  isPrimary: boolean;
+  sortOrder: number;
+  compositeRegionPx: unknown;
+  templateMockupItem: {
+    id: string;
+    mockupId: string;
+    appliesToColorIds: unknown;
+    mockup: {
+      id: string;
+      name: string;
+      storagePath: string;
+      previewPath: string | null;
+      width: number;
+      height: number;
+      view: string;
+      sceneType: string;
+      renderMode: string;
+      compositeRegionPx: unknown;
+    };
+  };
 }
 
-type SourceWithColor = CardSource & {
+interface TemplateMockupItemData {
+  id: string;
+  templateId: string;
+  mockupId: string;
+  appliesToColorIds: unknown;
+  sortOrder: number;
+  isPrimary: boolean;
+  mockup: {
+    id: string;
+    name: string;
+    storagePath: string;
+    previewPath: string | null;
+    width: number;
+    height: number;
+    view: string;
+    sceneType: string;
+    renderMode: string;
+    compositeRegionPx: unknown;
+  };
+}
+
+interface DesignPair {
+  id: string;
+  draftId: string;
+  baseName: string;
+  lightDraftDesignId: string;
+  darkDraftDesignId: string;
+}
+
+interface DraftDesignEntry {
+  id: string;
+  designId: string;
+  sortOrder: number;
+  design?: { id: string; name?: string | null; previewPath?: string | null } | null;
+}
+
+interface MockupImageEntry {
+  colorName?: string;
+  compositeUrl?: string | null;
   colorId?: string | null;
-  colorName?: string | null;
-  color?: { id: string; name: string; hex: string } | null;
-};
+  draftDesignId?: string;
+}
+
+interface GridRow {
+  key: string;
+  color: ColorInfo;
+  mappedDraftDesignId: string;
+  mappedDesignName: string;
+  mappedDesignId: string;
+  mappedMockupName: string;
+  source: CardSource | null;
+  generatedOutputUrl: string | null;
+  isHighlighted: boolean;
+  activeInspectDesignName: string;
+  designPairBaseName?: string;
+}
+
+type SourceWithColor = CardSource & { colorId?: string | null };
+
+// --- Helpers ---
+
+function pickToCardSource(pick: PickData): SourceWithColor {
+  const m = pick.templateMockupItem.mockup;
+  const region = pick.compositeRegionPx ?? m.compositeRegionPx;
+  return {
+    id: pick.id,
+    colorId: pick.colorId,
+    scope: "TEMPLATE",
+    label: m.name,
+    imageUrl: `/api/files/${m.storagePath}`,
+    outputUrl: null,
+    imageWidth: m.width,
+    imageHeight: m.height,
+    compositeRegionPx: region && typeof region === "object"
+      ? {
+          x: (region as Record<string, number>).x ?? 0,
+          y: (region as Record<string, number>).y ?? 0,
+          width: (region as Record<string, number>).width ?? 0,
+          height: (region as Record<string, number>).height ?? 0,
+          rotationDeg: (region as Record<string, number>).rotationDeg ?? 0,
+          imageWidth: m.width,
+          imageHeight: m.height,
+        }
+      : null,
+  };
+}
+
+function findMockupItemForColor(colorId: string, items: TemplateMockupItemData[]): TemplateMockupItemData | null {
+  const exact = items.find((item) => {
+    const ids = Array.isArray(item.appliesToColorIds) ? item.appliesToColorIds : [];
+    return ids.includes(colorId);
+  });
+  if (exact) return exact;
+  const generic = items.find((item) => {
+    const ids = Array.isArray(item.appliesToColorIds) ? item.appliesToColorIds : [];
+    return ids.length === 0;
+  });
+  if (generic) return generic;
+  return items.find((item) => item.isPrimary) || items[0] || null;
+}
 
 // --- Pure logic (exported for tests) ---
 
@@ -40,14 +144,12 @@ export function findSourceForColor(
   sources: SourceWithColor[],
   colors?: ColorInfo[],
 ): SourceWithColor | null {
-  // Try id match first
   const byId = sources.find((s) => s.colorId === colorId);
   if (byId) return byId;
-  // Fall back to name match (check both flat colorName and nested color.name)
   if (!colors) return null;
   const colorName = colors.find((c) => c.id === colorId)?.name;
   if (!colorName) return null;
-  return sources.find((s) => s.colorName === colorName || s.color?.name === colorName) ?? null;
+  return sources.find((s) => (s as any).colorName === colorName || (s as any).color?.name === colorName) ?? null;
 }
 
 export interface ReadinessResult {
@@ -57,18 +159,16 @@ export interface ReadinessResult {
 }
 
 export function computeReadiness(
-  colors: ColorInfo[],
-  sourceByColorId: Map<string, CardSource | null>,
-  generatedByColorId: Map<string, string | null>,
+  rows: GridRow[],
+  generatedByRowKey: Map<string, string | null>,
 ): ReadinessResult {
   let readyCount = 0;
-  for (const color of colors) {
-    const src = sourceByColorId.get(color.id) ?? null;
-    const gen = generatedByColorId.get(color.id) ?? null;
-    const isReady = Boolean(gen || (src && src.compositeRegionPx));
+  for (const row of rows) {
+    const gen = generatedByRowKey.get(row.key) ?? null;
+    const isReady = Boolean(gen || (row.source && row.source.compositeRegionPx));
     if (isReady) readyCount++;
   }
-  return { readyCount, totalCount: colors.length, allReady: readyCount === colors.length };
+  return { readyCount, totalCount: rows.length, allReady: readyCount === rows.length };
 }
 
 // --- Component ---
@@ -76,9 +176,10 @@ export function computeReadiness(
 interface ColorMockupCardGridProps {
   draftId: string;
   templateId: string;
+  storeId: string;
   selectedColors: ColorInfo[];
   designImageUrl?: string | null;
-  mockupImages: Array<{ colorName: string; compositeUrl?: string | null; colorId?: string | null }>;
+  mockupImages: MockupImageEntry[];
   onGenerate: () => void;
   isGenerating: boolean;
   generateButtonLabel: string;
@@ -86,13 +187,18 @@ interface ColorMockupCardGridProps {
   onNextStep: () => Promise<void>;
   onDeselectColor?: (colorId: string) => void;
   onMockupsStale?: () => void;
-  /** Dynamic print area in millimeter dimensions (from template/blueprint) */
   printAreaMm?: { widthMm: number; heightMm: number } | null;
+  // Design pair / mapping props
+  activeDraftDesignId?: string | null;
+  designPairs?: DesignPair[];
+  effectiveColorGroups?: Map<string, string>;
+  draftDesigns?: DraftDesignEntry[];
 }
 
 export function ColorMockupCardGrid({
   draftId,
   templateId,
+  storeId,
   selectedColors,
   designImageUrl,
   mockupImages,
@@ -104,291 +210,203 @@ export function ColorMockupCardGrid({
   onDeselectColor,
   onMockupsStale,
   printAreaMm,
+  activeDraftDesignId,
+  designPairs,
+  effectiveColorGroups,
+  draftDesigns,
 }: ColorMockupCardGridProps) {
   const [loading, setLoading] = useState(true);
-  const [sources, setSources] = useState<SourcesResponse | null>(null);
+  const [picks, setPicks] = useState<PickData[]>([]);
+  const [templateItems, setTemplateItems] = useState<TemplateMockupItemData[]>([]);
   const [uploadColorId, setUploadColorId] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
 
-  const loadSources = useCallback(async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources`);
-      if (!res.ok) throw new Error();
-      setSources(await res.json());
+      const [picksRes, itemsRes] = await Promise.all([
+        fetch(`/api/wizard/drafts/${draftId}/mockup-library-picks`),
+        fetch(`/api/stores/${storeId}/mockup-templates/${templateId}/mockups`),
+      ]);
+      if (picksRes.ok) {
+        const data = await picksRes.json();
+        setPicks(data.picks ?? []);
+      }
+      if (itemsRes.ok) {
+        const data = await itemsRes.json();
+        setTemplateItems(data.items ?? []);
+      }
     } catch {
       toast.error("Không tải được mockup sources");
     } finally {
       setLoading(false);
     }
-  }, [draftId]);
+  }, [draftId, storeId, templateId]);
 
-  useEffect(() => { void loadSources(); }, [loadSources]);
+  useEffect(() => { void loadData(); }, [loadData]);
 
-  // Re-fetch sources when selected colors change (handles re-selection after deselect)
-  const selectedColorKey = selectedColors.map((c) => c.id).sort().join(",");
-  useEffect(() => {
-    // Skip initial render (loadSources already called above)
-    const timer = setTimeout(() => { void loadSources(); }, 600);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedColorKey]);
+  // --- Compute gridRows: stable per-color mapping ---
+  const gridRows = useMemo<GridRow[]>(() => {
+    const pairs = designPairs ?? [];
+    const designs = draftDesigns ?? [];
+    const colorGroups = effectiveColorGroups ?? new Map();
+    const designById = new Map(designs.map((d) => [d.id, d]));
+    const designNameById = new Map(designs.map((d) => [d.id, d.design?.name ?? d.id]));
 
-  // ── Backfill: Smart Fit cho TEMPLATE sources thiếu placement ──
-  const backfillAppliedRef = useRef(false);
+    if (pairs.length > 0) {
+      // Pair mode: map each color to its pair's light/dark design
+      return pairs.flatMap((pair) =>
+        selectedColors.map((color) => {
+          const colorGroup = colorGroups.get(color.id) ?? "dark";
+          const mappedDraftDesignId = colorGroup === "light" ? pair.lightDraftDesignId : pair.darkDraftDesignId;
+          const mappedDesign = designById.get(mappedDraftDesignId);
+          const mappedDesignName = designNameById.get(mappedDraftDesignId) ?? mappedDraftDesignId;
+          const mappedDesignId = mappedDesign?.designId ?? "";
 
-  useEffect(() => {
-    if (backfillAppliedRef.current) return;
-    if (loading || !sources) return;
-    if (!printAreaMm?.widthMm || !printAreaMm?.heightMm) return;
+          const mockupItem = findMockupItemForColor(color.id, templateItems);
+          const mappedMockupName = mockupItem?.mockup.name ?? "";
 
-    // Collect TEMPLATE sources that need backfill (only those mapped to selected colors)
-    const needsBackfill: Array<{ sourceId: string; imageW: number; imageH: number }> = [];
+          const pickSource = picks
+            .filter((p) => p.colorId === color.id)
+            .map(pickToCardSource);
+          const source = findSourceForColor(color.id, pickSource, selectedColors);
 
-    for (const source of sources.eligibleTemplateSources ?? []) {
-      // Only backfill if this source maps to a selected color
-      const colorMatch = selectedColors.some((c) => c.id === source.colorId);
-      if (!colorMatch) continue;
+          const activeDesign = designs.find((d) => d.id === activeDraftDesignId);
+          const activeInspectDesignName = activeDesign?.design?.name ?? "";
 
-      const imageW = source.imageWidth ?? 0;
-      const imageH = source.imageHeight ?? 0;
-      if (!imageW || !imageH) continue;
-
-      const printAreaPx = computeCustomPrintAreaPx(printAreaMm, imageW, imageH);
-      const existingRegion = source.compositeRegionPx
-        ? {
-            x: source.compositeRegionPx.x,
-            y: source.compositeRegionPx.y,
-            width: source.compositeRegionPx.width,
-            height: source.compositeRegionPx.height,
-          }
-        : null;
-
-      if (
-        shouldAutoApplySmartFit({
-          existingRegion,
-          printAreaPx,
-          imageWidth: imageW,
-          imageHeight: imageH,
+          return {
+            key: `${pair.id}_${color.id}`,
+            color,
+            mappedDraftDesignId,
+            mappedDesignName,
+            mappedDesignId,
+            mappedMockupName,
+            source,
+            generatedOutputUrl: null, // filled below
+            isHighlighted: !activeDraftDesignId || mappedDraftDesignId === activeDraftDesignId,
+            activeInspectDesignName,
+            designPairBaseName: pair.baseName,
+          };
         })
-      ) {
-        needsBackfill.push({ sourceId: source.id, imageW, imageH });
-      }
+      );
     }
 
-    if (needsBackfill.length === 0) {
-      backfillAppliedRef.current = true;
-      return;
-    }
+    // Independent mode: map to first draft design
+    const firstDesign = designs[0];
+    const mappedDraftDesignId = firstDesign?.id ?? "";
+    const mappedDesignName = designNameById.get(mappedDraftDesignId) ?? "";
+    const mappedDesignId = firstDesign?.designId ?? "";
 
-    // Load design dimensions for Smart Fit computation
-    let cancelled = false;
-    const doBackfill = async () => {
-      let designW = 0;
-      let designH = 0;
-      if (designImageUrl) {
-        try {
-          const dims = await new Promise<{ w: number; h: number }>(
-            (resolve, reject) => {
-              const img = new window.Image();
-              img.crossOrigin = "anonymous";
-              img.onload = () =>
-                resolve({ w: img.naturalWidth, h: img.naturalHeight });
-              img.onerror = () =>
-                reject(new Error("Failed to load design"));
-              img.src = designImageUrl;
-            },
-          );
-          designW = dims.w;
-          designH = dims.h;
-        } catch {
-          /* keep 0 */
-        }
-      }
+    return selectedColors.map((color) => {
+      const mockupItem = findMockupItemForColor(color.id, templateItems);
+      const mappedMockupName = mockupItem?.mockup.name ?? "";
 
-      if (cancelled || backfillAppliedRef.current) return;
-      if (!designW || !designH) {
-        backfillAppliedRef.current = true;
-        return;
-      }
+      const pickSource = picks
+        .filter((p) => p.colorId === color.id)
+        .map(pickToCardSource);
+      const source = findSourceForColor(color.id, pickSource, selectedColors);
 
-      const placementsBySourceId: Record<
-        string,
-        {
-          x: number;
-          y: number;
-          width: number;
-          height: number;
-          rotationDeg: number;
-          imageWidth: number;
-          imageHeight: number;
-        }
-      > = {};
+      const activeDesign = designs.find((d) => d.id === activeDraftDesignId);
+      const activeInspectDesignName = activeDesign?.design?.name ?? "";
 
-      for (const { sourceId, imageW, imageH } of needsBackfill) {
-        const region = materializeSmartFitPlacement({
-          printAreaMm: printAreaMm!,
-          imageWidth: imageW,
-          imageHeight: imageH,
-          designWidth: designW,
-          designHeight: designH,
-        });
-        if (region) {
-          placementsBySourceId[sourceId] = region;
-        }
-      }
+      return {
+        key: `${mappedDraftDesignId}_${color.id}`,
+        color,
+        mappedDraftDesignId,
+        mappedDesignName,
+        mappedDesignId,
+        mappedMockupName,
+        source,
+        generatedOutputUrl: null,
+        isHighlighted: !activeDraftDesignId || mappedDraftDesignId === activeDraftDesignId,
+        activeInspectDesignName,
+      };
+    });
+  }, [selectedColors, designPairs, draftDesigns, effectiveColorGroups, picks, templateItems, activeDraftDesignId]);
 
-      const updatedCount = Object.keys(placementsBySourceId).length;
-      if (updatedCount > 0) {
-        // Merge with existing selection: preserve already-selected sources,
-        // add newly backfilled template sources
-        const sourceIds = [
-          ...new Set([
-            ...(sources.selectedSourceIds ?? []),
-            ...Object.keys(placementsBySourceId),
-          ]),
-        ];
-        const primarySourceId =
-          sources.primarySourceId ?? sourceIds[0] ?? null;
+  // --- Fill generatedOutputUrl by matching draftDesignId + color ---
+  const gridRowsWithOutput = useMemo(() => {
+    return gridRows.map((row) => {
+      const img = mockupImages.find(
+        (m) =>
+          m.draftDesignId === row.mappedDraftDesignId &&
+          (m.colorId === row.color.id || m.colorName?.toLowerCase() === row.color.name.toLowerCase()),
+      );
+      return { ...row, generatedOutputUrl: img?.compositeUrl ?? null };
+    });
+  }, [gridRows, mockupImages]);
 
-        try {
-          const res = await fetch(
-            `/api/wizard/drafts/${draftId}/mockup-library-picks`,
-            {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                sourceIds,
-                primarySourceId,
-                placementsBySourceId,
-              }),
-            },
-          );
-          if (res.ok) {
-            // Reload sources to pick up backfilled placements
-            await loadSources();
-            onMockupsStale?.();
-          }
-        } catch {
-          /* silent — backfill is best-effort */
-        }
-      }
-
-      backfillAppliedRef.current = true;
-    };
-
-    doBackfill();
-
-    return () => {
-      cancelled = true;
-      backfillAppliedRef.current = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, sources, printAreaMm, designImageUrl]);
-
-  // Map color → best source (draft preferred over template)
-  const sourceByColorId = useMemo(() => {
-    if (!sources) return new Map<string, CardSource | null>();
-    const allSources = [...(sources.draftSources ?? []), ...(sources.eligibleTemplateSources ?? [])];
-    return new Map(
-      selectedColors.map((color) => [
-        color.id,
-        findSourceForColor(color.id, allSources, selectedColors),
-      ])
-    );
-  }, [sources, selectedColors]);
-
-  // Map color → generated output URL
-  const generatedByColorId = useMemo(() => {
-    return new Map(
-      selectedColors.map((color) => {
-        const img = mockupImages.find(
-          (m) => m.colorId === color.id || m.colorName?.toLowerCase() === color.name.toLowerCase()
-        );
-        return [color.id, img?.compositeUrl ?? null];
-      })
-    );
-  }, [mockupImages, selectedColors]);
+  // --- Readiness ---
+  const generatedByRowKey = useMemo(() => {
+    return new Map(gridRowsWithOutput.map((r) => [r.key, r.generatedOutputUrl]));
+  }, [gridRowsWithOutput]);
 
   const readiness = useMemo(
-    () => computeReadiness(selectedColors, sourceByColorId, generatedByColorId),
-    [selectedColors, sourceByColorId, generatedByColorId]
+    () => computeReadiness(gridRowsWithOutput, generatedByRowKey),
+    [gridRowsWithOutput, generatedByRowKey],
   );
 
-  const modalTemplates = useMemo<UploadMockupTemplate[]>(() => {
-    if (!sources?.template) return [];
-    return [{
-      id: sources.template.id,
-      name: sources.template.name,
-      blueprintTitle: sources.template.blueprintTitle,
-      printProviderTitle: sources.template.printProviderTitle,
-      colors: selectedColors,
-    }];
-  }, [sources, selectedColors]);
+  // --- Actions ---
+  async function savePickSelection(templateMockupItemIds: string[]) {
+    const uniqueIds = [...new Set(templateMockupItemIds)];
+    if (uniqueIds.length === 0) return;
+    await fetch(`/api/wizard/drafts/${draftId}/mockup-library-picks`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ templateMockupItemIds: uniqueIds }),
+    });
+  }
 
   async function handleUploadSave(value: UploadMockupModalValue) {
-    if (value.sourceId) {
-      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources/${value.sourceId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label: value.label, ...(value.compositeRegionPx ? { compositeRegionPx: value.compositeRegionPx } : {}) }),
-      });
-      if (!res.ok) throw new Error((await res.json()).error || "Không lưu được mockup");
-      toast.success("Đã cập nhật mockup");
-    } else {
-      if (!value.file) throw new Error("Chưa chọn ảnh");
+    if (value.file) {
       const form = new FormData();
       form.set("file", value.file);
-      form.set("colorId", value.colorId);
+      form.set("name", value.file.name.replace(/\.[^.]+$/, ""));
       form.set("view", "front");
       form.set("sceneType", "flat_lay");
       form.set("renderMode", "COMPOSITE");
-      form.set("isPrimary", "false");
-      form.set("sortOrder", "0");
-      if (!value.compositeRegionPx) throw new Error("Chưa có vùng ghép design");
-      form.set("compositeRegionPx", JSON.stringify(value.compositeRegionPx));
-      if (value.label.trim()) form.set("label", value.label.trim());
-      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-sources`, { method: "POST", body: form });
-      if (!res.ok) throw new Error((await res.json()).error || "Upload thất bại");
+      if (value.compositeRegionPx) form.set("compositeRegionPx", JSON.stringify(value.compositeRegionPx));
+
+      const uploadRes = await fetch("/api/mockups", { method: "POST", body: form });
+      if (!uploadRes.ok) throw new Error((await uploadRes.json().catch(() => ({}))).error || "Upload thất bại");
+      const uploaded = await uploadRes.json();
+
+      await fetch(`/api/stores/${storeId}/mockup-templates/${templateId}/mockups`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mockupId: uploaded.id, appliesToColorIds: value.colorId ? [value.colorId] : [] }),
+      });
       toast.success("Đã upload mockup");
     }
     setUploadOpen(false);
     setUploadColorId(null);
-    await loadSources();
+    await loadData();
     onMockupsStale?.();
   }
 
-  // Save TEMPLATE placement → update pick (not clone to DRAFT)
   const handleSaveTemplatePlacement = useCallback(
     async (sourceId: string, region: { x: number; y: number; width: number; height: number; rotationDeg: number; imageWidth: number; imageHeight: number }) => {
-      if (!sources) return;
-      const sourceIds = sources.selectedSourceIds?.length
-        ? sources.selectedSourceIds
-        : [sourceId];
-      // Ensure the edited source is in the list
-      const mergedSourceIds = [...new Set([...sourceIds, sourceId])];
-      const primarySourceId = sources.primarySourceId ?? mergedSourceIds[0] ?? null;
-
-      const res = await fetch(
-        `/api/wizard/drafts/${draftId}/mockup-library-picks`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sourceIds: mergedSourceIds,
-            primarySourceId,
-            placementsBySourceId: { [sourceId]: region },
-          }),
-        },
-      );
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error || "Lỗi lưu vị trí");
-      }
+      const currentIds = picks.map((p) => p.templateMockupItemId);
+      const res = await fetch(`/api/wizard/drafts/${draftId}/mockup-library-picks`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templateMockupItemIds: currentIds, placementsByPickId: { [sourceId]: region } }),
+      });
+      if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error || "Lỗi lưu vị trí");
+      await loadData();
       onMockupsStale?.();
     },
-    [draftId, sources],
+    [draftId, picks],
   );
+
+  // Design preview URL for the mapped design per row
+  const designPreviewUrlsById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const d of draftDesigns ?? []) {
+      if (d.design?.previewPath) map.set(d.designId, `/api/files/${d.design.previewPath}`);
+    }
+    return map;
+  }, [draftDesigns]);
 
   if (loading) {
     return (
@@ -400,7 +418,6 @@ export function ColorMockupCardGrid({
 
   return (
     <div>
-      {/* Header */}
       <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
         <div>
           <h3 style={{ margin: 0, fontWeight: 700, fontSize: "1rem" }}>Mockup & Vị trí design</h3>
@@ -414,45 +431,37 @@ export function ColorMockupCardGrid({
             className={`btn ${hasRenderedMockups ? "btn-secondary" : "btn-primary"}`}
             onClick={onGenerate}
             disabled={isGenerating || !readiness.allReady}
-            title={!readiness.allReady ? `${readiness.totalCount - readiness.readyCount} màu chưa sẵn sàng` : undefined}
             style={(!readiness.allReady || isGenerating) ? { opacity: 0.5, cursor: "not-allowed" } : {}}
           >
             {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             {generateButtonLabel}
           </button>
           {hasRenderedMockups && (
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={onNextStep}
-              disabled={isGenerating}
-              style={isGenerating ? { opacity: 0.5, cursor: "not-allowed" } : {}}
-            >
-              Tiếp theo
-              <ArrowRight size={14} />
+            <button type="button" className="btn btn-primary" onClick={onNextStep} disabled={isGenerating}
+              style={isGenerating ? { opacity: 0.5, cursor: "not-allowed" } : {}}>
+              Tiếp theo <ArrowRight size={14} />
             </button>
           )}
         </div>
       </div>
 
-      {/* Color cards */}
       <div style={{ display: "grid", gap: 12 }}>
-        {selectedColors.map((color) => (
+        {gridRowsWithOutput.map((row) => (
           <ColorMockupCard
-            key={color.id}
-            color={color}
-            source={sourceByColorId.get(color.id) ?? null}
-            generatedOutputUrl={generatedByColorId.get(color.id)}
-            designImageUrl={designImageUrl}
+            key={row.key}
+            color={row.color}
+            source={row.source}
+            generatedOutputUrl={row.generatedOutputUrl}
+            designImageUrl={designPreviewUrlsById.get(row.mappedDesignId) ?? designImageUrl}
             draftId={draftId}
-            onUploadClick={() => { setUploadColorId(color.id); setUploadOpen(true); }}
-            onPlacementSaved={async () => {
-              await loadSources();
-              onMockupsStale?.();
-            }}
-            onDeselectColor={onDeselectColor ? () => onDeselectColor(color.id) : undefined}
+            onUploadClick={() => { setUploadColorId(row.color.id); setUploadOpen(true); }}
+            onPlacementSaved={async () => { await loadData(); onMockupsStale?.(); }}
+            onDeselectColor={onDeselectColor ? () => onDeselectColor(row.color.id) : undefined}
             onSaveTemplatePlacement={handleSaveTemplatePlacement}
             printAreaMm={printAreaMm}
+            mappedDesignName={row.mappedDesignName}
+            mappedMockupName={row.mappedMockupName}
+            isHighlightedByActiveDesign={row.isHighlighted}
           />
         ))}
       </div>
@@ -464,7 +473,7 @@ export function ColorMockupCardGrid({
           draftId={draftId}
           onClose={() => { setUploadOpen(false); setUploadColorId(null); }}
           onSave={handleUploadSave}
-          templates={modalTemplates}
+          templates={[{ id: templateId, name: "", blueprintTitle: "", printProviderTitle: "", colors: selectedColors }]}
           lockedTemplateId={templateId}
           lockedColorId={uploadColorId}
           designImageUrl={designImageUrl}

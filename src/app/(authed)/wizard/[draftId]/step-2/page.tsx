@@ -55,6 +55,8 @@ export default function Step2DesignPage() {
     .map((id) => availableDesigns.get(id))
     .filter((design): design is Design => Boolean(design));
   const pairing = pairDesigns(selectedDesigns);
+  const pairMode = pairing.pairs.length > 0;
+  const hasBlockingUnpairedPairs = pairMode && pairing.unpaired.length > 0;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -117,7 +119,7 @@ export default function Step2DesignPage() {
         Chọn Design ({selectedDesignIds.length}/{MAX_WIZARD_DESIGNS} đã chọn)
       </h2>
       <p style={{ opacity: 0.5, fontSize: "0.85rem", margin: "0 0 20px" }}>
-        Chọn tối đa 40 cặp sáng/tối. Mỗi listing dùng 1 design sáng và 1 design tối.
+        Bạn có thể chọn 1 design. Nếu dùng biến thể sáng/tối, hãy chọn đủ cặp tương ứng.
       </p>
 
       {!draft?.storeId && (
@@ -208,19 +210,20 @@ export default function Step2DesignPage() {
         </div>
       )}
 
-      {selectedDesigns.length > 0 && (
+      {pairing.hasPairIntent && (
         <div className="card" style={{ padding: 14, marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div>
               <p style={{ fontWeight: 700, margin: 0 }}>Cặp sáng/tối</p>
               <p style={{ opacity: 0.5, fontSize: "0.78rem", margin: "3px 0 0" }}>
-                {pairing.pairs.length} listing hợp lệ
+                {pairing.pairs.length} cặp hợp lệ
+                {pairing.independent.length > 0 && ` · ${pairing.independent.length} design độc lập`}
               </p>
             </div>
-            {pairing.unpaired.length > 0 && (
+            {hasBlockingUnpairedPairs && (
               <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#b45309", fontSize: "0.78rem", fontWeight: 700 }}>
                 <AlertTriangle size={15} />
-                Cần ghép đủ trước khi qua bước tiếp theo
+                Thiếu design để ghép cặp
               </div>
             )}
           </div>
@@ -270,7 +273,7 @@ export default function Step2DesignPage() {
                     fontWeight: 650,
                   }}
                 >
-                  {item.name}
+                  {item.name} — thiếu bản sáng/tối còn lại
                 </div>
               ))}
             </div>

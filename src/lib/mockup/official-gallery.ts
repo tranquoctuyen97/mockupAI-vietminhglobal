@@ -13,7 +13,7 @@ export function shouldShowInOfficialGallery(
   const parsed = parseMockupSourceUrl(image.sourceUrl ?? "");
 
   if (defaultMockupSource === "CUSTOM") {
-    return parsed.kind === "custom";
+    return parsed.kind === "custom" || parsed.kind === "library";
   }
 
   if (parsed.kind === "custom") {

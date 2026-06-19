@@ -27,12 +27,17 @@ export async function resolveMockupSourceBuffer(
 ): Promise<Buffer> {
   const parsed = parseMockupSourceUrl(sourceUrl);
 
-  if (parsed.kind === "custom") {
-    const src = await prisma.customMockupSource.findUniqueOrThrow({
-      where: { id: parsed.sourceId },
-      select: { storagePath: true },
+  if (parsed.kind === "library") {
+    const item = await prisma.templateMockupItem.findUniqueOrThrow({
+      where: { id: parsed.templateMockupItemId },
+      select: { mockup: { select: { storagePath: true } } },
     });
-    return getStorage().getBuffer(src.storagePath);
+    return getStorage().getBuffer(item.mockup.storagePath);
+  }
+
+  if (parsed.kind === "custom") {
+    // Legacy custom source — may have been deleted; fall through to error
+    throw new Error("Legacy custom mockup source no longer supported");
   }
 
   if (parsed.kind === "synthetic" || isLegacyPlaceholderSource(sourceUrl)) {

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireFeature } from "@/lib/auth/guards";
 import { updateTemplate, deleteTemplate } from "@/lib/stores/store-service";
 import { prisma } from "@/lib/db";
-import { normalizeCompositeRegionPx } from "@/lib/mockup/custom-library";
+
 import {
   normalizeMoneyValue,
   normalizePriceBySizeDefault,
@@ -51,15 +51,6 @@ export async function PATCH(
       { status: 400 },
     );
   }
-  if (
-    body.defaultCompositeRegionPx != null &&
-    normalizeCompositeRegionPx(body.defaultCompositeRegionPx) == null
-  ) {
-    return NextResponse.json(
-      { error: "defaultCompositeRegionPx is invalid" },
-      { status: 400 },
-    );
-  }
 
   const result = await updateTemplate(templateId, {
     name: body.name,
@@ -84,10 +75,6 @@ export async function PATCH(
       body.priceBySizeDefault === undefined
         ? undefined
         : body.priceBySizeDefault ?? null,
-    defaultCompositeRegionPx:
-      body.defaultCompositeRegionPx === undefined
-        ? undefined
-        : body.defaultCompositeRegionPx ?? null,
     colorIds: body.colorIds,
   });
 

@@ -389,10 +389,10 @@ export default function Step3PreviewPage() {
     return () => {
       controller.abort();
     };
-  // draft?.templateId intentionally excluded from deps — handleTemplateChange uses
-  // retryNonce to force a refetch after template switch. Including templateId causes
-  // a double-run that races with saveDraftImmediately and can revert the selection.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // draft?.templateId intentionally excluded from deps — handleTemplateChange uses
+    // retryNonce to force a refetch after template switch. Including templateId causes
+    // a double-run that races with saveDraftImmediately and can revert the selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.id, draft?.storeId, draftId, retryNonce]);
 
   // Fetch dynamic print area when template changes
@@ -430,10 +430,10 @@ export default function Step3PreviewPage() {
         sortOrder: 0,
         design: legacyDesign
           ? {
-              id: legacyDesign.id ?? draft.designId,
-              name: legacyDesign.name ?? "Design",
-              previewPath: legacyDesign.previewPath ?? null,
-            }
+            id: legacyDesign.id ?? draft.designId,
+            name: legacyDesign.name ?? "Design",
+            previewPath: legacyDesign.previewPath ?? null,
+          }
           : { id: draft.designId, name: "Design", previewPath: null },
         jobs: (draft.mockupJobs ?? []) as DraftDesignEntry["jobs"],
       },
@@ -550,11 +550,13 @@ export default function Step3PreviewPage() {
 
   const activeMockupImages = activeDesignJob?.images ?? [];
 
-  // Gộp mockup images từ tất cả design jobs để hiện cùng lúc trong gallery
+  // Gộp mockup images từ tất cả design jobs, đính kèm draftDesignId để so khớp chính xác
   const allMockupImages = useMemo(() => {
-    const images: typeof activeMockupImages = [];
+    const images: Array<typeof activeMockupImages[number] & { draftDesignId: string }> = [];
     for (const job of mockupJobsByDesign.values()) {
-      images.push(...(job.images ?? []));
+      for (const img of job.images ?? []) {
+        images.push({ ...img, draftDesignId: job.draftDesignId });
+      }
     }
     return images;
   }, [mockupJobsByDesign]);
@@ -1515,74 +1517,58 @@ export default function Step3PreviewPage() {
           />
 
           {!isCustomTemplateDefault && (
-          <div className="card" style={{ padding: 16 }}>
-            <div className="flex justify-between items-start gap-3" style={{ marginBottom: 12 }}>
-              <div style={{ minWidth: 0 }}>
-                <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>Vị trí in</h3>
-                <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
-                  {placementSourceLabel}
-                </p>
-              </div>
-              <span
-                className="badge badge-success"
-                style={{
-                  flexShrink: 0,
-                  maxWidth: 86,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-                title={placementDetailLabel}
-              >
-                {placementCountLabel}
-              </span>
-            </div>
-
-            <div style={{ display: "grid", gap: 10 }}>
-              <div style={{ display: "grid", gap: 5 }}>
-                <p style={{ margin: 0, fontWeight: 800, fontSize: "0.95rem", lineHeight: 1.25 }}>
-                  {placementCountLabel}
-                </p>
-                <p
+            <div className="card" style={{ padding: 16 }}>
+              <div className="flex justify-between items-start gap-3" style={{ marginBottom: 12 }}>
+                <div style={{ minWidth: 0 }}>
+                  <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>Vị trí in</h3>
+                  <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                    {placementSourceLabel}
+                  </p>
+                </div>
+                <span
+                  className="badge badge-success"
                   style={{
-                    margin: 0,
-                    opacity: 0.62,
-                    fontSize: "0.75rem",
-                    lineHeight: 1.35,
-                    overflowWrap: "anywhere",
+                    flexShrink: 0,
+                    maxWidth: 86,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
                   }}
                   title={placementDetailLabel}
                 >
-                  {placementDetailLabel}
-                </p>
-                <p style={{ margin: 0, opacity: 0.5, fontSize: "0.72rem", lineHeight: 1.35 }}>
-                  {placementOverride
-                    ? "Đang áp dụng cho toàn bộ designs trong wizard."
-                    : savedPlacementViews.length > 0
-                      ? "Đang dùng placement đã lưu trong template đang chọn."
-                      : "Preview có thể dùng fallback để xem nhanh, nhưng template vẫn cần placement đã lưu."}
-                </p>
+                  {placementCountLabel}
+                </span>
               </div>
 
-              <button
-                className="btn btn-secondary"
-                onClick={() => setIsPlacementEditorOpen(true)}
-                style={{
-                  width: "100%",
-                  fontSize: "0.78rem",
-                  padding: "7px 10px",
-                  minHeight: 44,
-                  whiteSpace: "normal",
-                  lineHeight: 1.2,
-                }}
-              >
-                <SlidersHorizontal size={14} /> Chỉnh vị trí design
-              </button>
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "grid", gap: 5 }}>
+                  <p style={{ margin: 0, fontWeight: 800, fontSize: "0.95rem", lineHeight: 1.25 }}>
+                    {placementCountLabel}
+                  </p>
+                  <p
+                    style={{
+                      margin: 0,
+                      opacity: 0.62,
+                      fontSize: "0.75rem",
+                      lineHeight: 1.35,
+                      overflowWrap: "anywhere",
+                    }}
+                    title={placementDetailLabel}
+                  >
+                    {placementDetailLabel}
+                  </p>
+                  <p style={{ margin: 0, opacity: 0.5, fontSize: "0.72rem", lineHeight: 1.35 }}>
+                    {placementOverride
+                      ? "Đang áp dụng cho toàn bộ designs trong wizard."
+                      : savedPlacementViews.length > 0
+                        ? "Đang dùng placement đã lưu trong template đang chọn."
+                        : "Preview có thể dùng fallback để xem nhanh, nhưng template vẫn cần placement đã lưu."}
+                  </p>
+                </div>
 
-              {isAdmin ? (
                 <button
                   className="btn btn-secondary"
-                  onClick={() => router.push(`/stores/${draft?.storeId}/config?step=placement`)}
+                  onClick={() => setIsPlacementEditorOpen(true)}
                   style={{
                     width: "100%",
                     fontSize: "0.78rem",
@@ -1592,44 +1578,60 @@ export default function Step3PreviewPage() {
                     lineHeight: 1.2,
                   }}
                 >
-                  Mở preset store
+                  <SlidersHorizontal size={14} /> Chỉnh vị trí design
                 </button>
-              ) : (
-                <div
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: 10,
-                    backgroundColor: "var(--bg-tertiary)",
-                    border: "1px solid var(--border-default)",
-                    fontSize: "0.75rem",
-                    lineHeight: 1.35,
-                  }}
-                >
-                  <p style={{ margin: 0, fontWeight: 800 }}>Preset store do Admin quản lý</p>
-                  <p style={{ margin: "3px 0 0", opacity: 0.6 }}>
-                    Nếu preset sai, liên hệ Admin để cập nhật.
-                  </p>
-                </div>
-              )}
 
-              {placementOverride && (
-                <button
-                  onClick={() => updatePlacementOverride(null)}
-                  style={{
-                    width: "100%",
-                    background: "none",
-                    border: "none",
-                    cursor: "pointer",
-                    fontSize: "0.75rem",
-                    color: "var(--color-wise-green)",
-                    fontWeight: 600,
-                  }}
-                >
-                  Khôi phục preset store
-                </button>
-              )}
+                {isAdmin ? (
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => router.push(`/stores/${draft?.storeId}/config?step=placement`)}
+                    style={{
+                      width: "100%",
+                      fontSize: "0.78rem",
+                      padding: "7px 10px",
+                      minHeight: 44,
+                      whiteSpace: "normal",
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    Mở preset store
+                  </button>
+                ) : (
+                  <div
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      backgroundColor: "var(--bg-tertiary)",
+                      border: "1px solid var(--border-default)",
+                      fontSize: "0.75rem",
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    <p style={{ margin: 0, fontWeight: 800 }}>Preset store do Admin quản lý</p>
+                    <p style={{ margin: "3px 0 0", opacity: 0.6 }}>
+                      Nếu preset sai, liên hệ Admin để cập nhật.
+                    </p>
+                  </div>
+                )}
+
+                {placementOverride && (
+                  <button
+                    onClick={() => updatePlacementOverride(null)}
+                    style={{
+                      width: "100%",
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      fontSize: "0.75rem",
+                      color: "var(--color-wise-green)",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Khôi phục preset store
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
           )}
         </div>
 
@@ -1648,59 +1650,64 @@ export default function Step3PreviewPage() {
           {isCustomTemplateDefault ? (
             draft?.storeId && selectedTemplate ? (
               <>
-              <ColorMockupCardGrid
-                draftId={draftId as string}
-                templateId={selectedTemplate.id}
-                selectedColors={storeColors.filter((c) => selectedColorIds.has(c.id))}
-                designImageUrl={activeDesignPreviewUrl}
-                mockupImages={activeMockupImages}
-                onGenerate={handleGenerate}
-                isGenerating={isGenerating}
-                generateButtonLabel={generateButtonLabel}
-                hasRenderedMockups={selectedDraftDesigns.length > 0 && selectedDraftDesigns.every((entry) => (mockupJobsByDesign.get(entry.id)?.images ?? []).length > 0)}
-                onNextStep={async () => {
-                  if (draft) {
-                    const store = useWizardStore.getState();
-                    store.updateDraft({
-                      currentStep: Math.max(draft.currentStep, 4),
-                    });
-                    await store.saveDraftImmediately();
-                  }
-                  router.push(`/wizard/${draftId}/step-4`);
-                }}
-                onDeselectColor={(colorId) => toggleColor(colorId)}
-                onMockupsStale={() => {
-                  void loadDraft(draftId);
-                }}
-                printAreaMm={isCustomTemplateDefault ? { widthMm: WIZARD_PRINT_AREA.widthMm, heightMm: WIZARD_PRINT_AREA.heightMm } : null}
-              />
+                <ColorMockupCardGrid
+                  draftId={draftId as string}
+                  templateId={selectedTemplate.id}
+                  storeId={draft!.storeId!}
+                  selectedColors={storeColors.filter((c) => selectedColorIds.has(c.id))}
+                  designImageUrl={activeDesignPreviewUrl}
+                  mockupImages={allMockupImages}
+                  onGenerate={handleGenerate}
+                  isGenerating={isGenerating}
+                  generateButtonLabel={generateButtonLabel}
+                  hasRenderedMockups={selectedDraftDesigns.length > 0 && selectedDraftDesigns.every((entry) => (mockupJobsByDesign.get(entry.id)?.images ?? []).length > 0)}
+                  onNextStep={async () => {
+                    if (draft) {
+                      const store = useWizardStore.getState();
+                      store.updateDraft({
+                        currentStep: Math.max(draft.currentStep, 4),
+                      });
+                      await store.saveDraftImmediately();
+                    }
+                    router.push(`/wizard/${draftId}/step-4`);
+                  }}
+                  onDeselectColor={(colorId) => toggleColor(colorId)}
+                  onMockupsStale={() => {
+                    void loadDraft(draftId);
+                  }}
+                  printAreaMm={isCustomTemplateDefault ? { widthMm: WIZARD_PRINT_AREA.widthMm, heightMm: WIZARD_PRINT_AREA.heightMm } : null}
+                  activeDraftDesignId={activeDraftDesignId}
+                  designPairs={(draft as any)?.designPairs ?? []}
+                  effectiveColorGroups={effectiveColorGroups}
+                  draftDesigns={selectedDraftDesigns}
+                />
 
-              {/* Kết quả mockup — gallery grid gộp tất cả designs */}
-              {(hasTriggeredBatchRender || isGenerating || allMockupImages.length > 0) && (
-                <div className="card" style={{ padding: 20, minHeight: 200 }}>
-                  <div className="flex justify-between items-center" style={{ marginBottom: 16 }}>
-                    <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>
-                      {resultsSectionTitle}
-                    </h3>
+                {/* Kết quả mockup — gallery grid gộp tất cả designs */}
+                {(hasTriggeredBatchRender || isGenerating || allMockupImages.length > 0) && (
+                  <div className="card" style={{ padding: 20, minHeight: 200 }}>
+                    <div className="flex justify-between items-center" style={{ marginBottom: 16 }}>
+                      <h3 style={{ fontWeight: 600, margin: 0, fontSize: "0.95rem" }}>
+                        {resultsSectionTitle}
+                      </h3>
+                    </div>
+                    <MockupGallery
+                      draftId={draftId as string}
+                      images={allMockupImages.filter((img) => {
+                        const normalizedColorName = img.colorName.trim().toLowerCase();
+                        return shouldShowInOfficialGallery(
+                          img,
+                          selectedTemplate?.defaultMockupSource ?? "PRINTIFY",
+                        ) && storeColors.some(
+                          (c) =>
+                            selectedColorIds.has(c.id) &&
+                            c.name.trim().toLowerCase() === normalizedColorName,
+                        );
+                      })}
+                      isPolling={isGenerating}
+                      progress={activeDesignProgress}
+                    />
                   </div>
-                  <MockupGallery
-                    draftId={draftId as string}
-                    images={allMockupImages.filter((img) => {
-                      const normalizedColorName = img.colorName.trim().toLowerCase();
-                      return shouldShowInOfficialGallery(
-                        img,
-                        selectedTemplate?.defaultMockupSource ?? "PRINTIFY",
-                      ) && storeColors.some(
-                        (c) =>
-                          selectedColorIds.has(c.id) &&
-                          c.name.trim().toLowerCase() === normalizedColorName,
-                      );
-                    })}
-                    isPolling={isGenerating}
-                    progress={activeDesignProgress}
-                  />
-                </div>
-              )}
+                )}
               </>
             ) : null
           ) : (

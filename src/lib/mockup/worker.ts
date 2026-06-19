@@ -12,7 +12,7 @@ import {
   compositeImage,
   compositeImageOnCustomMockup,
 } from "./composite";
-import { resolveEffectiveCompositeRegion } from "./custom-library";
+import { normalizeCompositeRegionPx } from "./custom-library";
 import {
   computeCustomPrintAreaPx,
   computeListingReadyRegion,
@@ -58,22 +58,10 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
         const parsed = parseMockupSourceUrl(sourceUrl);
 
         if (
-          parsed.kind === "custom" &&
-          (parsed.renderMode === "COMPOSITE" || parsed.renderMode === "FINAL")
+          parsed.kind === "library" ||
+          (parsed.kind === "custom" && (parsed.renderMode === "COMPOSITE" || parsed.renderMode === "FINAL"))
         ) {
-          const source = await prisma.customMockupSource.findUniqueOrThrow({
-            where: { id: parsed.sourceId },
-            select: {
-              compositeRegionPx: true,
-              scope: true,
-              view: true,
-              template: {
-                select: { printAreasByView: true, defaultCompositeRegionPx: true },
-              },
-            },
-          });
-
-          // Per-image render path: COMPOSITE output goes to MockupImage.compositeUrl, not CustomMockupSource.outputPath
+          // Fetch mockup item data from the library pick
           const image = await prisma.mockupImage.findUniqueOrThrow({
             where: { id: mockupImageId },
             select: {
@@ -81,11 +69,40 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
               mockupJob: {
                 select: {
                   draftId: true,
-                  draft: { select: { template: { select: { defaultCompositeRegionPx: true } } } },
                 },
               },
             },
           });
+
+          let compositeRegionPx: unknown = null;
+          let mockupWidth = 0;
+          let mockupHeight = 0;
+
+          if (parsed.kind === "library") {
+            const pick = await prisma.wizardDraftMockupLibraryPick.findFirst({
+              where: {
+                draftId: image.mockupJob.draftId,
+                templateMockupItemId: parsed.templateMockupItemId,
+                colorId: parsed.colorId,
+              },
+              select: {
+                compositeRegionPx: true,
+                templateMockupItem: {
+                  select: {
+                    mockup: {
+                      select: { compositeRegionPx: true, width: true, height: true },
+                    },
+                  },
+                },
+              },
+            });
+            if (pick) {
+              compositeRegionPx = pick.compositeRegionPx ?? pick.templateMockupItem.mockup.compositeRegionPx;
+              mockupWidth = pick.templateMockupItem.mockup.width;
+              mockupHeight = pick.templateMockupItem.mockup.height;
+            }
+          }
+
           const outputKey = `custom-mockups/renders/${image.mockupJobId}/${mockupImageId}-output.webp`;
           const outputPath = storage.resolvePath(outputKey);
           await mkdir(dirname(outputPath), { recursive: true });
@@ -102,35 +119,19 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
           const imgW = sourceMeta.width ?? 1000;
           const imgH = sourceMeta.height ?? 1000;
 
-          // Extract print area mm for this view
-          const printAreasByView = source.template?.printAreasByView as
-            | Record<string, { widthMm: number; heightMm: number }>
-            | null
-            | undefined;
-          const viewPrintArea = printAreasByView?.[source.view];
-          const printAreaMm = viewPrintArea
-            ? { widthMm: viewPrintArea.widthMm, heightMm: viewPrintArea.heightMm }
-            : { widthMm: 340, heightMm: 420 };
-
+          // Extract print area mm for this view (default 340x420mm)
+          const printAreaMm = { widthMm: 340, heightMm: 420 };
           const printAreaPx = computeCustomPrintAreaPx(printAreaMm, imgW, imgH);
 
-          // Pick placement is a draft-level override/fallback for both DRAFT and TEMPLATE sources.
-          const draftId = image.mockupJob.draftId;
-          const pick = await prisma.wizardDraftMockupLibraryPick.findUnique({
-            where: { draftId_sourceId: { draftId, sourceId: parsed.sourceId } },
-            select: { compositeRegionPx: true },
-          });
-          const pickRegion: unknown = pick?.compositeRegionPx ?? null;
-          const effectiveRegion = resolveEffectiveCompositeRegion({
-            scope: source.scope as "DRAFT" | "TEMPLATE",
-            sourceRegion: source.compositeRegionPx,
-            pickRegion,
-            templateDefaultRegion:
-              source.template?.defaultCompositeRegionPx ??
-              image.mockupJob.draft.template?.defaultCompositeRegionPx ??
-              null,
-            imageSize: { width: imgW, height: imgH },
-          });
+          // Resolve effective region: draft pick override > library frame > Smart Fit
+          const effectiveRegion = compositeRegionPx
+            ? normalizeCompositeRegionPx(compositeRegionPx)
+            : null;
+          if (effectiveRegion) {
+            // Scale to actual image dimensions if needed
+            effectiveRegion.imageWidth = imgW;
+            effectiveRegion.imageHeight = imgH;
+          }
 
           let region: CustomCompositeRegion;
           if (effectiveRegion) {
@@ -143,8 +144,9 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
               const dh = designMeta.height ?? 1024;
               const smart = computeListingReadyRegion(printAreaPx, dw, dh);
               region = { ...smart, rotationDeg: 0 };
+              const sourceLabel = parsed.kind === "library" ? parsed.templateMockupItemId : parsed.sourceId;
               console.log(
-                `[MockupWorker] Bad compositeRegionPx rejected for source ${parsed.sourceId}, replaced with Smart Fit ${JSON.stringify(region)}`,
+                `[MockupWorker] Bad compositeRegionPx rejected for source ${sourceLabel}, replaced with Smart Fit ${JSON.stringify(region)}`,
               );
             }
           } else {
@@ -153,8 +155,9 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
             const dh = designMeta.height ?? 1024;
             const smart = computeListingReadyRegion(printAreaPx, dw, dh);
             region = { ...smart, rotationDeg: 0 };
+            const sourceLabel = parsed.kind === "library" ? parsed.templateMockupItemId : parsed.sourceId;
             console.log(
-              `[MockupWorker] No compositeRegionPx for source ${parsed.sourceId} (scope=${source.scope}), using Smart Fit ${JSON.stringify(region)}`,
+              `[MockupWorker] No compositeRegionPx for source ${sourceLabel}, using Smart Fit ${JSON.stringify(region)}`,
             );
           }
 

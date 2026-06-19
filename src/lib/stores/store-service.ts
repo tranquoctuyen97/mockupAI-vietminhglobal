@@ -333,7 +333,6 @@ export async function createTemplate(
     defaultMockupSource?: "PRINTIFY" | "CUSTOM";
     basePriceUsd?: number | string | null;
     priceBySizeDefault?: Record<string, unknown> | null;
-    defaultCompositeRegionPx?: unknown;
   },
 ) {
   const existingCount = await prisma.storeMockupTemplate.count({ where: { storeId } });
@@ -371,10 +370,8 @@ export async function createTemplate(
         basePriceUsd: normalizeMoneyValue(data.basePriceUsd) ?? null,
         priceBySizeDefault:
           normalizePriceBySizeDefault(data.priceBySizeDefault) ?? undefined,
-        defaultCompositeRegionPx:
-          (normalizeCompositeRegionPx(
-            data.defaultCompositeRegionPx,
-          ) as Prisma.InputJsonValue | null) ?? undefined,
+
+
       },
     });
 
@@ -417,7 +414,6 @@ export async function updateTemplate(
     colorIds?: string[];
     basePriceUsd?: number | string | null;
     priceBySizeDefault?: Record<string, unknown> | null;
-    defaultCompositeRegionPx?: unknown;
   },
 ) {
   return prisma.$transaction(async (tx) => {
@@ -448,12 +444,6 @@ export async function updateTemplate(
           data.priceBySizeDefault === undefined
             ? undefined
             : normalizePriceBySizeDefault(data.priceBySizeDefault) ?? Prisma.DbNull,
-        defaultCompositeRegionPx:
-          data.defaultCompositeRegionPx === undefined
-            ? undefined
-            : (normalizeCompositeRegionPx(
-                data.defaultCompositeRegionPx,
-              ) as Prisma.InputJsonValue | null) ?? Prisma.DbNull,
       },
     });
 
@@ -573,7 +563,6 @@ export async function duplicateTemplate(templateId: string) {
         blueprintBrand: original.blueprintBrand,
         basePriceUsd: original.basePriceUsd,
         priceBySizeDefault: original.priceBySizeDefault ?? undefined,
-        defaultCompositeRegionPx: original.defaultCompositeRegionPx ?? undefined,
         defaultMockupSource: original.defaultMockupSource,
         sortOrder: existingCount,
       },

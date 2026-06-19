@@ -171,7 +171,9 @@ function normalizeColorName(value: string): string {
 
 function isUsableMockupImage(image: MockupImage): boolean {
   const isCustomSource =
-    image.sourceUrl?.startsWith("mockup://custom/") || image.sourceUrl?.startsWith("mockup://custom-");
+    image.sourceUrl?.startsWith("mockup://custom/") ||
+    image.sourceUrl?.startsWith("mockup://custom-") ||
+    image.sourceUrl?.startsWith("mockup://library/");
   const isPrintifySource = isRealPrintifyMockupMedia(image);
   return image.included && (isCustomSource || isPrintifySource);
 }

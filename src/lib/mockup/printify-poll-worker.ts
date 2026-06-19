@@ -6,9 +6,8 @@ import { isFinalBullMqAttempt } from "./progress";
 import type { PrintifyMockupPollPayload } from "./queue";
 import { getMockupCompositeQueue } from "./queue";
 import { cacheRemoteMockupImage } from "./remote-media";
-import { resolveCustomMockupSourceSelection } from "./custom-source-selection";
-import { resolveEffectiveCompositeRegion } from "./custom-library";
-import { buildCustomMockupSourceUrl, type MockupSourceType } from "./source-url";
+// custom-source-selection and resolveEffectiveCompositeRegion removed — now using wizard picks
+import { buildCustomMockupSourceUrl, buildLibraryMockupUrl, type MockupSourceType } from "./source-url";
 import { sseChannels } from "../sse/channel";
 import { redisConnection } from "@/lib/queue/queue";
 
@@ -258,6 +257,7 @@ type CustomSourceInput = {
   outputPath: string | null;
   isPrimary: boolean;
   sortOrder: number;
+  templateMockupItemId?: string;
 };
 
 type CustomColorInput = {
@@ -306,7 +306,9 @@ export function buildCustomMockupImageRows(input: {
       variantId: firstMatchingVariantId(color.name, input.variantColorLookup),
       colorName: color.name,
       viewPosition: source.view,
-      sourceUrl: buildCustomMockupSourceUrl(source.id, input.scope, source.renderMode),
+      sourceUrl: source.templateMockupItemId
+        ? buildLibraryMockupUrl(source.templateMockupItemId, source.colorId)
+        : buildCustomMockupSourceUrl(source.id, input.scope, source.renderMode),
       compositeUrl: null,
       compositeStatus: "pending",
       mockupType: source.sceneType,
@@ -370,7 +372,7 @@ async function buildCustomRowsForDraft(input: {
       store: {
         include: { colors: true },
       },
-      mockupLibraryPicks: { select: { sourceId: true, compositeRegionPx: true } },
+      mockupLibraryPicks: { select: { templateMockupItemId: true, compositeRegionPx: true, colorId: true } },
     },
   });
   if (!draft) return { draftRows: [], templateRows: [], mode: "PRINTIFY" };
@@ -399,86 +401,51 @@ async function buildCustomRowsForDraft(input: {
 
   const colorIds = [...colorsById.keys()];
 
-  // Load DRAFT sources
-  const draftSources = await prisma.customMockupSource.findMany({
+  // Load picks for the draft (these cover both draft-specific and template-attached mockups)
+  const picks = await prisma.wizardDraftMockupLibraryPick.findMany({
     where: {
-      scope: "DRAFT",
       draftId: input.draftId,
       colorId: { in: colorIds },
-      isActive: true,
-      deletedAt: null,
     },
-    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-  });
-
-  const templateSources = await prisma.customMockupSource.findMany({
-    where: {
-      scope: "TEMPLATE",
-      templateId: template.id,
-      colorId: { in: colorIds },
-      isActive: true,
-      deletedAt: null,
+    orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    include: {
+      templateMockupItem: {
+        include: { mockup: true },
+      },
     },
-    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
 
-  const resolvedSelection = resolveCustomMockupSourceSelection({
-    sources: [...draftSources, ...templateSources],
-    picks: draft.mockupLibraryPicks ?? [],
+  // Map picks to source-like entries for the row builder
+  const mapPick = (pick: typeof picks[number]) => ({
+    id: pick.id,
+    colorId: pick.colorId,
+    label: pick.templateMockupItem.mockup.name,
+    view: pick.templateMockupItem.mockup.view,
+    sceneType: pick.templateMockupItem.mockup.sceneType,
+    renderMode: pick.templateMockupItem.mockup.renderMode as "COMPOSITE",
+    outputPath: null as string | null,
+    isPrimary: pick.isPrimary,
+    sortOrder: pick.sortOrder,
+    templateMockupItemId: pick.templateMockupItemId,
   });
-  const selectedDraftSources = resolvedSelection.selectedSources.filter(
-    (source) => source.scope === "DRAFT",
-  );
-  const selectedTemplateSources = resolvedSelection.selectedSources.filter(
-    (source) => source.scope === "TEMPLATE",
-  );
-
-  // Build pick placement lookup: TEMPLATE scope sources may have their
-  // placement stored on WizardDraftMockupLibraryPick, not on the source itself.
-  const pickRegionBySourceId = new Map(
-    (draft.mockupLibraryPicks ?? [])
-      .filter((p) => p.compositeRegionPx != null)
-      .map((p) => [p.sourceId, p.compositeRegionPx]),
-  );
-
-  const mapSource = (source: typeof draftSources[number]) => ({
-    id: source.id,
-    colorId: source.colorId,
-    label: source.label,
-    view: source.view,
-    sceneType: source.sceneType,
-    renderMode: source.renderMode,
-    outputPath: source.outputPath,
-    isPrimary: source.isPrimary,
-    sortOrder: source.sortOrder,
-  });
-  const isRenderableSource = (source: typeof draftSources[number]) => {
-    if (source.renderMode !== "COMPOSITE") return true; // FINAL mode is always renderable
-    // COMPOSITE: needs effective placement (source or pick, depending on scope)
-    const effective = resolveEffectiveCompositeRegion({
-      scope: source.scope as "DRAFT" | "TEMPLATE",
-      sourceRegion: source.compositeRegionPx,
-      pickRegion: pickRegionBySourceId.get(source.id) ?? null,
-      templateDefaultRegion: template.defaultCompositeRegionPx,
-    });
+  const isRenderablePick = (pick: typeof picks[number]) => {
+    // COMPOSITE picks need a valid region (on pick or on the library item)
+    if (pick.templateMockupItem.mockup.renderMode !== "COMPOSITE") return true;
+    const effective = pick.compositeRegionPx ?? pick.templateMockupItem.mockup.compositeRegionPx;
     return effective !== null;
   };
 
+  const renderablePicks = picks.filter(isRenderablePick).map(mapPick);
+
   const draftRows = buildCustomMockupImageRows({
-    sources: selectedDraftSources.filter(isRenderableSource).map(mapSource),
+    sources: renderablePicks,
     colorsById,
     variantColorLookup: input.variantColorLookup,
     scope: "DRAFT",
     sortOffset: 0,
   });
 
-  const templateRows = buildCustomMockupImageRows({
-    sources: selectedTemplateSources.filter(isRenderableSource).map(mapSource),
-    colorsById,
-    variantColorLookup: input.variantColorLookup,
-    scope: "TEMPLATE",
-    sortOffset: 10000,
-  });
+  const templateRows: ReturnType<typeof buildCustomMockupImageRows> = [];
 
   return { draftRows, templateRows, mode: defaultMockupSource };
 }

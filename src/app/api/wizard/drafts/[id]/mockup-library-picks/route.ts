@@ -1,14 +1,109 @@
 import type { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { getRequestInfo, logAudit } from "@/lib/audit";
+import { logAudit } from "@/lib/audit";
 import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { normalizeCompositeRegionPx } from "@/lib/mockup/custom-library";
+import { buildTemplateMockupPickPlan } from "@/lib/mockup/template-mockup-matching";
+
+/**
+ * GET /api/wizard/drafts/[id]/mockup-library-picks
+ * Returns current picks for the draft, auto-populating when empty.
+ *
+ * When the draft has no picks yet and the template is CUSTOM,
+ * the handler automatically creates picks from eligible template mockup items
+ * using exact-then-generic color matching. This prevents a cold-start
+ * scenario where Step 3 loads with all mockups unselected and
+ * mockup generation fails with NO_CUSTOM_MOCKUP_SELECTED.
+ */
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { session, response } = await requireFeature("mockup_library");
+  if (response) return response;
+
+  const { id: draftId } = await params;
+
+  const draft = await prisma.wizardDraft.findFirst({
+    where: { id: draftId, tenantId: session.tenantId },
+    select: {
+      id: true,
+      templateId: true,
+      enabledColorIds: true,
+      template: { select: { defaultMockupSource: true } },
+    },
+  });
+  if (!draft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
+
+  const existingPicks = await prisma.wizardDraftMockupLibraryPick.findMany({
+    where: { draftId },
+    select: { id: true },
+  });
+
+  // Auto-populate only when picks are empty and template is CUSTOM
+  if (
+    existingPicks.length === 0 &&
+    draft.templateId &&
+    draft.template?.defaultMockupSource === "CUSTOM" &&
+    (draft.enabledColorIds?.length ?? 0) > 0
+  ) {
+    const templateMockupItems = await prisma.templateMockupItem.findMany({
+      where: {
+        templateId: draft.templateId,
+        mockup: { renderMode: "COMPOSITE", isActive: true, deletedAt: null },
+      },
+      include: { mockup: true },
+    });
+
+    if (templateMockupItems.length > 0) {
+      const plan = buildTemplateMockupPickPlan({
+        selectedColorIds: draft.enabledColorIds ?? [],
+        templateMockupItems: templateMockupItems.map((item) => ({
+          id: item.id,
+          appliesToColorIds: item.appliesToColorIds,
+          sortOrder: item.sortOrder,
+          isPrimary: item.isPrimary,
+          createdAt: item.createdAt,
+        })),
+        existingPicks: [], // empty — all picks are new
+      });
+
+      if (plan.create.length > 0) {
+        await prisma.wizardDraftMockupLibraryPick.createMany({
+          data: plan.create.map((entry) => ({
+            draftId,
+            templateMockupItemId: entry.templateMockupItemId,
+            colorId: entry.colorId,
+            sortOrder: entry.sortOrder,
+            isPrimary: entry.isPrimary,
+          })),
+        });
+      }
+    }
+  }
+
+  const picks = await prisma.wizardDraftMockupLibraryPick.findMany({
+    where: { draftId },
+    orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    include: {
+      color: true,
+      templateMockupItem: { include: { mockup: true } },
+    },
+  });
+
+  return NextResponse.json({ picks });
+}
 
 /**
  * PUT /api/wizard/drafts/[id]/mockup-library-picks
- * Replace selected mockup sources in a transaction.
- * Body: { sourceIds: string[], primarySourceId?: string | null, placementsBySourceId?: Record<string, CompositeRegionPx> }
+ * Replace selected template mockup items for enabled colors,
+ * and optionally update compositeRegionPx on specific picks.
+ *
+ * Body: {
+ *   templateMockupItemIds?: string[],
+ *   placementsByPickId?: Record<string, { x, y, width, height, rotationDeg, imageWidth, imageHeight }>
+ * }
  */
 export async function PUT(
   request: Request,
@@ -20,149 +115,111 @@ export async function PUT(
   const { id: draftId } = await params;
   const draft = await prisma.wizardDraft.findFirst({
     where: { id: draftId, tenantId: session.tenantId },
-    select: {
-      id: true,
-      templateId: true,
-      enabledColorIds: true,
-      template: { select: { defaultCompositeRegionPx: true } },
-    },
+    select: { id: true, templateId: true, enabledColorIds: true },
   });
   if (!draft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
 
   const body = await request.json();
-  const sourceIds: string[] = body.sourceIds;
-  const primarySourceId: string | null | undefined = body.primarySourceId;
-  if (!Array.isArray(sourceIds)) {
-    return NextResponse.json({ error: "sourceIds must be an array" }, { status: 400 });
-  }
-
-  // Dedupe sourceIds: giữ order xuất hiện đầu tiên
-  const uniqueSourceIds = [...new Set(sourceIds)];
-
-  if (uniqueSourceIds.length === 0) {
-    return NextResponse.json({ error: "At least one mockup must be selected" }, { status: 400 });
-  }
-
-  // Validate primarySourceId must be one of uniqueSourceIds
-  if (primarySourceId !== undefined && primarySourceId !== null) {
-    if (!uniqueSourceIds.includes(primarySourceId)) {
-      return NextResponse.json(
-        { error: "primarySourceId must be one of sourceIds" },
-        { status: 400 },
-      );
-    }
-  }
-
-  // Validate placementsBySourceId entries (structure only, not bounds)
-  const placementsBySourceId: Record<string, unknown> | undefined = body.placementsBySourceId;
-  const normalizedPlacements = new Map<string, ReturnType<typeof normalizeCompositeRegionPx>>();
-  if (placementsBySourceId && typeof placementsBySourceId === "object") {
-    for (const [sourceId, raw] of Object.entries(placementsBySourceId)) {
-      if (!uniqueSourceIds.includes(sourceId)) {
-        return NextResponse.json(
-          { error: `placementsBySourceId key "${sourceId}" is not in sourceIds` },
-          { status: 400 },
-        );
-      }
-      const normalized = normalizeCompositeRegionPx(raw);
-      if (!normalized) {
-        return NextResponse.json(
-          { error: `Invalid placement for sourceId "${sourceId}"` },
-          { status: 400 },
-        );
-      }
-      normalizedPlacements.set(sourceId, normalized);
-    }
-  }
-
-  const sources = await prisma.customMockupSource.findMany({
-    where: {
-      id: { in: uniqueSourceIds },
-      isActive: true,
-      deletedAt: null,
-      OR: [
-        { scope: "DRAFT" as const, draftId },
-        ...(draft.templateId ? [{ scope: "TEMPLATE" as const, templateId: draft.templateId }] : []),
-      ],
-    },
-    select: { id: true, colorId: true, compositeRegionPx: true },
-  });
-
-  const foundIds = new Set(sources.map((s) => s.id));
-  const invalid = uniqueSourceIds.filter((id) => !foundIds.has(id));
-  if (invalid.length > 0) {
-    return NextResponse.json(
-      { error: `Invalid or ineligible source IDs: ${invalid.join(", ")}` },
-      { status: 400 },
-    );
-  }
-
-  const normalizedPrimaryId =
-    primarySourceId && uniqueSourceIds.includes(primarySourceId)
-      ? primarySourceId
-      : uniqueSourceIds[0];
+  const templateMockupItemIds: string[] | undefined = body.templateMockupItemIds;
+  const placementsByPickId: Record<string, unknown> | undefined = body.placementsByPickId;
 
   await prisma.$transaction(async (tx) => {
-    // Fetch existing picks to preserve compositeRegionPx
-    const existingPicks = await tx.wizardDraftMockupLibraryPick.findMany({
-      where: { draftId },
-      select: { sourceId: true, compositeRegionPx: true },
-    });
-    const existingPlacementBySourceId = new Map(
-      existingPicks
-        .filter((p) => p.compositeRegionPx != null)
-        .map((p) => [p.sourceId, p.compositeRegionPx]),
-    );
+    // Apply placement updates if provided
+    if (placementsByPickId && typeof placementsByPickId === "object") {
+      for (const [pickId, raw] of Object.entries(placementsByPickId)) {
+        const normalized = normalizeCompositeRegionPx(raw);
+        if (normalized) {
+          await tx.wizardDraftMockupLibraryPick.update({
+            where: { id: pickId },
+            data: { compositeRegionPx: normalized as unknown as Prisma.InputJsonValue },
+          });
+        }
+      }
+    }
 
-    await tx.wizardDraftMockupLibraryPick.deleteMany({ where: { draftId } });
+    // Rebuild picks from templateMockupItemIds if provided
+    if (Array.isArray(templateMockupItemIds) && templateMockupItemIds.length > 0) {
+      const uniqueTemplateMockupItemIds = [...new Set(templateMockupItemIds)];
 
-    await tx.wizardDraftMockupLibraryPick.createMany({
-      data: uniqueSourceIds.map((sourceId, index) => {
-        const source = sources.find((entry) => entry.id === sourceId)!;
-
-        // Placement precedence: request mới > existing cũ > source > template snapshot > null
-        const compositeRegionPx =
-          normalizedPlacements.get(sourceId) ??
-          existingPlacementBySourceId.get(sourceId) ??
-          source.compositeRegionPx ??
-          draft.template?.defaultCompositeRegionPx ??
-          null;
-
-        return {
-          draftId,
-          sourceId: source.id,
-          colorId: source.colorId,               // derived from CustomMockupSource
-          isPrimary: source.id === normalizedPrimaryId,
-          sortOrder: index,
-          compositeRegionPx: (compositeRegionPx ?? undefined) as Prisma.InputJsonValue,
-        };
-      }),
-    });
-
-    if (normalizedPlacements.size > 0) {
-      await tx.wizardDraft.update({
-        where: { id: draftId },
-        data: { mockupsStale: true, mockupsStaleReason: "placement_changed" },
+      const templateMockupItems = await tx.templateMockupItem.findMany({
+        where: {
+          id: { in: uniqueTemplateMockupItemIds },
+          templateId: draft.templateId ?? "",
+          template: { store: { tenantId: session.tenantId } },
+          mockup: { renderMode: "COMPOSITE", isActive: true, deletedAt: null },
+        },
+        include: { mockup: true },
       });
+
+      const foundIds = new Set(templateMockupItems.map((item) => item.id));
+      const invalid = uniqueTemplateMockupItemIds.filter((id) => !foundIds.has(id));
+      if (invalid.length > 0) {
+        throw new Error(`Invalid or ineligible template mockup item IDs: ${invalid.join(", ")}`);
+      }
+
+      const existingPicks = await tx.wizardDraftMockupLibraryPick.findMany({
+        where: { draftId },
+        select: { id: true, templateMockupItemId: true, colorId: true, compositeRegionPx: true },
+      });
+
+      const plan = buildTemplateMockupPickPlan({
+        selectedColorIds: draft.enabledColorIds ?? [],
+        templateMockupItems: templateMockupItems.map((item) => ({
+          id: item.id,
+          appliesToColorIds: item.appliesToColorIds,
+          sortOrder: item.sortOrder,
+          isPrimary: item.isPrimary,
+          createdAt: item.createdAt,
+        })),
+        existingPicks: existingPicks.map((pick) => ({
+          id: pick.id,
+          templateMockupItemId: pick.templateMockupItemId,
+          colorId: pick.colorId,
+          compositeRegionPx: pick.compositeRegionPx,
+        })),
+      });
+
+      if (plan.deleteIds.length > 0) {
+        await tx.wizardDraftMockupLibraryPick.deleteMany({ where: { id: { in: plan.deleteIds } } });
+      }
+      for (const entry of plan.update) {
+        await tx.wizardDraftMockupLibraryPick.update({
+          where: { id: entry.id },
+          data: { sortOrder: entry.sortOrder, isPrimary: entry.isPrimary },
+        });
+      }
+      if (plan.create.length > 0) {
+        await tx.wizardDraftMockupLibraryPick.createMany({
+          data: plan.create.map((entry) => ({
+            draftId,
+            templateMockupItemId: entry.templateMockupItemId,
+            colorId: entry.colorId,
+            sortOrder: entry.sortOrder,
+            isPrimary: entry.isPrimary,
+          })),
+        });
+      }
     }
   });
 
-  const requestInfo = getRequestInfo(request);
-  await logAudit({
-    tenantId: session.tenantId,
-    actorUserId: session.id,
-    action: "custom_mockup.library_picks_updated",
-    resourceType: "wizard_draft",
-    resourceId: draftId,
-    metadata: { sourceIds: uniqueSourceIds, primarySourceId: normalizedPrimaryId, count: uniqueSourceIds.length } as Prisma.InputJsonValue,
-    ...requestInfo,
+  // Return updated picks
+  const updatedPicks = await prisma.wizardDraftMockupLibraryPick.findMany({
+    where: { draftId },
+    orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    include: {
+      color: true,
+      templateMockupItem: { include: { mockup: true } },
+    },
   });
 
-  return NextResponse.json({
-    ok: true,
-    count: uniqueSourceIds.length,
-    ...(sourceIds.length !== uniqueSourceIds.length
-      ? { deduped: sourceIds.length - uniqueSourceIds.length }
-      : {}),
+  await logAudit({
+    tenantId: session.tenantId,
+    action: "wizard.mockup-picks.updated",
+    resourceType: "wizard_draft",
+    resourceId: draftId,
+    actorUserId: session.id,
+    metadata: { templateMockupItemIds },
   });
+
+  return NextResponse.json({ picks: updatedPicks });
 }

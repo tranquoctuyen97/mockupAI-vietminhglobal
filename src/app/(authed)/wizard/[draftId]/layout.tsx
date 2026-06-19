@@ -191,7 +191,9 @@ export default function WizardLayout({
 
                 const freshDraft = useWizardStore.getState().draft;
                 const pairCount = freshDraft?.designPairs?.length ?? 0;
-                if (pairCount === 0 || selectedDesignCount !== pairCount * 2) {
+                // Only block when pairs exist and design count doesn't match pair expectation.
+                // Independent designs (pairCount === 0) are always valid.
+                if (pairCount > 0 && selectedDesignCount !== pairCount * 2) {
                   return;
                 }
               }
