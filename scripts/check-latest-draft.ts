@@ -19,25 +19,21 @@ async function main() {
 
     console.log("Draft ID:", draft.id);
 
-    const sources = await prisma.customMockupSource.findMany({
-      where: {
-        draftId: draft.id,
-        deletedAt: null
-      },
+    const picks = await prisma.wizardDraftMockupLibraryPick.findMany({
+      where: { draftId: draft.id },
       include: {
-        color: true
-      }
+        color: true,
+        templateMockupItem: { include: { mockup: true } },
+      },
     });
 
-    console.log("\nCustom Mockup Sources for Draft:");
-    for (const src of sources) {
-      console.log(`- ID: ${src.id}`);
-      console.log(`  Color: ${src.color.name} (${src.color.id})`);
-      console.log(`  Scope: ${src.scope}`);
-      console.log(`  StoragePath: ${src.storagePath}`);
-      console.log(`  OutputPath: ${src.outputPath}`);
-      console.log(`  RenderMode: ${src.renderMode}`);
-      console.log(`  CompositeRegionPx:`, src.compositeRegionPx);
+    console.log("\nMockup Library Picks for Draft:");
+    for (const pick of picks) {
+      console.log(`- Pick ID: ${pick.id}`);
+      console.log(`  Color: ${pick.color.name} (${pick.color.id})`);
+      console.log(`  TemplateMockupItemId: ${pick.templateMockupItemId}`);
+      console.log(`  Mockup: ${pick.templateMockupItem.mockup.name}`);
+      console.log(`  CompositeRegionPx:`, pick.compositeRegionPx);
     }
   } catch (err) {
     console.error("Error:", err);
