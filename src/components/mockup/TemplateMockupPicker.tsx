@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { ImagePlus, Loader2, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
+import { buildAssignMockupToColorOperations } from "./template-mockup-assignment";
+
 interface StoreColor {
   id: string;
   name: string;
@@ -53,18 +55,22 @@ export function TemplateMockupPicker({
   // Edit mode: attached items from API
   const [attachedItems, setAttachedItems] = useState<AttachedItem[]>([]);
   const [loading, setLoading] = useState(!isCreate);
+  const [refreshingAttached, setRefreshingAttached] = useState(false);
 
   // Library picker modal state
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerColorId, setPickerColorId] = useState<string | null>(null);
+  const [pickerState, setPickerState] = useState<{ colorId: string; colorName: string } | null>(null);
   const [libraryItems, setLibraryItems] = useState<LibraryMockup[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryQuery, setLibraryQuery] = useState("");
 
   // ===== Edit mode: load attached items =====
-  async function loadAttached() {
+  async function loadAttached(options?: { silent?: boolean }) {
     if (isCreate) return;
-    setLoading(true);
+    if (options?.silent) {
+      setRefreshingAttached(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const res = await fetch(`/api/stores/${storeId}/mockup-templates/${templateId}/mockups`);
       const data = await res.json();
@@ -72,7 +78,11 @@ export function TemplateMockupPicker({
     } catch {
       // ignore
     } finally {
-      setLoading(false);
+      if (options?.silent) {
+        setRefreshingAttached(false);
+      } else {
+        setLoading(false);
+      }
     }
   }
 
@@ -94,15 +104,51 @@ export function TemplateMockupPicker({
   }
 
   // ===== Edit mode: attach =====
-  async function editAttach(mockupId: string, colorId: string) {
-    const res = await fetch(`/api/stores/${storeId}/mockup-templates/${templateId}/mockups`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mockupId, appliesToColorIds: [colorId], isPrimary: attachedItems.length === 0, sortOrder: attachedItems.length }),
-    });
-    if (res.status === 409) { toast.error("Mockup already attached"); return; }
-    if (!res.ok) { toast.error("Could not attach mockup"); return; }
-    await loadAttached();
+  async function assignMockupToColor(mockupId: string, colorId: string): Promise<boolean> {
+    const operations = buildAssignMockupToColorOperations(attachedItems, mockupId, colorId);
+    try {
+      for (const operation of operations) {
+        let res: Response;
+        if (operation.type === "delete") {
+          res = await fetch(`/api/stores/${storeId}/mockup-templates/${templateId}/mockups/${operation.itemId}`, {
+            method: "DELETE",
+          });
+        } else if (operation.type === "patch") {
+          res = await fetch(`/api/stores/${storeId}/mockup-templates/${templateId}/mockups/${operation.itemId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ appliesToColorIds: operation.appliesToColorIds }),
+          });
+        } else {
+          res = await fetch(`/api/stores/${storeId}/mockup-templates/${templateId}/mockups`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mockupId: operation.mockupId,
+              appliesToColorIds: operation.appliesToColorIds,
+              isPrimary: attachedItems.length === 0,
+              sortOrder: attachedItems.length,
+            }),
+          });
+        }
+
+        if (res.status === 409) {
+          toast.error("Mockup attachment is used by drafts");
+          return false;
+        }
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          toast.error(data.error ?? "Could not assign mockup");
+          return false;
+        }
+      }
+
+      await loadAttached({ silent: true });
+      return true;
+    } catch {
+      toast.error("Could not assign mockup");
+      return false;
+    }
   }
 
   // ===== Edit mode: detach =====
@@ -137,6 +183,7 @@ export function TemplateMockupPicker({
 
     const form = new FormData();
     form.set("file", file);
+    form.set("storeId", storeId);
     form.set("name", file.name.replace(/\.[^.]+$/, ""));
     form.set("view", "front");
     form.set("sceneType", "flat_lay");
@@ -158,7 +205,7 @@ export function TemplateMockupPicker({
     if (isCreate) {
       createAssign(colorId, assignment);
     } else {
-      await editAttach(uploadData.id, colorId);
+      await assignMockupToColor(uploadData.id, colorId);
     }
 
     // Reset input
@@ -166,13 +213,12 @@ export function TemplateMockupPicker({
   }
 
   // ===== Library picker =====
-  async function openPicker(colorId: string) {
-    setPickerColorId(colorId);
-    setPickerOpen(true);
+  async function openPicker(color: StoreColor) {
+    setPickerState({ colorId: color.id, colorName: color.name });
     setLibraryQuery("");
     setLibraryLoading(true);
     try {
-      const res = await fetch("/api/mockups");
+      const res = await fetch(`/api/mockups?storeId=${encodeURIComponent(storeId)}`);
       const data = await res.json();
       setLibraryItems(data.items ?? []);
     } finally {
@@ -186,15 +232,17 @@ export function TemplateMockupPicker({
       mockupName: mockup.name,
       mockupImageUrl: mockup.imageUrl,
     };
-    const colorId = pickerColorId;
+    const colorId = pickerState?.colorId;
     if (!colorId) return;
 
     if (isCreate) {
       createAssign(colorId, assignment);
+      setPickerState(null);
     } else {
-      void editAttach(mockup.id, colorId);
+      void assignMockupToColor(mockup.id, colorId).then((ok) => {
+        if (ok) setPickerState(null);
+      });
     }
-    setPickerOpen(false);
   }
 
   if (loading) return <div style={{ padding: 24 }}><Loader2 className="animate-spin" /></div>;
@@ -206,8 +254,21 @@ export function TemplateMockupPicker({
         <div style={{ display: "grid", gap: 10 }}>
           {colors.map((color) => {
             const assignment = getAssignmentForColor(color.id);
+            const pickerActive = pickerState?.colorId === color.id;
             return (
-              <div key={color.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border-default)" }}>
+              <div
+                key={color.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "8px 10px",
+                  border: pickerActive ? "1px solid var(--color-wise-green)" : "1px solid transparent",
+                  borderBottom: pickerActive ? "1px solid var(--color-wise-green)" : "1px solid var(--border-default)",
+                  borderRadius: pickerActive ? 8 : 0,
+                  background: pickerActive ? "rgba(159, 232, 112, 0.12)" : "transparent",
+                }}
+              >
                 {/* Color swatch */}
                 <div style={{ width: 28, height: 28, borderRadius: 6, backgroundColor: color.hex, border: "1px solid var(--border-default)", flexShrink: 0 }} />
                 <span style={{ fontWeight: 600, minWidth: 100, fontSize: "0.85rem" }}>{color.name}</span>
@@ -238,7 +299,7 @@ export function TemplateMockupPicker({
                   </>
                 ) : (
                   <div style={{ display: "flex", gap: 8, flex: 1, justifyContent: "flex-end" }}>
-                    <button className="btn btn-secondary btn-sm" type="button" onClick={() => openPicker(color.id)}>
+                    <button className="btn btn-secondary btn-sm" type="button" onClick={() => openPicker(color)}>
                       <Search size={13} /> Choose from library
                     </button>
                     <button className="btn btn-secondary btn-sm" type="button" onClick={() => uploadRefs.current.get(color.id)?.click()}>
@@ -259,15 +320,40 @@ export function TemplateMockupPicker({
         </div>
       </section>
 
-      {/* ===== Library picker modal ===== */}
-      {pickerOpen && (
-        <div className="modal-backdrop" onClick={() => setPickerOpen(false)}>
-          <div className="card" style={{ padding: 18, width: "min(720px, 96vw)", maxHeight: "80vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+      {refreshingAttached && <span className="sr-only">Refreshing attached mockups</span>}
+
+      {/* ===== Fixed library picker drawer/modal ===== */}
+      {pickerState && (
+        <div
+          className="mockup-picker-overlay"
+          onClick={() => setPickerState(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 80,
+            display: "flex",
+            justifyContent: "flex-end",
+            background: "rgba(0, 0, 0, 0.32)",
+            padding: "16px",
+          }}
+        >
+          <div
+            className="card mockup-picker-drawer"
+            style={{
+              padding: 18,
+              width: "min(520px, 100%)",
+              height: "100%",
+              maxHeight: "calc(100vh - 32px)",
+              overflow: "auto",
+              borderRadius: 8,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between mb-4">
               <h3 style={{ margin: 0 }}>
-                Select mockup for {colors.find((c) => c.id === pickerColorId)?.name ?? "color"}
+                Select mockup for {pickerState.colorName}
               </h3>
-              <button className="btn btn-ghost" type="button" onClick={() => setPickerOpen(false)}><X size={16} /></button>
+              <button className="btn btn-ghost" type="button" onClick={() => setPickerState(null)}><X size={16} /></button>
             </div>
             <input
               className="input"
@@ -301,6 +387,9 @@ export function TemplateMockupPicker({
                   ))}
               </div>
             )}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={() => setPickerState(null)}>Cancel</button>
+            </div>
           </div>
         </div>
       )}
