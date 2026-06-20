@@ -7,6 +7,7 @@ import {
   Image,
   LayoutDashboard,
   LogOut,
+  Mail,
   Menu,
   Palette,
   Puzzle,
@@ -50,6 +51,12 @@ const NAV_ITEMS: NavItemConfig[] = [
     icon: <Truck size={18} />,
     feature: "auto_fulfill",
   },
+  {
+    label: "Mailboxes",
+    href: "/mailboxes",
+    icon: <Mail size={18} />,
+    feature: "mailboxes",
+  },
 ];
 
 const ADMIN_ITEMS: NavItemConfig[] = [
@@ -68,6 +75,13 @@ const ADMIN_ITEMS: NavItemConfig[] = [
     feature: "ai_settings",
   },
   { label: "Permissions", href: "/admin/acl", icon: <Shield size={18} />, superAdminOnly: true },
+  {
+    label: "Mailbox Config",
+    href: "/admin/mailboxes",
+    icon: <Mail size={18} />,
+    adminOnly: true,
+    feature: "mailboxes",
+  },
 ];
 
 const INTEGRATION_ITEMS: NavItemConfig[] = [

@@ -27,12 +27,26 @@ const REQUIRED_SCOPES = [
   { scope: "write_publications", desc: "Quản lý xuất bản (publish sản phẩm)" },
 ];
 const SETUP_STEPS = [
-  "Vào Settings → Apps and sales channels → Develop apps",
-  'Click "Create an app" → đặt tên (ví dụ: MockupAI)',
-  "Tab Configuration → Admin API access scopes → tick 4 scopes bên dưới",
-  "Mục Allowed redirection URL(s) → paste Redirect URL ở trên",
-  "Click Install app → xác nhận",
-  "Tab Configuration → Admin API access scopes → tick 6 scopes bên dưới",
+  {
+    label: "Tạo app trong Dev Dashboard",
+    desc: 'Vào Settings → Apps and sales channels → Develop apps → chọn "Build apps in Dev Dashboard". Chọn "Start from Dev Dashboard", nhập tên app (VD: MockupAI) → bấm Create.',
+    image: "/guides/shopify/step1-create-app.png",
+  },
+  {
+    label: "Cấu hình Version — URLs + Scopes + Redirect URL",
+    desc: 'Tại trang "Create version": điền App URL, paste Redirect URL ở trên vào ô Redirect URLs, điền 4 Scopes bên dưới vào ô Scopes.',
+    image: "/guides/shopify/step2-configure-version.png",
+  },
+  {
+    label: 'Bấm "Release" → xác nhận',
+    desc: "Bấm nút Release góc phải trên → popup hiện ra → bấm Release để publish version active.",
+    image: "/guides/shopify/step3-release.png",
+  },
+  {
+    label: "Lấy Client ID + Client Secret",
+    desc: "Sau khi Release → vào tab API credentials → copy Client ID và Client Secret → dán vào form bên dưới.",
+    image: null,
+  },
 ];
 
 function NewStoreContent() {
@@ -45,6 +59,7 @@ function NewStoreContent() {
   const [error, setError] = useState(errorParam ? decodeError(errorParam) : "");
   const [copied, setCopied] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  const [expandedImg, setExpandedImg] = useState<string | null>(null);
 
   // Form fields
   const [name, setName] = useState("");
@@ -297,28 +312,107 @@ function NewStoreContent() {
             </button>
 
             {showGuide && (
-              <div style={{ marginTop: 12 }}>
-                <ol style={{ margin: 0, paddingLeft: 20, fontSize: "0.8rem", lineHeight: 1.8 }}>
-                  {SETUP_STEPS.map((s, i) => (
-                    <li key={i} style={{ marginBottom: 4 }}>
-                      {s}
-                    </li>
-                  ))}
-                </ol>
+              <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+                {SETUP_STEPS.map((s, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      padding: "12px 14px",
+                      borderRadius: "var(--radius-sm)",
+                      backgroundColor: "var(--bg-tertiary)",
+                      border: "1px solid var(--border-default)",
+                    }}
+                  >
+                    {/* Step header */}
+                    <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
+                      <span
+                        style={{
+                          minWidth: 20,
+                          height: 20,
+                          borderRadius: "50%",
+                          backgroundColor: "var(--color-wise-green)",
+                          color: "white",
+                          fontSize: "0.68rem",
+                          fontWeight: 700,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {i + 1}
+                      </span>
+                      <span style={{ fontWeight: 600, fontSize: "0.82rem" }}>{s.label}</span>
+                    </div>
+                    {/* Description */}
+                    <p style={{ fontSize: "0.77rem", opacity: 0.65, margin: "0 0 0 28px" }}>
+                      {s.desc}
+                    </p>
+                    {/* Screenshot thumbnail */}
+                    {s.image && (
+                      <img
+                        src={s.image}
+                        alt={s.label}
+                        onClick={() => setExpandedImg(s.image!)}
+                        style={{
+                          width: "100%",
+                          borderRadius: "var(--radius-sm)",
+                          border: "1px solid var(--border-default)",
+                          cursor: "zoom-in",
+                          marginTop: 8,
+                          maxHeight: 180,
+                          objectFit: "cover",
+                          objectPosition: "top",
+                        }}
+                      />
+                    )}
+                  </div>
+                ))}
+
                 <a
-                  href="https://admin.shopify.com"
+                  href="https://dev.shopify.com/dashboard"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-2"
                   style={{
-                    marginTop: 12,
+                    marginTop: 4,
                     fontSize: "0.8rem",
                     color: "var(--color-wise-green)",
                     fontWeight: 600,
                   }}
                 >
-                  Mở Shopify Admin <ExternalLink size={12} />
+                  Mở Shopify Dev Dashboard <ExternalLink size={12} />
                 </a>
+              </div>
+            )}
+
+            {/* Lightbox */}
+            {expandedImg && (
+              <div
+                onClick={() => setExpandedImg(null)}
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 9999,
+                  backgroundColor: "rgba(0,0,0,0.88)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "zoom-out",
+                  padding: 24,
+                }}
+              >
+                <img
+                  src={expandedImg}
+                  alt="Screenshot hướng dẫn"
+                  style={{
+                    maxWidth: "90vw",
+                    maxHeight: "85vh",
+                    borderRadius: 8,
+                    objectFit: "contain",
+                    boxShadow: "0 24px 64px rgba(0,0,0,0.8)",
+                  }}
+                />
               </div>
             )}
           </div>

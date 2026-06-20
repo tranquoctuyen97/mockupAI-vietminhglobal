@@ -14,6 +14,7 @@ export const FEATURES = [
   "integrations",
   "ai_settings",
   "inkhub_config",
+  "mailboxes",
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];

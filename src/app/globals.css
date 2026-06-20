@@ -667,3 +667,18 @@ body {
 button:hover > .thumb-hover-overlay {
   opacity: 1 !important;
 }
+
+/* ============================================================
+   ACCESSIBILITY — Focus Rings (UI/UX Pro Max §1)
+   ============================================================ */
+
+/* Generic focus ring for all interactive elements not covered by specific classes */
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--color-wise-green);
+  outline-offset: 1px;
+}
+
+button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--color-wise-green);
+  outline-offset: 2px;
+}

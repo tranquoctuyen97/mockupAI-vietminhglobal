@@ -5,7 +5,7 @@
  * Credentials are stored encrypted per-store in StoreCredentials.
  *
  * Flow:
- * 1. buildAuthorizationUrl(state, redirectUri, clientId, scopes)
+ * 1. buildAuthorizationUrl(state, redirectUri, clientId, shop, scopes)
  * 2. Shopify redirects back with ?code=...&shop=...&hmac=...
  * 3. verifyHmac(query, clientSecret) — per-store
  * 4. exchangeCodeForToken(code, shop, clientId, clientSecret)
@@ -17,14 +17,18 @@ const DEFAULT_SCOPES = "write_products,read_products,read_orders,write_inventory
 
 /**
  * Build Shopify OAuth authorization URL
- * Uses per-store clientId — NOT a global env var
+ * Uses per-store clientId + shop domain — NOT global env vars.
+ * Must use store-specific endpoint (not centralized admin.shopify.com) so Shopify
+ * goes directly to the correct store's authorize screen without prompting store selection.
  */
 export function buildAuthorizationUrl(
   state: string,
   redirectUri: string,
   clientId: string,
+  shop: string,
   scopes?: string,
 ): string {
+  const cleanShop = sanitizeShopDomain(shop);
   const params = new URLSearchParams({
     client_id: clientId,
     scope: scopes || DEFAULT_SCOPES,
@@ -32,7 +36,7 @@ export function buildAuthorizationUrl(
     state,
   });
 
-  return `https://admin.shopify.com/admin/oauth/authorize?${params.toString()}`;
+  return `https://${cleanShop}/admin/oauth/authorize?${params.toString()}`;
 }
 
 /**
