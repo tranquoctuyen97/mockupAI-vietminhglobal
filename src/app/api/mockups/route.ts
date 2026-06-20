@@ -17,6 +17,7 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const q = url.searchParams.get("q")?.trim();
+  const storeId = url.searchParams.get("storeId");
   const viewParam = url.searchParams.get("view");
   const sceneTypeParam = url.searchParams.get("sceneType");
   const view = viewParam ? normalizeMockupLibraryView(viewParam) : null;
@@ -29,6 +30,7 @@ export async function GET(request: Request) {
       tenantId: session.tenantId,
       isActive: true,
       deletedAt: null,
+      ...(storeId ? { storeId } : {}),
       ...(q ? { name: { contains: q, mode: "insensitive" } } : {}),
       ...(view ? { view } : {}),
       ...(sceneType ? { sceneType } : {}),
@@ -57,9 +59,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "file is required" }, { status: 400 });
   }
 
+  const storeId = String(form.get("storeId") ?? "");
+  if (!storeId) {
+    return NextResponse.json({ error: "storeId is required" }, { status: 400 });
+  }
+
+  const store = await prisma.store.findFirst({
+    where: { id: storeId, tenantId: session.tenantId, status: "ACTIVE" },
+    select: { id: true },
+  });
+  if (!store) {
+    return NextResponse.json({ error: "Store not found or not active" }, { status: 400 });
+  }
+
   try {
     const item = await createMockupLibraryItemFromUpload({
       tenantId: session.tenantId,
+      storeId: store.id,
       uploadedById: session.id,
       file,
       name: String(form.get("name") ?? ""),
