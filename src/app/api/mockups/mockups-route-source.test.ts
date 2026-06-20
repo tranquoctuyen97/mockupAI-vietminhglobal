@@ -43,7 +43,7 @@ test("mockup list API supports storeId filtering", () => {
 
 test("mockup upload API requires storeId and validates store ownership", () => {
   const source = readFileSync("src/app/api/mockups/route.ts", "utf8");
-  assert.match(source, /fields\.storeId/);
+  assert.match(source, /form\.get\("storeId"\)/);
   assert.match(source, /prisma\.store\.findFirst/);
   assert.match(source, /storeId:\s*store\.id/);
 });
