@@ -59,7 +59,7 @@ export default async function MockupsPage({
         height: m.height,
         view: m.view,
         sceneType: m.sceneType,
-        compositeRegionPx: m.compositeRegionPx,
+        compositeRegionPx: m.compositeRegionPx as any,
         templateAttachmentCount: m._count.templateItems,
       }))
     : [];
