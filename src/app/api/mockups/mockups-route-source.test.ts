@@ -39,6 +39,10 @@ test("mockup list API supports storeId filtering", () => {
   const source = readFileSync("src/app/api/mockups/route.ts", "utf8");
   assert.match(source, /searchParams\.get\("storeId"\)/);
   assert.match(source, /storeId/);
+  assert.match(source, /searchParams\.get\("page"\)/);
+  assert.match(source, /searchParams\.get\("limit"\)/);
+  assert.match(source, /prisma\.mockupLibraryItem\.count\(\{\s*where\s*\}\)/);
+  assert.match(source, /totalPages:\s*Math\.ceil\(total\s*\/\s*limit\)/);
 });
 
 test("mockup upload API requires storeId and validates store ownership", () => {
@@ -69,8 +73,11 @@ test("mockups client renders store-first UI without global option", () => {
   assert.match(source, /invalidStoreSelected/);
   assert.match(source, /selectedStore/);
   assert.match(source, /Chọn store để xem mockup/);
+  assert.match(source, /Mỗi thư viện mockup được tách theo store/);
+  assert.match(source, /Store không hợp lệ hoặc không còn active/);
   assert.match(source, /\/mockups\/upload\?storeId=/);
   assert.match(source, /\/mockups\?storeId=/);
+  assert.doesNotMatch(source, /<button type="button" className="btn btn-secondary" disabled>/);
   assert.doesNotMatch(source, /Global mockup library/);
 });
 

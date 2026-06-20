@@ -572,6 +572,26 @@ body {
   box-shadow: var(--shadow-glow-green);
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mockup-picker-overlay {
+  align-items: stretch;
+}
+
+.mockup-picker-drawer {
+  margin-left: auto;
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .btn-primary:hover,
@@ -629,6 +649,17 @@ body {
     width: 100%;
     min-height: auto;
     padding: 0.5rem 0;
+  }
+
+  .mockup-picker-overlay {
+    align-items: center;
+    justify-content: center !important;
+  }
+
+  .mockup-picker-drawer {
+    height: auto !important;
+    max-height: min(80vh, 720px) !important;
+    margin-left: 0;
   }
 }
 

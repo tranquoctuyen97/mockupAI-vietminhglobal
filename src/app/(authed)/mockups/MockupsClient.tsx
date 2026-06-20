@@ -1,7 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ImagePlus, Loader2, Search, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ImagePlus,
+  Loader2,
+  Search,
+  Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -84,13 +93,6 @@ export default function MockupsClient({
     }
   }, []);
 
-  // Initial load: if there's a selected store but no initial data, fetch
-  useEffect(() => {
-    if (activeStoreId && initialTotal === 0 && !invalidStoreSelected) {
-      fetchMockups("", 1, activeStoreId);
-    }
-  }, []);
-
   // Handle "edit" query param
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -161,36 +163,15 @@ export default function MockupsClient({
           <p className="page-subtitle">
             {selectedStore
               ? `${selectedStore.name} · ${total} mockup${total !== 1 ? "s" : ""}`
-              : "Chọn store để xem mockup"}
+              : "Chọn store để xem và upload mockup vào đúng store"}
           </p>
         </div>
         {selectedStore ? (
           <Link href={uploadHref} className="btn btn-primary">
             <ImagePlus size={16} />
-            Upload
+            Upload Mockup
           </Link>
-        ) : (
-          <button type="button" className="btn btn-secondary" disabled>
-            <ImagePlus size={16} />
-            Upload
-          </button>
-        )}
-      </div>
-
-      <div className="flex gap-2" style={{ marginBottom: 18, flexWrap: "wrap" }}>
-        {stores.map((store) => {
-          const isActive = activeStoreId === store.id;
-          return (
-            <button
-              key={store.id}
-              type="button"
-              className={isActive ? "btn btn-primary" : "btn btn-secondary"}
-              onClick={() => handleStoreChange(store.id)}
-            >
-              {store.name}
-            </button>
-          );
-        })}
+        ) : null}
       </div>
 
       {!hasStores && (
@@ -202,14 +183,82 @@ export default function MockupsClient({
         </div>
       )}
 
-      {hasStores && !selectedStore && (
-        <div className="card" style={{ padding: 64, textAlign: "center" }}>
-          <h3 style={{ fontWeight: 700, margin: "0 0 8px" }}>
-            {invalidStoreSelected ? "Store không hợp lệ hoặc không còn active" : "Chọn store để xem mockup"}
-          </h3>
-          <p style={{ opacity: 0.5, fontSize: "0.875rem", margin: 0 }}>
-            Chọn một store phía trên để xem thư viện mockup của store đó.
-          </p>
+      {hasStores && (
+        <div className="card" style={{ padding: 18, marginBottom: selectedStore ? 18 : 24 }}>
+          <div className="flex items-center justify-between gap-3" style={{ marginBottom: 14 }}>
+            <div>
+              <h2 style={{ fontSize: "1rem", fontWeight: 700, margin: "0 0 4px" }}>
+                {selectedStore ? "Store đang xem" : "Chọn store để xem mockup"}
+              </h2>
+              <p style={{ opacity: 0.55, fontSize: "0.85rem", margin: 0 }}>
+                {selectedStore
+                  ? "Mockup và upload mới sẽ được gắn vào store này."
+                  : "Mỗi thư viện mockup được tách theo store để tránh upload nhầm."}
+              </p>
+            </div>
+          </div>
+
+          {invalidStoreSelected && !selectedStore ? (
+            <div
+              className="flex items-center gap-2"
+              style={{
+                color: "var(--color-error)",
+                fontSize: "0.85rem",
+                marginBottom: 12,
+              }}
+            >
+              <AlertTriangle size={15} />
+              <span>Store không hợp lệ hoặc không còn active. Chọn store khác để tiếp tục.</span>
+            </div>
+          ) : null}
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: 12,
+            }}
+          >
+            {stores.map((store) => {
+              const isActive = activeStoreId === store.id;
+              return (
+                <button
+                  key={store.id}
+                  type="button"
+                  onClick={() => handleStoreChange(store.id)}
+                  style={{
+                    border: isActive
+                      ? "1.5px solid var(--color-wise-green)"
+                      : "1px solid var(--border-default)",
+                    borderRadius: 8,
+                    background: isActive ? "rgba(146, 198, 72, 0.12)" : "var(--bg-primary)",
+                    padding: 16,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    minHeight: 92,
+                    transition: "border-color 0.15s, background-color 0.15s, transform 0.15s",
+                  }}
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span style={{ fontWeight: 700 }}>{store.name}</span>
+                    {isActive ? (
+                      <CheckCircle2 size={18} style={{ color: "var(--color-wise-green)" }} />
+                    ) : null}
+                  </span>
+                  <span
+                    style={{
+                      display: "block",
+                      opacity: 0.55,
+                      fontSize: "0.8rem",
+                      marginTop: 8,
+                    }}
+                  >
+                    {isActive ? "Đang mở thư viện store này" : "Click để xem mockup và mở upload"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -242,8 +291,8 @@ export default function MockupsClient({
 
       {/* Loading */}
       {loading && (
-        <div className="flex justify-center" style={{ padding: 48 }}>
-          <Loader2 className="animate-spin" />
+        <div className="flex items-center justify-center" style={{ padding: 64, opacity: 0.5 }}>
+          <Loader2 size={24} className="animate-spin" />
         </div>
       )}
 
@@ -261,7 +310,7 @@ export default function MockupsClient({
           {!search && (
             <Link href={uploadHref} className="btn btn-primary">
               <ImagePlus size={16} />
-              Upload
+              Upload Mockup
             </Link>
           )}
         </div>
@@ -295,7 +344,7 @@ export default function MockupsClient({
             disabled={page <= 1}
             onClick={() => handlePageChange(page - 1)}
           >
-            ←
+            <ChevronLeft size={16} />
           </button>
           <span style={{ fontSize: "0.85rem", opacity: 0.6 }}>
             Trang {page}/{totalPages}
@@ -305,7 +354,7 @@ export default function MockupsClient({
             disabled={page >= totalPages}
             onClick={() => handlePageChange(page + 1)}
           >
-            →
+            <ChevronRight size={16} />
           </button>
         </div>
       )}

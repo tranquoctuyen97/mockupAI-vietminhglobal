@@ -20,33 +20,51 @@ export async function GET(request: Request) {
   const storeId = url.searchParams.get("storeId");
   const viewParam = url.searchParams.get("view");
   const sceneTypeParam = url.searchParams.get("sceneType");
+  const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
+  const limit = Math.min(80, Math.max(1, parseInt(url.searchParams.get("limit") || "20", 10)));
+  const skip = (page - 1) * limit;
   const view = viewParam ? normalizeMockupLibraryView(viewParam) : null;
   const sceneType = sceneTypeParam ? normalizeMockupLibraryScene(sceneTypeParam) : null;
   if (viewParam && !view) return NextResponse.json({ error: "view is invalid" }, { status: 400 });
   if (sceneTypeParam && !sceneType) return NextResponse.json({ error: "sceneType is invalid" }, { status: 400 });
 
-  const items = await prisma.mockupLibraryItem.findMany({
-    where: {
-      tenantId: session.tenantId,
-      isActive: true,
-      deletedAt: null,
-      ...(storeId ? { storeId } : {}),
-      ...(q ? { name: { contains: q, mode: "insensitive" } } : {}),
-      ...(view ? { view } : {}),
-      ...(sceneType ? { sceneType } : {}),
-    },
-    orderBy: [{ createdAt: "desc" }, { id: "asc" }],
-    include: { _count: { select: { templateItems: true } } },
-  });
+  const where = {
+    tenantId: session.tenantId,
+    isActive: true,
+    deletedAt: null,
+    ...(storeId ? { storeId } : {}),
+    ...(q ? { name: { contains: q, mode: "insensitive" as const } } : {}),
+    ...(view ? { view } : {}),
+    ...(sceneType ? { sceneType } : {}),
+  };
 
-  return NextResponse.json({
-    items: items.map((item) => ({
-      ...item,
-      imageUrl: storageUrl(item.storagePath),
-      previewUrl: item.previewPath ? storageUrl(item.previewPath) : null,
-      templateAttachmentCount: item._count.templateItems,
-    })),
-  });
+  const [items, total] = await Promise.all([
+    prisma.mockupLibraryItem.findMany({
+      where,
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+      skip,
+      take: limit,
+      include: { _count: { select: { templateItems: true } } },
+    }),
+    prisma.mockupLibraryItem.count({ where }),
+  ]);
+
+  return NextResponse.json(
+    {
+      items: items.map((item) => ({
+        ...item,
+        imageUrl: storageUrl(item.storagePath),
+        previewUrl: item.previewPath ? storageUrl(item.previewPath) : null,
+        templateAttachmentCount: item._count.templateItems,
+      })),
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+    },
+    {
+      headers: { "Cache-Control": "private, max-age=10" },
+    },
+  );
 }
 
 export async function POST(request: Request) {

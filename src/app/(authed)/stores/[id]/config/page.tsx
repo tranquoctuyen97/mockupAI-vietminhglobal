@@ -730,6 +730,7 @@ function TemplatesSection({
       "blueprintImageUrl",
       "blueprintBrand",
       "defaultMockupSource",
+      "basePriceUsd",
     ];
 
     for (const k of keysToCompare) {
@@ -740,6 +741,7 @@ function TemplatesSection({
     if (JSON.stringify(tempTemplateData.enabledSizes) !== JSON.stringify(originalTemplate.enabledSizes)) return true;
     if (JSON.stringify(tempTemplateData.enabledSizesByColor) !== JSON.stringify(originalTemplate.enabledSizesByColor)) return true;
     if (JSON.stringify(tempTemplateData.defaultPlacement) !== JSON.stringify(originalTemplate.defaultPlacement)) return true;
+    if (JSON.stringify(tempTemplateData.priceBySizeDefault) !== JSON.stringify(originalTemplate.priceBySizeDefault)) return true;
 
     const tempColors = tempTemplateData.colors?.map((tc) => tc.color.name).sort().join(",") ?? "";
     const origColors = originalTemplate.colors?.map((tc) => tc.color.name).sort().join(",") ?? "";
@@ -975,16 +977,23 @@ function TemplatesSection({
   // Attach pending mockup assignments after template creation
   async function attachPendingMockupsAfterCreate(savedTemplateId: string) {
     const attachUrl = `/api/stores/${store.id}/mockup-templates/${savedTemplateId}/mockups`;
+    const pendingAssignmentsByMockupId = new Map<string, string[]>();
 
     for (const [colorId, assignment] of pendingAssignments) {
+      const colorIds = pendingAssignmentsByMockupId.get(assignment.mockupId) ?? [];
+      colorIds.push(colorId);
+      pendingAssignmentsByMockupId.set(assignment.mockupId, colorIds);
+    }
+
+    for (const [mockupId, colorIds] of pendingAssignmentsByMockupId) {
       try {
         await fetch(attachUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mockupId: assignment.mockupId, appliesToColorIds: [colorId], isPrimary: false, sortOrder: 0 }),
+          body: JSON.stringify({ mockupId, appliesToColorIds: colorIds, isPrimary: false, sortOrder: 0 }),
         });
       } catch (err) {
-        console.error("Failed to attach mockup for color:", colorId, err);
+        console.error("Failed to attach mockup for colors:", colorIds, err);
       }
     }
 
@@ -2624,5 +2633,3 @@ function EditorPlacementStep({
     </div>
   );
 }
-
-

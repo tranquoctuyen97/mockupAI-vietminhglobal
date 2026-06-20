@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Image as ImageIcon, Loader2, Upload, X } from "lucide-react";
+import Image from "next/image";
+import Link from "next/link";
+import { useCallback, useId, useMemo, useRef, useState } from "react";
 
 const MAX_FILES = 80;
 const MAX_CONCURRENT_UPLOADS = 5;
@@ -50,11 +51,19 @@ function createFileId(file: File): string {
   return `${file.name}-${file.size}-${file.lastModified}-${crypto.randomUUID()}`;
 }
 
+function isUploadFinished(files: UploadFileItem[], uploading: boolean): boolean {
+  return (
+    files.length > 0 &&
+    !uploading &&
+    files.every((file) => file.status === "success" || file.status === "error")
+  );
+}
+
 export default function UploadDesignClient({ stores, initialStoreId }: Props) {
+  const storeSelectId = useId();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const initialSelectedStoreId =
-    initialStoreId && stores.some((store) => store.id === initialStoreId)
-      ? initialStoreId
-      : stores[0]?.id ?? "";
+    initialStoreId && stores.some((store) => store.id === initialStoreId) ? initialStoreId : "";
   const [storeId, setStoreId] = useState(initialSelectedStoreId);
   const [files, setFiles] = useState<UploadFileItem[]>([]);
   const [dragActive, setDragActive] = useState(false);
@@ -64,8 +73,10 @@ export default function UploadDesignClient({ stores, initialStoreId }: Props) {
   const queueRef = useRef<UploadFileItem[]>([]);
 
   const completeCount = files.filter((file) => file.status === "success").length;
+  const failedCount = files.filter((file) => file.status === "error").length;
   const hasFiles = files.length > 0;
   const canUpload = hasFiles && Boolean(storeId) && !uploading;
+  const uploadFinished = isUploadFinished(files, uploading);
 
   const selectedStoreName = useMemo(
     () => stores.find((store) => store.id === storeId)?.name ?? "",
@@ -73,9 +84,7 @@ export default function UploadDesignClient({ stores, initialStoreId }: Props) {
   );
 
   const updateFile = useCallback((id: string, patch: Partial<UploadFileItem>) => {
-    setFiles((current) =>
-      current.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-    );
+    setFiles((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   }, []);
 
   const addFiles = useCallback((incoming: FileList | File[]) => {
@@ -121,7 +130,37 @@ export default function UploadDesignClient({ stores, initialStoreId }: Props) {
     });
   }
 
-  function uploadOne(fileItem: UploadFileItem, selectedStoreId: string): Promise<UploadedDesignResult> {
+  function clearFiles() {
+    setFiles((current) => {
+      current.forEach((file) => {
+        URL.revokeObjectURL(file.previewUrl);
+      });
+      return [];
+    });
+    queueRef.current = [];
+  }
+
+  function handleStoreChange(nextStoreId: string) {
+    if (uploading) return;
+    if (hasFiles && nextStoreId !== storeId) {
+      const confirmed = window.confirm(
+        "Đổi store sẽ xóa danh sách file đang chọn để tránh upload nhầm. Tiếp tục?",
+      );
+      if (!confirmed) return;
+      clearFiles();
+    }
+    setError("");
+    setStoreId(nextStoreId);
+  }
+
+  function openFileDialog() {
+    fileInputRef.current?.click();
+  }
+
+  function uploadOne(
+    fileItem: UploadFileItem,
+    selectedStoreId: string,
+  ): Promise<UploadedDesignResult> {
     return new Promise((resolve, reject) => {
       const form = new FormData();
       form.append("file", fileItem.file);
@@ -213,14 +252,51 @@ export default function UploadDesignClient({ stores, initialStoreId }: Props) {
     <div style={{ maxWidth: 960, margin: "0 auto" }}>
       <div style={{ marginBottom: 24 }}>
         <h1 className="page-title">Upload Designs</h1>
-        <p className="page-subtitle">Chọn store rồi upload nhiều design cùng lúc</p>
+        <p className="page-subtitle">
+          {selectedStoreName
+            ? `Design mới sẽ được upload vào ${selectedStoreName}`
+            : "Chọn store trước để tránh upload nhầm thư viện"}
+        </p>
       </div>
 
       <div className="card" style={{ padding: 18, marginBottom: 18 }}>
-        <label className="block mb-1.5 text-caption" style={{ fontWeight: 600 }}>
-          Store
-        </label>
-        <select className="input" value={storeId} onChange={(event) => setStoreId(event.target.value)}>
+        <div className="flex items-center justify-between gap-3" style={{ marginBottom: 10 }}>
+          <div>
+            <label
+              htmlFor={storeSelectId}
+              className="block mb-1.5 text-caption"
+              style={{ fontWeight: 600 }}
+            >
+              Store nhận design
+            </label>
+            <p style={{ opacity: 0.55, fontSize: "0.82rem", margin: 0 }}>
+              File upload sẽ được gắn trực tiếp vào store đang chọn.
+            </p>
+          </div>
+          {selectedStoreName ? (
+            <span
+              style={{
+                borderRadius: 999,
+                background: "rgba(146, 198, 72, 0.14)",
+                color: "var(--color-wise-green)",
+                fontSize: "0.78rem",
+                fontWeight: 700,
+                padding: "7px 12px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Uploading to {selectedStoreName}
+            </span>
+          ) : null}
+        </div>
+        <select
+          id={storeSelectId}
+          className="input"
+          value={storeId}
+          disabled={uploading}
+          onChange={(event) => handleStoreChange(event.target.value)}
+        >
+          {stores.length > 0 ? <option value="">Chọn store...</option> : null}
           {stores.length === 0 ? <option value="">Chưa có store active</option> : null}
           {stores.map((store) => (
             <option key={store.id} value={store.id}>
@@ -230,55 +306,114 @@ export default function UploadDesignClient({ stores, initialStoreId }: Props) {
         </select>
       </div>
 
-      <div
-        onDrop={(event) => {
-          event.preventDefault();
-          setDragActive(false);
-          addFiles(event.dataTransfer.files);
-        }}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setDragActive(true);
-        }}
-        onDragLeave={() => setDragActive(false)}
-        onClick={() => document.getElementById("design-files-input")?.click()}
-        className="card"
-        style={{
-          padding: 36,
-          textAlign: "center",
-          cursor: "pointer",
-          border: dragActive ? "2px dashed var(--color-wise-green)" : "2px dashed var(--border-default)",
-          backgroundColor: dragActive ? "rgba(146, 198, 72, 0.05)" : "transparent",
-        }}
-      >
-        <input
-          id="design-files-input"
-          type="file"
-          multiple
-          accept="image/png,image/jpeg"
-          style={{ display: "none" }}
-          onChange={(event) => {
-            if (event.target.files) addFiles(event.target.files);
-            event.currentTarget.value = "";
-          }}
-        />
-        <ImageIcon size={32} style={{ opacity: 0.35, marginBottom: 10 }} />
-        <p style={{ fontWeight: 700, margin: "0 0 4px" }}>Kéo thả hoặc click để chọn files</p>
-        <p style={{ opacity: 0.55, fontSize: "0.82rem", margin: 0 }}>
-          PNG, JPG · tối đa {MAX_FILES} files · 100MB/file · 5 upload song song
-        </p>
-      </div>
+      {storeId ? (
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/png,image/jpeg"
+            style={{ display: "none" }}
+            onChange={(event) => {
+              if (event.target.files) addFiles(event.target.files);
+              event.currentTarget.value = "";
+            }}
+          />
+          <button
+            type="button"
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragActive(false);
+              addFiles(event.dataTransfer.files);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragActive(true);
+            }}
+            onDragLeave={() => setDragActive(false)}
+            onClick={openFileDialog}
+            className="card"
+            style={{
+              width: "100%",
+              padding: 36,
+              textAlign: "center",
+              cursor: "pointer",
+              border: dragActive
+                ? "2px dashed var(--color-wise-green)"
+                : "2px dashed var(--border-default)",
+              backgroundColor: dragActive ? "rgba(146, 198, 72, 0.05)" : "transparent",
+              color: "inherit",
+            }}
+          >
+            <ImageIcon size={32} style={{ opacity: 0.35, marginBottom: 10 }} />
+            <p style={{ fontWeight: 700, margin: "0 0 4px" }}>Kéo thả hoặc click để chọn files</p>
+            <p style={{ opacity: 0.55, fontSize: "0.82rem", margin: 0 }}>
+              PNG, JPG · tối đa {MAX_FILES} files · 100MB/file · 5 upload song song
+            </p>
+          </button>
+        </>
+      ) : (
+        <div className="card" style={{ padding: 36, textAlign: "center" }}>
+          <ImageIcon size={32} style={{ opacity: 0.28, marginBottom: 10 }} />
+          <p style={{ fontWeight: 700, margin: "0 0 4px" }}>Chọn store trước khi chọn file</p>
+          <p style={{ opacity: 0.55, fontSize: "0.82rem", margin: 0 }}>
+            Dropzone sẽ mở sau khi có store nhận design.
+          </p>
+        </div>
+      )}
 
       {error && (
-        <div className="flex items-center gap-2" style={{ marginTop: 12, color: "var(--color-error)" }}>
+        <div
+          role="alert"
+          className="flex items-center gap-2"
+          style={{ marginTop: 12, color: "var(--color-error)" }}
+        >
           <AlertTriangle size={14} />
           <span style={{ fontSize: "0.85rem" }}>{error}</span>
         </div>
       )}
 
+      {uploadFinished && (
+        <div
+          className="card flex items-center justify-between gap-3"
+          style={{
+            padding: 16,
+            marginTop: 18,
+            borderColor: failedCount ? "var(--color-error)" : "rgba(146, 198, 72, 0.45)",
+          }}
+        >
+          <div className="flex items-center gap-2">
+            {failedCount ? (
+              <AlertTriangle size={18} style={{ color: "var(--color-error)" }} />
+            ) : (
+              <CheckCircle2 size={18} style={{ color: "var(--color-wise-green)" }} />
+            )}
+            <div>
+              <strong>
+                {completeCount} uploaded{failedCount ? ` · ${failedCount} lỗi` : ""}
+              </strong>
+              <p style={{ opacity: 0.55, fontSize: "0.8rem", margin: "2px 0 0" }}>
+                {selectedStoreName
+                  ? `Kết quả đã được ghi vào ${selectedStoreName}.`
+                  : "Hoàn tất batch upload."}
+              </p>
+            </div>
+          </div>
+          <Link
+            href={storeId ? `/designs?storeId=${storeId}` : "/designs"}
+            className="btn btn-primary"
+          >
+            Xem design trong {selectedStoreName || "store"}
+          </Link>
+        </div>
+      )}
+
       {hasFiles && (
         <>
-          <div className="flex items-center justify-between" style={{ marginTop: 18, marginBottom: 12 }}>
+          <div
+            className="flex items-center justify-between"
+            style={{ marginTop: 18, marginBottom: 12 }}
+          >
             <div>
               <strong>{files.length} files</strong>
               <span style={{ opacity: 0.55, marginLeft: 8 }}>
@@ -286,23 +421,49 @@ export default function UploadDesignClient({ stores, initialStoreId }: Props) {
               </span>
             </div>
             <div className="flex gap-2">
-              <button className="btn btn-secondary" disabled={uploading} onClick={() => setFiles([])}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={uploading}
+                onClick={clearFiles}
+              >
                 Clear
               </button>
-              <button className="btn btn-primary" disabled={!canUpload} onClick={handleUpload}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!canUpload}
+                onClick={handleUpload}
+              >
                 {uploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
-                Upload
+                Upload vào {selectedStoreName || "store"}
               </button>
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+              gap: 12,
+            }}
+          >
             {files.map((file) => (
               <div key={file.id} className="card" style={{ padding: 10 }}>
-                <div style={{ position: "relative", aspectRatio: "1 / 1", background: "var(--bg-tertiary)", overflow: "hidden" }}>
-                  <img
+                <div
+                  style={{
+                    position: "relative",
+                    aspectRatio: "1 / 1",
+                    background: "var(--bg-tertiary)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <Image
                     src={file.previewUrl}
                     alt={file.name}
+                    fill
+                    sizes="180px"
+                    unoptimized
                     style={{ width: "100%", height: "100%", objectFit: "contain", padding: 8 }}
                   />
                   <button
@@ -325,22 +486,46 @@ export default function UploadDesignClient({ stores, initialStoreId }: Props) {
                     <X size={13} />
                   </button>
                 </div>
-                <p style={{ fontWeight: 700, fontSize: "0.78rem", margin: "8px 0 2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <p
+                  style={{
+                    fontWeight: 700,
+                    fontSize: "0.78rem",
+                    margin: "8px 0 2px",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
                   {file.name}
                 </p>
-                <p style={{ opacity: 0.5, fontSize: "0.72rem", margin: 0 }}>{formatSize(file.file.size)}</p>
-                <div style={{ height: 6, background: "var(--bg-tertiary)", marginTop: 8, overflow: "hidden" }}>
+                <p style={{ opacity: 0.5, fontSize: "0.72rem", margin: 0 }}>
+                  {formatSize(file.file.size)}
+                </p>
+                <div
+                  style={{
+                    height: 6,
+                    background: "var(--bg-tertiary)",
+                    marginTop: 8,
+                    overflow: "hidden",
+                  }}
+                >
                   <div
                     style={{
                       height: "100%",
                       width: `${file.progress}%`,
-                      background: file.status === "error" ? "var(--color-danger)" : "var(--color-wise-green)",
+                      background:
+                        file.status === "error" ? "var(--color-danger)" : "var(--color-wise-green)",
                     }}
                   />
                 </div>
-                <div className="flex items-center gap-1" style={{ marginTop: 6, fontSize: "0.72rem", opacity: 0.7 }}>
+                <div
+                  className="flex items-center gap-1"
+                  style={{ marginTop: 6, fontSize: "0.72rem", opacity: 0.7 }}
+                >
                   {file.status === "success" ? <CheckCircle2 size={13} /> : null}
-                  {file.status === "uploading" ? <Loader2 size={13} className="animate-spin" /> : null}
+                  {file.status === "uploading" ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : null}
                   <span>{file.error ?? file.status}</span>
                 </div>
               </div>
@@ -350,7 +535,10 @@ export default function UploadDesignClient({ stores, initialStoreId }: Props) {
       )}
 
       <div style={{ marginTop: 20 }}>
-        <Link href={storeId ? `/designs?storeId=${storeId}` : "/designs"} className="btn btn-secondary">
+        <Link
+          href={storeId ? `/designs?storeId=${storeId}` : "/designs"}
+          className="btn btn-secondary"
+        >
           Xem thư viện
         </Link>
       </div>

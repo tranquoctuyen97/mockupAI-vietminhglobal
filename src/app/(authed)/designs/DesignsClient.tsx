@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Image as ImageIcon,
@@ -11,8 +11,10 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useCallback, useMemo, useState } from "react";
 
 interface Design {
   id: string;
@@ -66,7 +68,9 @@ export default function DesignsClient({
     [activeStoreId, stores],
   );
   const hasStores = stores.length > 0;
-  const uploadHref = selectedStore ? `/designs/upload?storeId=${selectedStore.id}` : "/designs/upload";
+  const uploadHref = selectedStore
+    ? `/designs/upload?storeId=${selectedStore.id}`
+    : "/designs/upload";
 
   const fetchDesigns = useCallback(async (q: string, p: number, storeId: string | null) => {
     setLoading(true);
@@ -156,7 +160,7 @@ export default function DesignsClient({
           <p className="page-subtitle">
             {selectedStore
               ? `${selectedStore.name} · ${total} design${total !== 1 ? "s" : ""}`
-              : "Chọn store để xem design"}
+              : "Chọn store để xem và upload design vào đúng store"}
           </p>
         </div>
         {selectedStore ? (
@@ -164,28 +168,7 @@ export default function DesignsClient({
             <Plus size={16} />
             Upload Design
           </Link>
-        ) : (
-          <button type="button" className="btn btn-secondary" disabled>
-            <Plus size={16} />
-            Upload Design
-          </button>
-        )}
-      </div>
-
-      <div className="flex gap-2" style={{ marginBottom: 18, flexWrap: "wrap" }}>
-        {stores.map((store) => {
-          const isActive = activeStoreId === store.id;
-          return (
-            <button
-              key={store.id}
-              type="button"
-              className={isActive ? "btn btn-primary" : "btn btn-secondary"}
-              onClick={() => handleStoreChange(store.id)}
-            >
-              {store.name}
-            </button>
-          );
-        })}
+        ) : null}
       </div>
 
       {!hasStores && (
@@ -197,15 +180,82 @@ export default function DesignsClient({
         </div>
       )}
 
-      {hasStores && !selectedStore && (
-        <div className="card" style={{ padding: 64, textAlign: "center" }}>
-          <ImageIcon size={32} style={{ opacity: 0.3, marginBottom: 14 }} />
-          <h3 style={{ fontWeight: 700, margin: "0 0 8px" }}>
-            {invalidStoreSelected ? "Store không hợp lệ hoặc không còn active" : "Chọn store để xem design"}
-          </h3>
-          <p style={{ opacity: 0.5, fontSize: "0.875rem", margin: 0 }}>
-            Chọn một store phía trên để xem thư viện design của store đó.
-          </p>
+      {hasStores && (
+        <div className="card" style={{ padding: 18, marginBottom: selectedStore ? 18 : 24 }}>
+          <div className="flex items-center justify-between gap-3" style={{ marginBottom: 14 }}>
+            <div>
+              <h2 style={{ fontSize: "1rem", fontWeight: 700, margin: "0 0 4px" }}>
+                {selectedStore ? "Store đang xem" : "Chọn store để xem design"}
+              </h2>
+              <p style={{ opacity: 0.55, fontSize: "0.85rem", margin: 0 }}>
+                {selectedStore
+                  ? "Design và upload mới sẽ được gắn vào store này."
+                  : "Mỗi thư viện design được tách theo store để tránh upload nhầm."}
+              </p>
+            </div>
+          </div>
+
+          {invalidStoreSelected && !selectedStore ? (
+            <div
+              className="flex items-center gap-2"
+              style={{
+                color: "var(--color-error)",
+                fontSize: "0.85rem",
+                marginBottom: 12,
+              }}
+            >
+              <AlertTriangle size={15} />
+              <span>Store không hợp lệ hoặc không còn active. Chọn store khác để tiếp tục.</span>
+            </div>
+          ) : null}
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: 12,
+            }}
+          >
+            {stores.map((store) => {
+              const isActive = activeStoreId === store.id;
+              return (
+                <button
+                  key={store.id}
+                  type="button"
+                  onClick={() => handleStoreChange(store.id)}
+                  style={{
+                    border: isActive
+                      ? "1.5px solid var(--color-wise-green)"
+                      : "1px solid var(--border-default)",
+                    borderRadius: 8,
+                    background: isActive ? "rgba(146, 198, 72, 0.12)" : "var(--bg-primary)",
+                    padding: 16,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    minHeight: 92,
+                    transition: "border-color 0.15s, background-color 0.15s, transform 0.15s",
+                  }}
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span style={{ fontWeight: 700 }}>{store.name}</span>
+                    {isActive ? (
+                      <CheckCircle2 size={18} style={{ color: "var(--color-wise-green)" }} />
+                    ) : null}
+                  </span>
+                  <span
+                    style={{
+                      display: "block",
+                      opacity: 0.55,
+                      fontSize: "0.8rem",
+                      marginTop: 8,
+                    }}
+                  >
+                    {isActive ? "Đang mở thư viện store này" : "Click để xem design và mở upload"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -238,10 +288,7 @@ export default function DesignsClient({
 
       {/* Loading */}
       {loading && (
-        <div
-          className="flex items-center justify-center"
-          style={{ padding: 64, opacity: 0.5 }}
-        >
+        <div className="flex items-center justify-center" style={{ padding: 64, opacity: 0.5 }}>
           <Loader2 size={24} className="animate-spin" />
         </div>
       )}
@@ -297,16 +344,7 @@ export default function DesignsClient({
                 style={{
                   padding: 0,
                   overflow: "hidden",
-                  cursor: "pointer",
-                  transition: "transform 0.15s, box-shadow 0.15s",
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)";
-                  (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 24px rgba(0,0,0,0.12)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.transform = "";
-                  (e.currentTarget as HTMLElement).style.boxShadow = "";
+                  transition: "box-shadow 0.15s",
                 }}
               >
                 {/* Preview */}
@@ -318,18 +356,20 @@ export default function DesignsClient({
                     alignItems: "center",
                     justifyContent: "center",
                     overflow: "hidden",
+                    position: "relative",
                   }}
                 >
                   {design.previewUrl ? (
-                    <img
+                    <Image
                       src={design.previewUrl}
                       alt={design.name}
+                      fill
+                      sizes="(max-width: 768px) 50vw, (max-width: 1200px) 25vw, 220px"
                       style={{
-                        width: "100%",
-                        height: "100%",
                         objectFit: "contain",
                         padding: 12,
                       }}
+                      unoptimized
                     />
                   ) : (
                     <ImageIcon size={40} style={{ opacity: 0.2 }} />
@@ -361,7 +401,7 @@ export default function DesignsClient({
                       textOverflow: "ellipsis",
                     }}
                   >
-                    {design.store?.name ?? "Unassigned"}
+                    {design.store?.name ?? selectedStore.name}
                   </p>
                   <div
                     className="flex items-center justify-between"
@@ -389,6 +429,7 @@ export default function DesignsClient({
                   >
                     <span>{formatDate(design.createdAt)}</span>
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         setDeleteConfirm(design.id);
@@ -413,11 +454,9 @@ export default function DesignsClient({
 
           {/* Pagination */}
           {totalPages > 1 && (
-            <div
-              className="flex items-center justify-center gap-3"
-              style={{ marginTop: 24 }}
-            >
+            <div className="flex items-center justify-center gap-3" style={{ marginTop: 24 }}>
               <button
+                type="button"
                 className="btn btn-secondary"
                 disabled={page <= 1}
                 onClick={() => handlePageChange(page - 1)}
@@ -428,6 +467,7 @@ export default function DesignsClient({
                 Trang {page}/{totalPages}
               </span>
               <button
+                type="button"
                 className="btn btn-secondary"
                 disabled={page >= totalPages}
                 onClick={() => handlePageChange(page + 1)}
@@ -451,13 +491,8 @@ export default function DesignsClient({
             justifyContent: "center",
             zIndex: 100,
           }}
-          onClick={() => setDeleteConfirm(null)}
         >
-          <div
-            className="card"
-            style={{ padding: 24, maxWidth: 400, width: "90%" }}
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="card" style={{ padding: 24, maxWidth: 400, width: "90%" }}>
             <div className="flex items-center gap-3" style={{ marginBottom: 16 }}>
               <AlertTriangle size={24} style={{ color: "var(--color-danger)" }} />
               <h3 style={{ fontWeight: 700, margin: 0 }}>Xóa design?</h3>
@@ -467,12 +502,14 @@ export default function DesignsClient({
             </p>
             <div className="flex justify-end gap-3">
               <button
+                type="button"
                 className="btn btn-secondary"
                 onClick={() => setDeleteConfirm(null)}
               >
                 Hủy
               </button>
               <button
+                type="button"
                 className="btn"
                 style={{
                   backgroundColor: "var(--color-danger)",
@@ -481,11 +518,7 @@ export default function DesignsClient({
                 onClick={() => handleDelete(deleteConfirm)}
                 disabled={deleting}
               >
-                {deleting ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : (
-                  <Trash2 size={16} />
-                )}
+                {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
                 Xóa
               </button>
             </div>
