@@ -34,6 +34,12 @@ describe("createMailboxSchema", () => {
     expect(createMailboxSchema.safeParse(validCustomInput).success).toBe(true);
   });
 
+  it("requires storeId and rejects importMode", () => {
+    const input = { ...validCustomInput, storeId: "store_123" };
+    expect(createMailboxSchema.safeParse(input).success).toBe(true);
+    expect(createMailboxSchema.safeParse({ ...input, importMode: "all" }).success).toBe(false);
+  });
+
   it("rejects gmail without appPassword", () => {
     const input = { name: "X", email: "a@gmail.com", provider: "gmail" };
     expect(createMailboxSchema.safeParse(input).success).toBe(false);
