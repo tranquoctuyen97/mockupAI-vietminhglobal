@@ -18,6 +18,7 @@ This design intentionally does not introduce user-store ACL. Access stays tenant
 - No changes to Zammad's core mapping of app mailbox to Zammad group plus email channel.
 - No Google OAuth for Gmail.
 - No mailbox hard delete.
+- No full inbox import or "sync all" option.
 - No rewrite of Zammad client primitives unless required by store scoping.
 
 ## Current State
@@ -53,6 +54,12 @@ The new model keeps the Zammad concepts, but changes app ownership and runtime a
    - App DB stores mailbox metadata only.
    - IMAP/SMTP passwords remain stored only in Zammad.
    - Audit logs must not include credentials or raw channel payloads.
+
+5. Use a fixed six-month history window.
+   - The mailbox create/settings UI must not offer "sync all", `all_archive`, or any full-history import mode.
+   - New mailbox setup displays a single import policy: get email from the latest 6 months.
+   - The server owns the value. Do not trust a client-supplied arbitrary month count.
+   - If Zammad does not support this as a direct channel option, implementation must first verify the supported Zammad setting or worker strategy before enabling mailbox creation with this policy.
 
 ## Data Model
 
@@ -126,6 +133,7 @@ Create flow:
 - `POST /api/admin/mailboxes` requires `storeId`.
 - The route validates the store by `id`, `tenantId`, active status, and not deleted.
 - Zammad group/channel creation, connection tests, verification, rollback, and channel lookup remain the same.
+- Initial email history is limited to the latest 6 months. The UI does not provide a "sync all" option.
 - The local `Mailbox` row is saved with `tenantId` and `storeId`.
 - Audit metadata includes `storeId`, mailbox name, email, provider, `zammadGroupId`, and `zammadChannelId`.
 
@@ -238,7 +246,9 @@ function requireZammadUser(ctx: MailboxAccessContext) {}
 `createMailboxSchema`:
 
 - Requires `storeId`.
-- Keeps `name`, `email`, `provider`, Gmail/custom connection validation, and `importMode`.
+- Keeps `name`, `email`, `provider`, and Gmail/custom connection validation.
+- Removes `importMode`.
+- Does not accept arbitrary `historyWindowMonths`; the server uses a fixed 6-month policy.
 - Rejects `assignments`.
 - Stays strict.
 
@@ -306,8 +316,9 @@ Expected files to change during implementation:
 Focused tests should cover:
 
 - Prisma schema source test for `Mailbox.tenantId`, `Mailbox.storeId`, relations, and indexes.
-- Validation tests proving `createMailboxSchema` requires `storeId` and rejects `assignments`.
+- Validation tests proving `createMailboxSchema` requires `storeId`, rejects `assignments`, rejects `importMode`, and rejects arbitrary history-window fields.
 - Admin list/create tests or source tests proving store scoping by `tenantId + storeId`.
+- Admin create tests or source tests proving no `all_archive` / `all` sync-all mode remains and creation uses the fixed six-month policy.
 - Operator proxy tests or source tests proving:
   - mailbox list requires `storeId`
   - list returns only active mailboxes for the selected store
