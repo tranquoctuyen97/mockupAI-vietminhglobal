@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Archive,
   CheckCircle2,
   ChevronDown,
   Filter,
@@ -135,6 +134,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
   const [sending, setSending] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const selectedConversationIdRef = useRef<number | null>(null);
 
   const selectedStore = useMemo(
     () => stores.find((store) => store.id === selectedStoreId) ?? null,
@@ -146,6 +146,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
     setSelectedStoreId(storeId);
     setSelectedMailbox(null);
     setSelectedConv(null);
+    selectedConversationIdRef.current = null;
     setThreads([]);
     setConversations([]);
     setPageInfo(null);
@@ -179,6 +180,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
     async (conv: Conversation) => {
       if (!selectedStoreId) return;
       setDetailLoading(true);
+      selectedConversationIdRef.current = conv.id;
       setSelectedConv(conv);
       setThreads([]);
       setReplyText("");
@@ -186,6 +188,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
         const data = await apiFetch<{ conversation: Conversation; threads: Thread[] }>(
           `/api/mailbox-proxy/conversations/${conv.id}?storeId=${encodeURIComponent(selectedStoreId)}`,
         );
+        selectedConversationIdRef.current = data.conversation.id;
         setSelectedConv(data.conversation);
         setThreads(data.threads);
       } catch (e) {
@@ -213,7 +216,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
       );
       setConversations(data.conversations);
       setPageInfo(data.page);
-      if (!selectedConv && data.conversations[0]) {
+      if (selectedConversationIdRef.current === null && data.conversations[0]) {
         void openConversation(data.conversations[0]);
       }
     } catch (e) {
@@ -221,7 +224,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
     } finally {
       setConvLoading(false);
     }
-  }, [selectedMailbox, selectedStoreId, statusFilter, currentPage, selectedConv, openConversation]);
+  }, [selectedMailbox, selectedStoreId, statusFilter, currentPage, openConversation]);
 
   useEffect(() => {
     void loadConversations();
@@ -330,6 +333,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
               setStatusFilter(status);
               setCurrentPage(1);
               setSelectedConv(null);
+              selectedConversationIdRef.current = null;
               setThreads([]);
             }}
           />
@@ -651,44 +655,15 @@ function ConversationDetail({
       </header>
 
       <div style={detailBody}>
-        <div style={orderCard}>
-          <span style={orderIcon}>
-            <Archive size={20} />
-          </span>
-          <div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <strong>Order</strong>
-              <strong>#{conversation.number}</strong>
-              <span style={paidBadge}>Paid</span>
-            </div>
-            <div style={orderMeta}>May 21, 2024 • $39.99 • 2 items</div>
-          </div>
-          <button type="button" style={{ ...smallButton, marginLeft: "auto" }}>
-            View order
-          </button>
-        </div>
-
         <div style={threadArea}>
           {hasLoadedBody ? (
-            <>
-              {threads.map((thread, index) => (
-                <ThreadCard
-                  key={thread.id}
-                  thread={thread}
-                  fallbackSubject={index === 0 ? conversation.subject : undefined}
-                />
-              ))}
-              <div style={noteCard}>
-                <div style={noteTop}>
-                  <strong>Internal note by Jane Doe</strong>
-                  <span>{formatTime(firstThread?.createdAt ?? conversation.updatedAt)}</span>
-                </div>
-                <p style={{ margin: "8px 0 0" }}>
-                  Customer is asking about the delivery status. Check order and mailbox sync before
-                  replying.
-                </p>
-              </div>
-            </>
+            threads.map((thread, index) => (
+              <ThreadCard
+                key={thread.id}
+                thread={thread}
+                fallbackSubject={index === 0 ? conversation.subject : undefined}
+              />
+            ))
           ) : (
             <DetailState
               title="Email body not loaded"
@@ -1404,42 +1379,6 @@ const detailTags: React.CSSProperties = {
   marginTop: 10,
 };
 
-const orderCard: React.CSSProperties = {
-  margin: 14,
-  border: "1px solid #d8dee8",
-  borderRadius: 8,
-  minHeight: 72,
-  display: "flex",
-  alignItems: "center",
-  gap: 14,
-  padding: 14,
-};
-
-const orderIcon: React.CSSProperties = {
-  width: 44,
-  height: 44,
-  borderRadius: 8,
-  display: "grid",
-  placeItems: "center",
-  color: "#2f7d32",
-  background: "#eef9e9",
-};
-
-const paidBadge: React.CSSProperties = {
-  borderRadius: 6,
-  padding: "3px 8px",
-  background: "#dcfce7",
-  color: "#15803d",
-  fontSize: 12,
-  fontWeight: 900,
-};
-
-const orderMeta: React.CSSProperties = {
-  marginTop: 6,
-  color: "#475467",
-  fontSize: 13,
-};
-
 const detailBody: React.CSSProperties = {
   flex: 1,
   minHeight: 0,
@@ -1553,23 +1492,6 @@ const attachmentChip: React.CSSProperties = {
   background: "#f8fafc",
   fontSize: 12,
   fontWeight: 800,
-};
-
-const noteCard: React.CSSProperties = {
-  border: "1px solid #fde68a",
-  borderRadius: 8,
-  padding: 14,
-  background: "#fffbeb",
-  color: "#344054",
-  fontSize: 14,
-};
-
-const noteTop: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  gap: 12,
-  color: "#344054",
-  fontSize: 13,
 };
 
 const composer: React.CSSProperties = {
