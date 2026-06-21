@@ -1,5 +1,7 @@
 /** Zammad API response types used by the mailbox proxy */
 
+import { parseEmailIdentity } from "@/lib/mailboxes/identity";
+
 // ─── Raw Zammad API types ───────────────────────────────────────────────────
 
 export interface ZammadGroup {
@@ -155,6 +157,8 @@ export interface NormalizedConversation {
   updatedAt: string;
   createdAt: string;
   articleCount: number;
+  fromName?: string;
+  fromEmail?: string;
 }
 
 export interface NormalizedThread {
@@ -259,5 +263,23 @@ export function normalizeArticle(article: ZammadArticle): NormalizedThread {
     internal: article.internal,
     attachments: article.attachments ?? [],
     createdAt: article.created_at,
+  };
+}
+
+export function enrichConversationIdentity(
+  conversation: NormalizedConversation,
+  articles: NormalizedThread[],
+): NormalizedConversation {
+  const source = articles.find((article) => {
+    return !article.internal && article.type === "email" && Boolean(article.from);
+  }) ?? articles.find((article) => !article.internal && Boolean(article.from));
+
+  if (!source?.from) return conversation;
+
+  const parsed = parseEmailIdentity(source.from);
+  return {
+    ...conversation,
+    fromName: parsed.name || undefined,
+    fromEmail: parsed.email || undefined,
   };
 }

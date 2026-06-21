@@ -9,6 +9,7 @@ import {
   normalizeGroup,
   normalizeTicket,
   normalizeArticle,
+  enrichConversationIdentity,
 } from "../src/lib/zammad/types";
 import type { ZammadGroup, ZammadTicket, ZammadArticle } from "../src/lib/zammad/types";
 
@@ -199,5 +200,83 @@ describe("normalizeArticle", () => {
       attachments: [],
       createdAt: "2026-05-29T15:46:39.958Z",
     });
+  });
+});
+
+describe("enrichConversationIdentity", () => {
+  it("adds sender identity from the first non-internal email article with a from value", () => {
+    const conversation = normalizeTicket({
+      id: 3,
+      group_id: 1,
+      priority_id: 2,
+      state_id: 2,
+      organization_id: null,
+      number: "84002",
+      title: "ChatGPT - Ke hoach moi cua ban",
+      owner_id: 1,
+      customer_id: 69,
+      note: null,
+      article_count: 1,
+      article_ids: [10],
+      pending_time: null,
+      created_at: "2026-06-21T05:19:00.000Z",
+      updated_at: "2026-06-21T05:19:00.000Z",
+      close_at: null,
+      last_contact_at: null,
+      last_contact_agent_at: null,
+      last_contact_customer_at: null,
+    });
+
+    const result = enrichConversationIdentity(conversation, [
+      normalizeArticle({
+        id: 10,
+        ticket_id: 3,
+        type_id: 10,
+        sender_id: 2,
+        from: "OpenAI <noreply@tm.openai.com>",
+        to: "anhiri66 <anhiri66@gmail.com>",
+        cc: null,
+        subject: "ChatGPT - Ke hoach moi cua ban",
+        body: "<p>Hello</p>",
+        content_type: "text/html",
+        internal: false,
+        type: "email",
+        sender: "Customer",
+        attachments: [],
+        created_by: "noreply@tm.openai.com",
+        updated_by: "noreply@tm.openai.com",
+        created_at: "2026-06-21T05:19:00.000Z",
+        updated_at: "2026-06-21T05:19:00.000Z",
+      }),
+    ]);
+
+    expect(result.fromName).toBe("OpenAI");
+    expect(result.fromEmail).toBe("noreply@tm.openai.com");
+  });
+
+  it("does not fail when articles are missing sender data", () => {
+    const conversation = normalizeTicket({
+      id: 4,
+      group_id: 1,
+      priority_id: 2,
+      state_id: 2,
+      organization_id: null,
+      number: "84003",
+      title: "No sender",
+      owner_id: 1,
+      customer_id: 70,
+      note: null,
+      article_count: 1,
+      article_ids: [11],
+      pending_time: null,
+      created_at: "2026-06-21T05:19:00.000Z",
+      updated_at: "2026-06-21T05:19:00.000Z",
+      close_at: null,
+      last_contact_at: null,
+      last_contact_agent_at: null,
+      last_contact_customer_at: null,
+    });
+
+    expect(enrichConversationIdentity(conversation, [])).toEqual(conversation);
   });
 });

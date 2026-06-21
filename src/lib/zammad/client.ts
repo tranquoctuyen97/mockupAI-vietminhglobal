@@ -30,6 +30,7 @@ import {
   normalizeArticle,
   appStatusToZammadSearchStates,
   appStatusToZammadUpdateState,
+  enrichConversationIdentity,
 } from "./types";
 
 const TIMEOUT_MS = 10_000;
@@ -207,6 +208,32 @@ export async function searchTickets(opts: {
     ok: true,
     status: result.status,
     data: result.data.map(normalizeTicket),
+  };
+}
+
+export async function searchTicketsWithIdentity(opts: {
+  groupId: number;
+  status?: AppStatus;
+  page?: number;
+  pageSize?: number;
+}): Promise<ZammadResponse<NormalizedConversation[]>> {
+  const result = await searchTickets(opts);
+  if (!result.ok || !result.data) {
+    return result;
+  }
+
+  const conversations = await Promise.all(
+    result.data.map(async (conversation) => {
+      const articles = await getTicketArticles(conversation.id);
+      if (!articles.ok || !articles.data) return conversation;
+      return enrichConversationIdentity(conversation, articles.data);
+    }),
+  );
+
+  return {
+    ok: true,
+    status: result.status,
+    data: conversations,
   };
 }
 
