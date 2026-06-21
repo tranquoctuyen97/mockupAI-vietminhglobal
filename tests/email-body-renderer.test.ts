@@ -14,6 +14,10 @@ describe("email body rendering helpers", () => {
     expect(body).toContain("\n\n");
   });
 
+  it("does not sniff text/plain angle-bracket URLs as HTML", () => {
+    expect(isHtmlEmail("text/plain", "See <https://example.com> for details")).toBe(false);
+  });
+
   it("detects text/html bodies for EmailBodyRenderer", () => {
     expect(isHtmlEmail("text/html; charset=utf-8", "<p>Hello</p>")).toBe(true);
   });
@@ -52,6 +56,20 @@ describe("email body rendering helpers", () => {
 
     expect(html).toContain('href="https://example.com"');
     expect(html).not.toContain("onclick");
+  });
+
+  it("removes data hrefs from anchors", () => {
+    const html = sanitizeEmailHtml('<a href="data:text/html,<script>alert(1)</script>">x</a>');
+
+    expect(html).not.toContain("data:text/html");
+    expect(html).not.toContain("alert(1)");
+  });
+
+  it("strips style attributes when images are hidden", () => {
+    const html = sanitizeEmailHtml('<p style="background:url(https://tracker.example/pixel.png)">x</p>', false);
+
+    expect(html).not.toContain("style=");
+    expect(html).not.toContain("tracker.example");
   });
 
   it("builds a complete iframe document for sanitized email HTML", () => {

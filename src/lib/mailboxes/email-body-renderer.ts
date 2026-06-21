@@ -9,6 +9,8 @@ export function normalizeContentType(contentType: string | null | undefined): st
 
 export function isHtmlEmail(contentType: string | null | undefined, body: string): boolean {
   const normalized = normalizeContentType(contentType);
+  if (normalized === "text/plain") return false;
+
   return normalized === "text/html" || /<\/?[a-z][\s\S]*>/i.test(body);
 }
 
@@ -29,6 +31,8 @@ export function htmlToReadableText(html: string): string {
 }
 
 export function sanitizeEmailHtml(html: string, showImages = true): string {
+  const layoutAttributes = showImages ? ["style"] : [];
+
   return sanitizeHtml(html, {
     allowedTags: [
       "a",
@@ -71,15 +75,15 @@ export function sanitizeEmailHtml(html: string, showImages = true): string {
     allowedAttributes: {
       a: ["href", "name", "target", "rel", "title"],
       img: showImages ? ["src", "alt", "title", "width", "height"] : [],
-      table: ["align", "border", "cellpadding", "cellspacing", "role", "style", "width"],
-      td: ["align", "colspan", "rowspan", "style", "width"],
-      th: ["align", "colspan", "rowspan", "style", "width"],
-      div: ["style"],
-      p: ["style"],
-      span: ["style"],
+      table: ["align", "border", "cellpadding", "cellspacing", "role", "width", ...layoutAttributes],
+      td: ["align", "colspan", "rowspan", "width", ...layoutAttributes],
+      th: ["align", "colspan", "rowspan", "width", ...layoutAttributes],
+      div: layoutAttributes,
+      p: layoutAttributes,
+      span: layoutAttributes,
       "*": ["class", "title"],
     },
-    allowedSchemes: ["http", "https", "mailto", "tel", "cid", "data"],
+    allowedSchemes: ["http", "https", "mailto", "tel"],
     allowedSchemesByTag: {
       img: ["http", "https", "cid", "data"],
     },
