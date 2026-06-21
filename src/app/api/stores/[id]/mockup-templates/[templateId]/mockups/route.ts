@@ -46,9 +46,13 @@ export async function POST(
   const mockupId = String(body.mockupId ?? "");
   const mockup = await prisma.mockupLibraryItem.findFirst({
     where: { id: mockupId, tenantId: session.tenantId, isActive: true, deletedAt: null },
-    select: { id: true },
+    select: { id: true, storeId: true },
   });
   if (!mockup) return NextResponse.json({ error: "Mockup not found" }, { status: 404 });
+
+  if (mockup.storeId !== template.storeId) {
+    return NextResponse.json({ error: "Mockup does not belong to this store" }, { status: 400 });
+  }
 
   const validColorIds = new Set(template.store.colors.map((color) => color.id));
   const appliesToColorIds = normalizeAppliesToColorIds(body.appliesToColorIds ?? [], validColorIds);

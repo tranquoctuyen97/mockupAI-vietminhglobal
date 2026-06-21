@@ -134,6 +134,20 @@ if [[ ! -d "$UPLOAD_PATH" ]]; then
   log_ok "Đã tạo: $UPLOAD_PATH"
 fi
 
+# Ensure nginx worker can traverse all parent directories to reach uploads
+# (fixes 403 Forbidden when project is under /root/ or other restricted dirs)
+UPLOAD_ABS=$(cd "$UPLOAD_PATH" && pwd)
+CUR_DIR="$UPLOAD_ABS"
+while [[ "$CUR_DIR" != "/" ]]; do
+  CUR_PERMS=$(stat -c '%a' "$CUR_DIR" 2>/dev/null || stat -f '%Lp' "$CUR_DIR" 2>/dev/null)
+  if [[ "${CUR_PERMS: -1}" -lt 5 ]]; then
+    chmod o+rx "$CUR_DIR"
+    log_info "chmod o+rx $CUR_DIR (was $CUR_PERMS — nginx cần traverse)"
+  fi
+  CUR_DIR=$(dirname "$CUR_DIR")
+done
+log_ok "Nginx traverse permissions OK"
+
 # Validate domain is not localhost or IP-only (SSL requires real FQDN)
 if [[ "$NO_SSL" == false ]]; then
   if [[ "$DOMAIN" == "localhost" || "$DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

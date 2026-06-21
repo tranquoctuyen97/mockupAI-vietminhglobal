@@ -2,13 +2,15 @@ packages:
   - "."
 
 allowBuilds:
+  '@google/genai': false
   '@prisma/engines': true
   argon2: true
   esbuild: true
   msgpackr-extract: true
   prisma: true
   protobufjs: true
-  sharp: true
+  sharp: false
+  unrs-resolver: false
 
 ignoredBuiltDependencies:
   - sharp

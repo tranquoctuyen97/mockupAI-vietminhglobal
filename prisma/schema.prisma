@@ -25,6 +25,7 @@ model Tenant {
   inkhubCredential InkhubCredential?
   twCredentials    TripleWhaleCredential[]
   mockupLibraryItems MockupLibraryItem[]
+  mailboxes        Mailbox[]
 
   @@map("tenants")
 }
@@ -44,6 +45,8 @@ model User {
   tenant                     Tenant              @relation(fields: [tenantId], references: [id])
   sessions                   Session[]
   uploadedMockupLibraryItems MockupLibraryItem[] @relation("MockupLibraryUploadedBy")
+  zammadUser            ZammadUser?
+  mailboxAccess         UserMailboxAccess[]
 
   @@index([tenantId])
   @@index([email, status])
@@ -217,6 +220,8 @@ model Store {
   wizardDrafts        WizardDraft[]
   listings            Listing[]
   designs             Design[]
+  mockupLibraryItems  MockupLibraryItem[]
+  mailboxes           Mailbox[]
 
   @@unique([tenantId, shopifyDomain])
   @@index([tenantId, status])
@@ -356,6 +361,7 @@ enum WizardMockupSourceMode {
 model MockupLibraryItem {
   id                String                  @id @default(cuid())
   tenantId          String                  @map("tenant_id")
+  storeId           String                  @map("store_id")
   name              String
   storagePath       String                  @map("storage_path")
   previewPath       String?                 @map("preview_path")
@@ -374,10 +380,11 @@ model MockupLibraryItem {
   updatedAt         DateTime                @updatedAt @map("updated_at")
 
   tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  store         Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
   uploadedBy    User?                @relation("MockupLibraryUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
   templateItems TemplateMockupItem[]
 
-  @@index([tenantId, isActive, deletedAt])
+  @@index([tenantId, storeId, isActive, deletedAt])
   @@index([tenantId, name])
   @@map("mockup_library_items")
 }
@@ -972,4 +979,58 @@ model TripleWhaleDailyStat {
   @@unique([credentialId, date])
   @@index([credentialId, date])
   @@map("triple_whale_daily_stats")
+}
+
+// ============================================================
+// Mailbox Management — Zammad Integration
+// ============================================================
+
+model ZammadUser {
+  id           String   @id @default(cuid())
+  userId       String   @unique @map("user_id")
+  zammadUserId Int      @map("zammad_user_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("zammad_users")
+}
+
+model UserMailboxAccess {
+  id              String   @id @default(cuid())
+  userId          String   @map("user_id")
+  zammadGroupId   Int      @map("zammad_group_id")
+  mailboxName     String?  @map("mailbox_name")
+  canReply        Boolean  @default(true) @map("can_reply")
+  canUpdateStatus Boolean  @default(true) @map("can_update_status")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, zammadGroupId])
+  @@index([zammadGroupId])
+  @@map("user_mailbox_access")
+}
+
+model Mailbox {
+  id              String   @id @default(cuid())
+  tenantId        String   @map("tenant_id")
+  storeId         String   @map("store_id")
+  name            String
+  email           String
+  provider        String   // "gmail" | "custom"
+  zammadGroupId   Int      @unique @map("zammad_group_id")
+  zammadChannelId Int?     @unique @map("zammad_channel_id")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  store  Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, storeId, isActive])
+  @@index([storeId])
+  @@map("mailboxes")
 }

@@ -40,6 +40,14 @@ export function parseMockupSourceUrl(sourceUrl: string): MockupSourceType {
         return { kind: "custom", scope, renderMode: mode, sourceId };
       }
     }
+    // Fallback for old-format custom URLs with fewer than 3 parts
+    // e.g. mockup://custom/tuyen/custom 1-Solid Forest Green-front.png
+    return {
+      kind: "custom",
+      scope: "template",
+      renderMode: "COMPOSITE",
+      sourceId: remainder,
+    };
   }
 
   // Legacy: mockup://custom-final/<id> → scope=template, renderMode=FINAL

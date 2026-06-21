@@ -213,6 +213,42 @@ test("template editor uses template mockup attachments and links global frame ed
   assert.doesNotMatch(configSource, /CompositeRegionEditor/);
 });
 
+test("template mockup library picker uses fixed picker state and store-scoped library", () => {
+  const pickerSource = read("src/components/mockup/TemplateMockupPicker.tsx");
+
+  assert.match(pickerSource, /pickerState,\s*setPickerState/);
+  assert.match(pickerSource, /\{ colorId: string; colorName: string \} \| null/);
+  assert.match(pickerSource, /position: "fixed"/);
+  assert.match(pickerSource, /mockup-picker-drawer/);
+  assert.match(pickerSource, /Select mockup for \{pickerState\.colorName\}/);
+  assert.match(pickerSource, /api\/mockups\?storeId=\$\{encodeURIComponent\(storeId\)\}/);
+  assert.match(pickerSource, /pickerState\?\.colorId === color\.id/);
+  assert.doesNotMatch(pickerSource, /setPickerOpen/);
+  assert.doesNotMatch(pickerSource, /setPickerColorId/);
+});
+
+test("template mockup color assignment patches existing attachments and never clears to all-colors fallback", () => {
+  const pickerSource = read("src/components/mockup/TemplateMockupPicker.tsx");
+  const helperSource = read("src/components/mockup/template-mockup-assignment.ts");
+
+  assert.match(pickerSource, /assignMockupToColor/);
+  assert.match(pickerSource, /method: "PATCH"/);
+  assert.match(pickerSource, /method: "DELETE"/);
+  assert.match(pickerSource, /method: "POST"/);
+  assert.match(helperSource, /nextColorIds\.length === 0/);
+  assert.match(helperSource, /type: "delete"/);
+  assert.doesNotMatch(pickerSource, /appliesToColorIds: \[\]/);
+});
+
+test("new custom templates group pending mockup assignments by mockup id before creating attachments", () => {
+  const configSource = read("src/app/(authed)/stores/[id]/config/page.tsx");
+
+  assert.match(configSource, /pendingAssignmentsByMockupId/);
+  assert.match(configSource, /for \(const \[mockupId, colorIds\] of pendingAssignmentsByMockupId\)/);
+  assert.match(configSource, /body: JSON\.stringify\(\{ mockupId, appliesToColorIds: colorIds/);
+  assert.doesNotMatch(configSource, /for \(const \[colorId, assignment\] of pendingAssignments\)[\s\S]*appliesToColorIds: \[colorId\]/);
+});
+
 test("wizard edit action opens a dedicated placement editor instead of the upload modal", () => {
   const panelSource = read("src/components/mockup/WizardMockupSourcePanel.tsx");
 

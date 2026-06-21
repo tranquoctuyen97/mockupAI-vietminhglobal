@@ -572,6 +572,26 @@ body {
   box-shadow: var(--shadow-glow-green);
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mockup-picker-overlay {
+  align-items: stretch;
+}
+
+.mockup-picker-drawer {
+  margin-left: auto;
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .btn-primary:hover,
@@ -630,9 +650,35 @@ body {
     min-height: auto;
     padding: 0.5rem 0;
   }
+
+  .mockup-picker-overlay {
+    align-items: center;
+    justify-content: center !important;
+  }
+
+  .mockup-picker-drawer {
+    height: auto !important;
+    max-height: min(80vh, 720px) !important;
+    margin-left: 0;
+  }
 }
 
 /* Thumbnail hover overlay for mockup preview expand */
 button:hover > .thumb-hover-overlay {
   opacity: 1 !important;
+}
+
+/* ============================================================
+   ACCESSIBILITY — Focus Rings (UI/UX Pro Max §1)
+   ============================================================ */
+
+/* Generic focus ring for all interactive elements not covered by specific classes */
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--color-wise-green);
+  outline-offset: 1px;
+}
+
+button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--color-wise-green);
+  outline-offset: 2px;
 }

@@ -41,6 +41,11 @@ export async function GET(request: Request) {
   }
 
   const clientId = store.credentials.shopifyClientId;
+  const shopDomain = store.shopifyDomain;
+
+  if (!shopDomain) {
+    return NextResponse.json({ error: "Store missing shopifyDomain — cannot build OAuth URL" }, { status: 400 });
+  }
 
   // Generate state with storeId encoded
   const state = generateOAuthState(storeId);
@@ -57,6 +62,8 @@ export async function GET(request: Request) {
     path: "/",
   });
 
-  const authUrl = buildAuthorizationUrl(state, redirectUri, clientId);
+  // Use store-specific endpoint — client_id identifies the APP not the STORE.
+  // Without shop domain, Shopify would prompt merchant to select a store (confusing, risk of wrong store).
+  const authUrl = buildAuthorizationUrl(state, redirectUri, clientId, shopDomain);
   return NextResponse.redirect(authUrl);
 }

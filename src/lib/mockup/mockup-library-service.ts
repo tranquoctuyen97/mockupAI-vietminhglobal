@@ -12,7 +12,7 @@ import { normalizeCompositeRegionPx } from "@/lib/mockup/custom-library";
 import { getStorage } from "@/lib/storage/local-disk";
 
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 export class MockupLibraryValidationError extends Error {
   constructor(message: string, public status = 400) {
@@ -23,6 +23,7 @@ export class MockupLibraryValidationError extends Error {
 
 export async function createMockupLibraryItemFromUpload(input: {
   tenantId: string;
+  storeId: string;
   uploadedById: string;
   file: File;
   name: string;
@@ -38,7 +39,7 @@ export async function createMockupLibraryItemFromUpload(input: {
   const sceneType = normalizeMockupLibraryScene(input.sceneType);
   if (!sceneType) throw new MockupLibraryValidationError("sceneType is invalid");
   if (!ALLOWED_TYPES.has(input.file.type)) throw new MockupLibraryValidationError("Only JPEG, PNG, and WebP images are supported");
-  if (input.file.size > MAX_UPLOAD_BYTES) throw new MockupLibraryValidationError("File must be 10MB or smaller");
+  if (input.file.size > MAX_UPLOAD_BYTES) throw new MockupLibraryValidationError("File must be 100MB or smaller");
 
   const rawBuffer = Buffer.from(await input.file.arrayBuffer());
   const normalized = await sharp(rawBuffer).rotate().jpeg({ quality: 90 }).toBuffer();
@@ -59,6 +60,7 @@ export async function createMockupLibraryItemFromUpload(input: {
     data: {
       id,
       tenantId: input.tenantId,
+      storeId: input.storeId,
       name: input.name.trim() || "Untitled mockup",
       storagePath,
       previewPath: null,

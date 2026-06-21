@@ -24,3 +24,9 @@ test("template mockup update never edits composite region", () => {
   assert.match(itemRoute, /templateMockupItem\.update/);
   assert.doesNotMatch(itemRoute, /compositeRegionPx/);
 });
+
+test("template mockup attach rejects cross-store mockup", () => {
+  const source = readFileSync("src/app/api/stores/[id]/mockup-templates/[templateId]/mockups/route.ts", "utf8");
+  assert.match(source, /mockup\.storeId\s*!==?\s*template\.storeId/);
+  assert.match(source, /Mockup does not belong to this store/);
+});
