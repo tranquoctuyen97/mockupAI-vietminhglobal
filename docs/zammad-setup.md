@@ -53,15 +53,7 @@ Complete the Setup Wizard:
 
 ### Via Rails Console (Docker)
 ```bash
-docker exec zammad-zammad-railsserver-1 /opt/zammad/bin/rails runner '
-user = User.find_by(login: "admin@example.com")
-token = Token.create!(
-  action: "api", user_id: user.id, persistent: true,
-  name: "app-proxy",
-  preferences: { permission: ["admin", "ticket.agent"] }
-)
-puts "TOKEN: #{token.token}"
-'
+docker exec zammad-zammad-railsserver-1 /opt/zammad/bin/rails runner 'email = "admin@vmgfashion.online"; password = "ChangeMe"; user = User.find_or_initialize_by(email: email); user.login = email; user.firstname = "Admin"; user.lastname = "VMG"; user.active = true; user.password = password; user.created_by_id = 1 if user.respond_to?(:created_by_id); user.updated_by_id = 1 if user.respond_to?(:updated_by_id); user.roles = Role.where(name: ["Admin", "Agent"]); user.save; raise user.errors.full_messages.join(", ") unless user.persisted? && user.errors.empty?; token = Token.create(action: "api", user_id: user.id, persistent: true, name: "app-proxy", preferences: { permission: ["admin", "ticket.agent"] }); raise token.errors.full_messages.join(", ") unless token.persisted? && token.errors.empty?; puts "USER_ID: #{user.id}"; puts "LOGIN: #{user.login}"; puts "TOKEN: #{token.token}"'
 ```
 
 ## 4. Environment Variables
