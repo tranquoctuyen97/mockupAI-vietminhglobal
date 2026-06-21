@@ -75,7 +75,15 @@ export function sanitizeEmailHtml(html: string, showImages = true): string {
     allowedAttributes: {
       a: ["href", "name", "target", "rel", "title"],
       img: showImages ? ["src", "alt", "title", "width", "height"] : [],
-      table: ["align", "border", "cellpadding", "cellspacing", "role", "width", ...layoutAttributes],
+      table: [
+        "align",
+        "border",
+        "cellpadding",
+        "cellspacing",
+        "role",
+        "width",
+        ...layoutAttributes,
+      ],
       td: ["align", "colspan", "rowspan", "width", ...layoutAttributes],
       th: ["align", "colspan", "rowspan", "width", ...layoutAttributes],
       div: layoutAttributes,

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   buildEmailFrameDocument,
   htmlToReadableText,
@@ -47,7 +47,7 @@ export function EmailBodyRenderer({
       window.clearTimeout(timer);
       frame.removeEventListener("load", resize);
     };
-  }, [frameDocument, html, mode]);
+  }, [html, mode]);
 
   if (mode === "source") {
     return <pre style={sourceBlock}>{body}</pre>;
