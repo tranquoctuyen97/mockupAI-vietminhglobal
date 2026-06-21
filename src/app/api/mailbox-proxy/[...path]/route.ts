@@ -26,7 +26,7 @@ import {
 } from "@/lib/zammad/auth";
 import {
   listGroups,
-  searchTickets,
+  searchTicketsWithIdentity,
   getTicket,
   getTicketArticles,
   createTicketArticle,
@@ -196,7 +196,7 @@ async function handleListConversations(
   const pageSize = pageSizeRaw && /^\d+$/.test(pageSizeRaw)
     ? Math.min(Number(pageSizeRaw), 100) : 25;
 
-  const result = await searchTickets({
+  const result = await searchTicketsWithIdentity({
     groupId: mailboxId,
     status: effectiveStatus,
     page,
