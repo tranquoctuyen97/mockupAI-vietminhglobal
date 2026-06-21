@@ -25,6 +25,7 @@ model Tenant {
   inkhubCredential InkhubCredential?
   twCredentials    TripleWhaleCredential[]
   mockupLibraryItems MockupLibraryItem[]
+  mailboxes        Mailbox[]
 
   @@map("tenants")
 }
@@ -220,6 +221,7 @@ model Store {
   listings            Listing[]
   designs             Design[]
   mockupLibraryItems  MockupLibraryItem[]
+  mailboxes           Mailbox[]
 
   @@unique([tenantId, shopifyDomain])
   @@index([tenantId, status])
@@ -1014,6 +1016,8 @@ model UserMailboxAccess {
 
 model Mailbox {
   id              String   @id @default(cuid())
+  tenantId        String   @map("tenant_id")
+  storeId         String   @map("store_id")
   name            String
   email           String
   provider        String   // "gmail" | "custom"
@@ -1023,5 +1027,10 @@ model Mailbox {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  store  Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, storeId, isActive])
+  @@index([storeId])
   @@map("mailboxes")
 }

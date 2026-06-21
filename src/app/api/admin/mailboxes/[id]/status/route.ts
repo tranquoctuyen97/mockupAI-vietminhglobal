@@ -3,7 +3,8 @@
  *
  * POST /api/admin/mailboxes/:id/status
  *
- * No DELETE route in Phase 2 — disable-only.
+ * No DELETE route — disable-only.
+ * Store-scoped: verifies mailbox belongs to session tenant.
  */
 import { NextResponse } from "next/server";
 import { requireMailboxAdmin } from "@/lib/auth/mailbox-admin-guard";
@@ -21,7 +22,12 @@ export async function POST(
   const { session } = guard;
 
   const { id } = await params;
-  const mailbox = await prisma.mailbox.findUnique({ where: { id } });
+  const mailbox = await prisma.mailbox.findFirst({
+    where: {
+      id,
+      tenantId: session.tenantId,
+    },
+  });
   if (!mailbox) {
     return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
   }
@@ -78,7 +84,11 @@ export async function POST(
     action: active ? "mailbox.enable" : "mailbox.disable",
     resourceType: "mailbox",
     resourceId: mailbox.id,
-    metadata: { name: mailbox.name, email: mailbox.email },
+    metadata: {
+      storeId: mailbox.storeId,
+      name: mailbox.name,
+      email: mailbox.email,
+    },
     ...reqInfo,
   });
 

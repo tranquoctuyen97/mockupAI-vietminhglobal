@@ -117,6 +117,11 @@ for g in json.load(sys.stdin):
    - **Group**: Assign to a group (this is the "mailbox")
 4. Test connection
 
+When a mailbox is created or updated from the app, the app enforces
+`keep_on_server: true` on the Zammad email channel before marking the mailbox as
+active. Email may still be marked as read in Gmail after Zammad fetches it.
+`keep_on_server` only ensures email is not deleted from the original server.
+
 ## 8. Seed ZammadUser and Mailbox Access
 
 Link a platform user to their Zammad user ID and grant group access:

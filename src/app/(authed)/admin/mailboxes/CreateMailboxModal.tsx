@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { X, Loader2, CheckCircle2, XCircle, ChevronDown, ChevronRight, ExternalLink, Mail, Shield, Key, Eye, EyeOff } from "lucide-react";
 
 interface Props {
+  storeId: string;
   onClose: () => void;
   onCreated: () => void;
 }
@@ -43,7 +44,7 @@ const GMAIL_GUIDE_STEPS = [
   },
 ];
 
-export function CreateMailboxModal({ onClose, onCreated }: Props) {
+export function CreateMailboxModal({ storeId, onClose, onCreated }: Props) {
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
 
@@ -56,7 +57,6 @@ export function CreateMailboxModal({ onClose, onCreated }: Props) {
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
   const [showPass, setShowPass] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
-  const [importMode, setImportMode] = useState<"new_only" | "all_archive" | "all">("new_only");
 
   useEffect(() => {
     setIsMounted(true);
@@ -172,7 +172,7 @@ export function CreateMailboxModal({ onClose, onCreated }: Props) {
   const doSave = async () => {
     setSaving(true);
     try {
-      const payload: Record<string, unknown> = { name, email, provider, importMode };
+      const payload: Record<string, unknown> = { storeId, name, email, provider };
       if (provider === "gmail") {
         payload.appPassword = appPassword;
       } else {
@@ -332,48 +332,6 @@ export function CreateMailboxModal({ onClose, onCreated }: Props) {
                 </div>
               </>
             )}
-
-            {/* Import Mode selector */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary, #374151)" }}>Chế độ nhận email</span>
-              {([
-                { value: "new_only" as const, label: "Chỉ email mới", desc: "Chỉ nhận email chưa đọc. Nhanh, không ảnh hưởng email cũ.", recommended: true },
-                { value: "all_archive" as const, label: "Tất cả + Lưu trữ email cũ", desc: "Import toàn bộ inbox. Email cũ được lưu trữ (trạng thái: closed)." },
-                { value: "all" as const, label: "Tất cả (xóa khỏi mail server)", desc: "Import và xóa email khỏi server. Không khuyến nghị cho Gmail cá nhân.", warning: true },
-              ]).map((opt) => (
-                <label
-                  key={opt.value}
-                  style={{
-                    display: "flex", gap: "0.5rem", padding: "0.6rem 0.75rem",
-                    borderRadius: 8,
-                    border: `1.5px solid ${importMode === opt.value ? "var(--color-primary, #4f46e5)" : "var(--border-color, #e5e7eb)"}`,
-                    background: importMode === opt.value ? "var(--color-primary-light, #eef2ff)" : "transparent",
-                    cursor: "pointer", transition: "all 0.15s ease",
-                  }}
-                >
-                  <input
-                    type="radio"
-                    name="importMode"
-                    value={opt.value}
-                    checked={importMode === opt.value}
-                    onChange={() => setImportMode(opt.value)}
-                    style={{ marginTop: 2, accentColor: "var(--color-primary, #4f46e5)" }}
-                  />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: "0.8rem", fontWeight: 500, display: "flex", alignItems: "center", gap: "0.375rem" }}>
-                      {opt.label}
-                      {opt.recommended && (
-                        <span style={{ fontSize: "0.65rem", background: "#16a34a", color: "#fff", padding: "1px 6px", borderRadius: 4, fontWeight: 600 }}>Khuyến nghị</span>
-                      )}
-                      {opt.warning && (
-                        <span style={{ fontSize: "0.65rem", background: "#f59e0b", color: "#fff", padding: "1px 6px", borderRadius: 4, fontWeight: 600 }}>⚠️</span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: "0.7rem", color: "var(--text-tertiary, #6b7280)", marginTop: 2 }}>{opt.desc}</div>
-                  </div>
-                </label>
-              ))}
-            </div>
 
             <button onClick={goStep2} style={primaryBtnStyle}>
               {provider === "gmail" ? "Kiểm tra & Tiếp tục" : "Tiếp tục"}

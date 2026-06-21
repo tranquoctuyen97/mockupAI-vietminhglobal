@@ -19,12 +19,22 @@ export default async function UploadDesignPage({
 
   const stores = await prisma.store.findMany({
     where: { tenantId: session.tenantId, status: "ACTIVE" },
-    select: { id: true, name: true },
+    select: { id: true, name: true, shopifyDomain: true, printifyShopId: true },
     orderBy: { name: "asc" },
   });
 
   const validatedStore = stores.find((store) => store.id === storeId) ?? null;
   const initialStoreId = validatedStore?.id ?? null;
 
-  return <UploadDesignClient stores={stores} initialStoreId={initialStoreId} />;
+  return (
+    <UploadDesignClient
+      stores={stores.map((store) => ({
+        id: store.id,
+        name: store.name,
+        domain: store.shopifyDomain,
+        printifyConnected: Boolean(store.printifyShopId),
+      }))}
+      initialStoreId={initialStoreId}
+    />
+  );
 }

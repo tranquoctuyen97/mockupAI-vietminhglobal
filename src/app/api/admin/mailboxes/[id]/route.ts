@@ -3,13 +3,15 @@
  *
  * GET  /api/admin/mailboxes/:id — Get mailbox detail (no passwords)
  * PUT  /api/admin/mailboxes/:id — Update mailbox (name, email, connection settings)
+ *
+ * Store-scoped: verifies mailbox belongs to session tenant.
  */
 import { NextResponse } from "next/server";
 import { requireMailboxAdmin } from "@/lib/auth/mailbox-admin-guard";
 import { prisma } from "@/lib/db";
 import { logAudit, getRequestInfo } from "@/lib/audit";
 import { updateMailboxSchema, toZammadInboundSsl, toZammadOutboundSsl } from "@/lib/zammad/admin-validation";
-import { updateGroup, verifyEmailChannel, redactPasswords } from "@/lib/zammad/client";
+import { updateGroup, verifyEmailChannel, updateEmailChannelInbound } from "@/lib/zammad/client";
 import type { ZammadInboundConfig, ZammadOutboundConfig } from "@/lib/zammad/types";
 
 const ZAMMAD_MASK = "**********";
@@ -20,12 +22,18 @@ export async function GET(
 ) {
   const guard = await requireMailboxAdmin();
   if (guard.response) return guard.response;
+  const { session } = guard;
 
   const { id } = await params;
-  const mailbox = await prisma.mailbox.findUnique({
-    where: { id },
+  const mailbox = await prisma.mailbox.findFirst({
+    where: {
+      id,
+      tenantId: session.tenantId,
+    },
     select: {
       id: true,
+      tenantId: true,
+      storeId: true,
       name: true,
       email: true,
       provider: true,
@@ -34,6 +42,9 @@ export async function GET(
       isActive: true,
       createdAt: true,
       updatedAt: true,
+      store: {
+        select: { id: true, name: true },
+      },
     },
   });
 
@@ -41,12 +52,7 @@ export async function GET(
     return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
   }
 
-  // Count assigned users
-  const assignedUsers = await prisma.userMailboxAccess.count({
-    where: { zammadGroupId: mailbox.zammadGroupId },
-  });
-
-  return NextResponse.json({ mailbox: { ...mailbox, assignedUsers } });
+  return NextResponse.json({ mailbox });
 }
 
 export async function PUT(
@@ -58,7 +64,12 @@ export async function PUT(
   const { session } = guard;
 
   const { id } = await params;
-  const mailbox = await prisma.mailbox.findUnique({ where: { id } });
+  const mailbox = await prisma.mailbox.findFirst({
+    where: {
+      id,
+      tenantId: session.tenantId,
+    },
+  });
   if (!mailbox) {
     return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
   }
@@ -141,7 +152,25 @@ export async function PUT(
     }
   }
 
-  // Update local record
+  // Ensure keep_on_server: true is set on the email channel
+  if (mailbox.zammadChannelId) {
+    const keepOnServerResult = await updateEmailChannelInbound(mailbox.zammadChannelId, { keep_on_server: true });
+    if (!keepOnServerResult.ok) {
+      console.error(
+        `[zammad] failed to enable keep_on_server for channel=${mailbox.zammadChannelId}: ${keepOnServerResult.error ?? "unknown error"}`,
+      );
+      return NextResponse.json(
+        {
+          error: "Failed to configure safety settings for mailbox",
+          details: keepOnServerResult.error ?? "Failed to set keep_on_server=true",
+        },
+        { status: 502 },
+      );
+    }
+    console.info(`[zammad] keep_on_server enabled for channel=${mailbox.zammadChannelId}`);
+  }
+
+  // Update local record (does not allow moving mailbox between stores)
   const updated = await prisma.mailbox.update({
     where: { id },
     data: {
@@ -159,6 +188,7 @@ export async function PUT(
     resourceType: "mailbox",
     resourceId: mailbox.id,
     metadata: {
+      storeId: mailbox.storeId,
       name: input.name,
       email: input.email,
       connectionChanged: !!(input.inbound || input.outbound),

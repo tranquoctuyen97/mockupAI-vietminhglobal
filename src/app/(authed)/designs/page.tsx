@@ -22,15 +22,15 @@ export default async function DesignsPage({
   if (!session) redirect("/login");
 
   const { storeId } = await searchParams;
-  const limit = 20;
+  const limit = 12;
 
   const stores = await prisma.store.findMany({
     where: { tenantId: session.tenantId, status: "ACTIVE" },
-    select: { id: true, name: true },
+    select: { id: true, name: true, shopifyDomain: true },
     orderBy: { name: "asc" },
   });
 
-  const selectedStore = storeId ? stores.find((store) => store.id === storeId) ?? null : null;
+  const selectedStore = storeId ? (stores.find((store) => store.id === storeId) ?? null) : null;
   const invalidStoreSelected = Boolean(storeId && !selectedStore);
 
   const designs = selectedStore
@@ -73,7 +73,11 @@ export default async function DesignsPage({
   return (
     <DesignsClient
       initialDesigns={initialDesigns}
-      stores={stores}
+      stores={stores.map((store) => ({
+        id: store.id,
+        name: store.name,
+        domain: store.shopifyDomain,
+      }))}
       initialStoreId={selectedStore?.id ?? null}
       invalidStoreSelected={invalidStoreSelected}
       initialTotal={initialTotal}

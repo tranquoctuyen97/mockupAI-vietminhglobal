@@ -164,6 +164,7 @@ export interface NormalizedConversation {
 export interface NormalizedThread {
   id: number;
   conversationId: number;
+  subject?: string;
   body: string;
   contentType: string;
   from?: string;
@@ -253,6 +254,7 @@ export function normalizeArticle(article: ZammadArticle): NormalizedThread {
   return {
     id: article.id,
     conversationId: article.ticket_id,
+    subject: article.subject ?? undefined,
     body: article.body,
     contentType: article.content_type,
     from: article.from ?? undefined,

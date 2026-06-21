@@ -189,6 +189,7 @@ describe("normalizeArticle", () => {
     expect(result).toEqual({
       id: 2,
       conversationId: 3,
+      subject: "Test",
       body: "Hello, I need help.",
       contentType: "text/plain",
       from: "Admin User",

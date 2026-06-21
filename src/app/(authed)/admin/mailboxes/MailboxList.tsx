@@ -1,23 +1,27 @@
 "use client";
 
-import { Settings, Users, Power, MailOpen } from "lucide-react";
+import { Settings, Power, MailOpen } from "lucide-react";
 import type { MailboxRow } from "./page";
 
 interface Props {
   mailboxes: MailboxRow[];
+  storeName: string | null;
   onEdit: (m: MailboxRow) => void;
-  onAssign: (m: MailboxRow) => void;
   onToggleStatus: (m: MailboxRow) => void;
   onCreate?: () => void;
 }
 
-export function MailboxList({ mailboxes, onEdit, onAssign, onToggleStatus, onCreate }: Props) {
+export function MailboxList({ mailboxes, storeName, onEdit, onToggleStatus, onCreate }: Props) {
   if (mailboxes.length === 0) {
     return (
       <div style={{ textAlign: "center", padding: "4rem 2rem", opacity: 0.8 }}>
         <MailOpen size={48} style={{ margin: "0 auto 1rem", opacity: 0.5 }} />
-        <h3 style={{ fontSize: "1.125rem", fontWeight: 600, marginBottom: "0.5rem" }}>Chưa có mailbox nào</h3>
-        <p style={{ color: "var(--text-muted)", marginBottom: "1.5rem" }}>Kết nối mailbox để bắt đầu nhận và trả lời email từ khách hàng.</p>
+        <h3 style={{ fontSize: "1.125rem", fontWeight: 600, marginBottom: "0.5rem" }}>
+          {storeName ? `Store "${storeName}" chưa có mailbox nào` : "Chưa có mailbox nào"}
+        </h3>
+        <p style={{ color: "var(--text-muted)", marginBottom: "1.5rem" }}>
+          Kết nối mailbox để bắt đầu nhận và trả lời email từ khách hàng.
+        </p>
         {onCreate && (
           <button onClick={onCreate} style={{
             display: "inline-flex", alignItems: "center", gap: "0.5rem",
@@ -41,7 +45,6 @@ export function MailboxList({ mailboxes, onEdit, onAssign, onToggleStatus, onCre
             <th style={{ padding: "0.75rem" }}>Email</th>
             <th style={{ padding: "0.75rem" }}>Provider</th>
             <th style={{ padding: "0.75rem" }}>Trạng thái</th>
-            <th style={{ padding: "0.75rem" }}>Users</th>
             <th style={{ padding: "0.75rem" }}>Actions</th>
           </tr>
         </thead>
@@ -68,14 +71,10 @@ export function MailboxList({ mailboxes, onEdit, onAssign, onToggleStatus, onCre
                   {m.isActive ? "Active" : "Disabled"}
                 </span>
               </td>
-              <td style={{ padding: "0.75rem" }}>{m.assignedUsers}</td>
               <td style={{ padding: "0.75rem" }}>
                 <div style={{ display: "flex", gap: "0.5rem" }}>
                   <button onClick={() => onEdit(m)} title="Edit" aria-label={`Chỉnh sửa ${m.name}`} style={btnStyle}>
                     <Settings size={14} />
-                  </button>
-                  <button onClick={() => onAssign(m)} title="Assign Users" aria-label={`Phân quyền ${m.name}`} style={btnStyle}>
-                    <Users size={14} />
                   </button>
                   <button onClick={() => onToggleStatus(m)} title={m.isActive ? "Disable" : "Enable"} aria-label={m.isActive ? `Tắt ${m.name}` : `Bật ${m.name}`} style={btnStyle}>
                     <Power size={14} style={{ color: m.isActive ? "#dc2626" : "#16a34a" }} />

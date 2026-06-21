@@ -72,6 +72,18 @@ test("parseMockupSourceUrl preserves synthetic mockup sources", () => {
   });
 });
 
+test("parseMockupSourceUrl falls back for old 2-part custom URLs", () => {
+  assert.deepEqual(
+    parseMockupSourceUrl("mockup://custom/tuyen/custom 1-Solid Forest Green-front.png"),
+    {
+      kind: "custom",
+      scope: "template",
+      renderMode: "COMPOSITE",
+      sourceId: "tuyen/custom 1-Solid Forest Green-front.png",
+    },
+  );
+});
+
 test("parseMockupSourceUrl falls back to printify for remote or empty values", () => {
   assert.deepEqual(parseMockupSourceUrl("https://images.printify.com/mockup.png"), {
     kind: "printify",

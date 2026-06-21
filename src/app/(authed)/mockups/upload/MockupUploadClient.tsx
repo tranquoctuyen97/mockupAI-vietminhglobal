@@ -1,8 +1,21 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronsUpDown,
+  Crop,
+  GripVertical,
+  Loader2,
+  Package,
+  Sparkles,
+  Trash2,
+  UploadCloud,
+  X,
+} from "lucide-react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Image as ImageIcon, Loader2, Upload, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 const MAX_FILES = 80;
 const MAX_CONCURRENT_UPLOADS = 5;
@@ -13,6 +26,8 @@ const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 interface StoreOption {
   id: string;
   name: string;
+  domain: string;
+  printifyConnected: boolean;
 }
 
 interface UploadFileItem {
@@ -24,6 +39,8 @@ interface UploadFileItem {
   status: "queued" | "uploading" | "success" | "error";
   attempts: number;
   error: string | null;
+  sceneType: string;
+  view: string;
 }
 
 interface UploadedMockupResult {
@@ -39,6 +56,19 @@ interface Props {
   initialStoreId: string | null;
 }
 
+const SCENE_OPTIONS = [
+  { label: "Lifestyle", value: "lifestyle" },
+  { label: "Flat lay", value: "flat_lay" },
+  { label: "Model", value: "model" },
+];
+
+const VIEW_OPTIONS = [
+  { label: "Front", value: "front" },
+  { label: "Back", value: "back" },
+  { label: "Left", value: "left" },
+  { label: "Right", value: "right" },
+];
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -49,32 +79,49 @@ function createFileId(file: File): string {
   return `${file.name}-${file.size}-${file.lastModified}-${crypto.randomUUID()}`;
 }
 
+function inferView(fileName: string): string {
+  const normalized = fileName.toLowerCase();
+  if (normalized.includes("back")) return "back";
+  if (normalized.includes("left")) return "left";
+  if (normalized.includes("right")) return "right";
+  return "front";
+}
+
 export default function MockupUploadClient({ stores, initialStoreId }: Props) {
+  const router = useRouter();
   const initialSelectedStoreId =
     initialStoreId && stores.some((store) => store.id === initialStoreId)
       ? initialStoreId
-      : stores[0]?.id ?? "";
+      : (stores[0]?.id ?? "");
   const [storeId, setStoreId] = useState(initialSelectedStoreId);
   const [files, setFiles] = useState<UploadFileItem[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const runningRef = useRef(0);
   const queueRef = useRef<UploadFileItem[]>([]);
 
-  const completeCount = files.filter((file) => file.status === "success").length;
-  const hasFiles = files.length > 0;
-  const canUpload = hasFiles && Boolean(storeId) && !uploading;
-
-  const selectedStoreName = useMemo(
-    () => stores.find((store) => store.id === storeId)?.name ?? "",
+  const selectedStore = useMemo(
+    () => stores.find((store) => store.id === storeId) ?? null,
     [storeId, stores],
   );
+  const completeCount = files.filter((file) => file.status === "success").length;
+  const failedCount = files.filter((file) => file.status === "error").length;
+  const pendingUploadCount = files.filter(
+    (file) => file.status === "queued" || file.status === "error",
+  ).length;
+  const uploadFinished =
+    files.length > 0 &&
+    !uploading &&
+    files.every((file) => file.status === "success" || file.status === "error");
+  const canUpload = pendingUploadCount > 0 && Boolean(storeId) && !uploading;
+  const canViewUploadedMockups = uploadFinished && completeCount > 0 && failedCount === 0;
+  const primaryActionEnabled = canUpload || canViewUploadedMockups;
+  const mockupsHref = storeId ? `/mockups?storeId=${storeId}` : "/mockups";
 
   const updateFile = useCallback((id: string, patch: Partial<UploadFileItem>) => {
-    setFiles((current) =>
-      current.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-    );
+    setFiles((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   }, []);
 
   const addFiles = useCallback((incoming: FileList | File[]) => {
@@ -84,11 +131,11 @@ export default function MockupUploadClient({ stores, initialStoreId }: Props) {
 
     for (const file of nextFiles) {
       if (!ALLOWED_TYPES.has(file.type)) {
-        setError("Chỉ chấp nhận PNG, JPG hoặc WebP");
+        setError("Only PNG, JPG, or WebP files are supported.");
         continue;
       }
       if (file.size > MAX_FILE_SIZE) {
-        setError("File quá lớn (tối đa 100MB/file)");
+        setError("File is too large. Maximum size is 100 MB per file.");
         continue;
       }
       accepted.push({
@@ -100,17 +147,26 @@ export default function MockupUploadClient({ stores, initialStoreId }: Props) {
         status: "queued",
         attempts: 0,
         error: null,
+        sceneType: "lifestyle",
+        view: inferView(file.name),
       });
     }
 
     setFiles((current) => {
       const slots = Math.max(0, MAX_FILES - current.length);
       if (accepted.length > slots) {
-        setError(`Chỉ upload tối đa ${MAX_FILES} files mỗi batch`);
+        setError(`Only ${MAX_FILES} files can be uploaded in one batch.`);
       }
       return [...current, ...accepted.slice(0, slots)];
     });
   }, []);
+
+  function clearFiles() {
+    for (const file of files) {
+      URL.revokeObjectURL(file.previewUrl);
+    }
+    setFiles([]);
+  }
 
   function removeFile(id: string) {
     setFiles((current) => {
@@ -120,14 +176,17 @@ export default function MockupUploadClient({ stores, initialStoreId }: Props) {
     });
   }
 
-  function uploadOne(fileItem: UploadFileItem, selectedStoreId: string): Promise<UploadedMockupResult> {
+  function uploadOne(
+    fileItem: UploadFileItem,
+    selectedStoreId: string,
+  ): Promise<UploadedMockupResult> {
     return new Promise((resolve, reject) => {
       const form = new FormData();
       form.append("file", fileItem.file);
       form.append("name", fileItem.name);
       form.append("storeId", selectedStoreId);
-      form.append("view", "front");
-      form.append("sceneType", "flat_lay");
+      form.append("view", fileItem.view);
+      form.append("sceneType", fileItem.sceneType);
       form.append("renderMode", "COMPOSITE");
 
       const xhr = new XMLHttpRequest();
@@ -144,15 +203,15 @@ export default function MockupUploadClient({ stores, initialStoreId }: Props) {
         try {
           data = JSON.parse(xhr.responseText || "{}");
         } catch {
-          data = { error: xhr.responseText || "Upload thất bại" };
+          data = { error: xhr.responseText || "Upload failed" };
         }
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve(data as UploadedMockupResult);
         } else {
-          reject(new Error(data.error || "Upload thất bại"));
+          reject(new Error(data.error || "Upload failed"));
         }
       };
-      xhr.onerror = () => reject(new Error("Không thể kết nối server"));
+      xhr.onerror = () => reject(new Error("Could not connect to server"));
       xhr.send(form);
     });
   }
@@ -176,7 +235,7 @@ export default function MockupUploadClient({ stores, initialStoreId }: Props) {
           status: "error",
           progress: 0,
           attempts: nextAttempts,
-          error: err instanceof Error ? err.message : "Upload thất bại",
+          error: err instanceof Error ? err.message : "Upload failed",
         });
       }
     } finally {
@@ -200,7 +259,12 @@ export default function MockupUploadClient({ stores, initialStoreId }: Props) {
 
   function handleUpload() {
     if (!storeId) {
-      setError("Vui lòng chọn store trước khi upload");
+      setError("Choose a store before uploading.");
+      return;
+    }
+    if (canViewUploadedMockups) {
+      router.push(mockupsHref);
+      router.refresh();
       return;
     }
     const queued = files.filter((file) => file.status === "queued" || file.status === "error");
@@ -212,150 +276,618 @@ export default function MockupUploadClient({ stores, initialStoreId }: Props) {
   }
 
   return (
-    <div style={{ maxWidth: 960, margin: "0 auto" }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 className="page-title">Upload Mockups</h1>
-        <p className="page-subtitle">Chọn store rồi upload nhiều mockup cùng lúc</p>
-      </div>
+    <div style={pageWrap}>
+      <section style={modalCard}>
+        <header style={header}>
+          <div>
+            <h1 style={title}>Upload mockups</h1>
+            <p style={subtitle}>
+              Add new mockups to your selected store library and set them up for frame editing.
+            </p>
+          </div>
+          <Link
+            href={storeId ? `/mockups?storeId=${storeId}` : "/mockups"}
+            style={closeButton}
+            aria-label="Close upload"
+          >
+            <X size={20} />
+          </Link>
+        </header>
 
-      <div className="card" style={{ padding: 18, marginBottom: 18 }}>
-        <label className="block mb-1.5 text-caption" style={{ fontWeight: 600 }}>
-          Store
-        </label>
-        <select className="input" value={storeId} onChange={(event) => setStoreId(event.target.value)}>
-          {stores.length === 0 ? <option value="">Chưa có store active</option> : null}
-          {stores.map((store) => (
-            <option key={store.id} value={store.id}>
-              {store.name}
+        <div style={storePillRow}>
+          <span style={storePill}>
+            <StoreAvatar name={selectedStore?.name ?? "Store"} />
+            <select
+              value={storeId}
+              onChange={(event) => setStoreId(event.target.value)}
+              style={storeSelect}
+              aria-label="Store"
+            >
+              {stores.length === 0 ? <option value="">No active stores</option> : null}
+              {stores.map((store) => (
+                <option key={store.id} value={store.id}>
+                  {store.name}
+                </option>
+              ))}
+            </select>
+            {selectedStore && <span style={activeBadge}>Store active</span>}
+            {selectedStore && (
+              <span style={selectedStore.printifyConnected ? printifyBadge : warningBadge}>
+                {selectedStore.printifyConnected ? "Printify" : "No Printify"}
+              </span>
+            )}
+          </span>
+        </div>
+
+        <div style={topGrid}>
+          <button
+            type="button"
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragActive(false);
+              addFiles(event.dataTransfer.files);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragActive(true);
+            }}
+            onDragLeave={() => setDragActive(false)}
+            onClick={() => inputRef.current?.click()}
+            style={{
+              ...dropzone,
+              borderColor: dragActive ? "#35a527" : "#d9dee7",
+              background: dragActive ? "#f4fbf0" : "#fff",
+            }}
+          >
+            <input
+              ref={inputRef}
+              type="file"
+              multiple
+              accept="image/png,image/jpeg,image/webp"
+              style={{ display: "none" }}
+              onChange={(event) => {
+                if (event.target.files) addFiles(event.target.files);
+                event.currentTarget.value = "";
+              }}
+            />
+            <span style={dropIcon}>
+              <UploadCloud size={34} />
+            </span>
+            <strong style={{ fontSize: 17, marginTop: 16 }}>Drag and drop mockup files here</strong>
+            <span style={mutedText}>PNG or JPG, up to 100 MB each</span>
+            <span style={chooseFilesButton}>Choose files</span>
+            <span style={browseText}>Browse existing uploads</span>
+          </button>
+
+          <aside style={tipsCard}>
+            <h2 style={tipsTitle}>Upload tips</h2>
+            <Tip icon={<Crop size={20} />} title="Frame can be edited after upload">
+              Adjust placement, scale, and frame settings once uploaded.
+            </Tip>
+            <Tip icon={<Sparkles size={20} />} title="Recommended high-resolution mockups">
+              Use high-resolution images for the best results and print quality.
+            </Tip>
+            <Tip icon={<Package size={20} />} title="Supported views: Front, Back, Left, Right">
+              Upload mockups for different sides to create complete product listings.
+            </Tip>
+          </aside>
+        </div>
+
+        {error && (
+          <div style={errorRow}>
+            <AlertTriangle size={15} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {files.length > 0 && (
+          <section style={fileSection}>
+            <div style={fileHeader}>
+              <strong>Files to upload ({files.length})</strong>
+              <button type="button" style={clearButton} disabled={uploading} onClick={clearFiles}>
+                <Trash2 size={15} /> Clear all
+              </button>
+            </div>
+            <div style={fileList}>
+              {files.map((file) => (
+                <FileRow
+                  key={file.id}
+                  file={file}
+                  uploading={uploading}
+                  onRemove={removeFile}
+                  onUpdate={updateFile}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        <footer style={footer}>
+          <Link href={mockupsHref} style={secondaryButton}>
+            Cancel
+          </Link>
+          <button
+            type="button"
+            style={primaryButton}
+            disabled={!primaryActionEnabled}
+            onClick={handleUpload}
+          >
+            {uploading ? <Loader2 size={17} className="animate-spin" /> : null}
+            {uploading ? `Uploading ${completeCount}/${files.length}` : null}
+            {!uploading && canViewUploadedMockups ? "View mockups" : null}
+            {!uploading && (!uploadFinished || failedCount > 0)
+              ? `${failedCount > 0 ? "Retry" : "Upload"} ${pendingUploadCount || files.length || ""} mockups`
+              : null}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function FileRow({
+  file,
+  uploading,
+  onRemove,
+  onUpdate,
+}: {
+  file: UploadFileItem;
+  uploading: boolean;
+  onRemove: (id: string) => void;
+  onUpdate: (id: string, patch: Partial<UploadFileItem>) => void;
+}) {
+  return (
+    <div style={fileRow}>
+      <GripVertical size={16} color="#98a2b3" />
+      <div style={thumbnailWrap}>
+        {/* biome-ignore lint/performance/noImgElement: Object URLs from local file previews are not compatible with Next image optimization. */}
+        <img src={file.previewUrl} alt={file.name} style={thumbnail} />
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <strong style={fileName}>{file.file.name}</strong>
+        <span style={fileSize}>{formatSize(file.file.size)}</span>
+      </div>
+      <div style={progressCell}>
+        <div style={progressTrack}>
+          <div
+            style={{
+              ...progressBar,
+              width: `${file.progress}%`,
+              background: file.status === "error" ? "#dc2626" : "#35a527",
+            }}
+          />
+        </div>
+        <span style={progressText}>{file.progress}%</span>
+      </div>
+      <FieldSelect
+        label="Scene type"
+        value={file.sceneType}
+        options={SCENE_OPTIONS}
+        disabled={uploading && file.status === "uploading"}
+        onChange={(value) => onUpdate(file.id, { sceneType: value })}
+      />
+      <FieldSelect
+        label="View"
+        value={file.view}
+        options={VIEW_OPTIONS}
+        disabled={uploading && file.status === "uploading"}
+        onChange={(value) => onUpdate(file.id, { view: value })}
+      />
+      <button
+        type="button"
+        aria-label={`Remove ${file.name}`}
+        disabled={file.status === "uploading"}
+        onClick={() => onRemove(file.id)}
+        style={removeButton}
+      >
+        {file.status === "success" ? <CheckCircle2 size={17} color="#35a527" /> : <X size={17} />}
+      </button>
+    </div>
+  );
+}
+
+function FieldSelect({
+  label,
+  value,
+  options,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: { label: string; value: string }[];
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label style={fieldWrap}>
+      <span style={fieldLabel}>{label}</span>
+      <span style={selectShell}>
+        <select
+          value={value}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+          style={metadataSelect}
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
             </option>
           ))}
         </select>
-      </div>
+        <ChevronsUpDown size={14} color="#667085" />
+      </span>
+    </label>
+  );
+}
 
-      <div
-        onDrop={(event) => {
-          event.preventDefault();
-          setDragActive(false);
-          addFiles(event.dataTransfer.files);
-        }}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setDragActive(true);
-        }}
-        onDragLeave={() => setDragActive(false)}
-        onClick={() => document.getElementById("mockup-files-input")?.click()}
-        className="card"
-        style={{
-          padding: 36,
-          textAlign: "center",
-          cursor: "pointer",
-          border: dragActive ? "2px dashed var(--color-wise-green)" : "2px dashed var(--border-default)",
-          backgroundColor: dragActive ? "rgba(146, 198, 72, 0.05)" : "transparent",
-        }}
-      >
-        <input
-          id="mockup-files-input"
-          type="file"
-          multiple
-          accept="image/png,image/jpeg,image/webp"
-          style={{ display: "none" }}
-          onChange={(event) => {
-            if (event.target.files) addFiles(event.target.files);
-            event.currentTarget.value = "";
-          }}
-        />
-        <ImageIcon size={32} style={{ opacity: 0.35, marginBottom: 10 }} />
-        <p style={{ fontWeight: 700, margin: "0 0 4px" }}>Kéo thả hoặc click để chọn files</p>
-        <p style={{ opacity: 0.55, fontSize: "0.82rem", margin: 0 }}>
-          PNG, JPG, WebP · tối đa {MAX_FILES} files · 100MB/file · 5 upload song song
-        </p>
-      </div>
-
-      {error && (
-        <div className="flex items-center gap-2" style={{ marginTop: 12, color: "var(--color-error)" }}>
-          <AlertTriangle size={14} />
-          <span style={{ fontSize: "0.85rem" }}>{error}</span>
-        </div>
-      )}
-
-      {hasFiles && (
-        <>
-          <div className="flex items-center justify-between" style={{ marginTop: 18, marginBottom: 12 }}>
-            <div>
-              <strong>{files.length} files</strong>
-              <span style={{ opacity: 0.55, marginLeft: 8 }}>
-                {completeCount} done {selectedStoreName ? `· ${selectedStoreName}` : ""}
-              </span>
-            </div>
-            <div className="flex gap-2">
-              <button className="btn btn-secondary" disabled={uploading} onClick={() => setFiles([])}>
-                Clear
-              </button>
-              <button className="btn btn-primary" disabled={!canUpload} onClick={handleUpload}>
-                {uploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
-                Upload
-              </button>
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
-            {files.map((file) => (
-              <div key={file.id} className="card" style={{ padding: 10 }}>
-                <div style={{ position: "relative", aspectRatio: "1 / 1", background: "var(--bg-tertiary)", overflow: "hidden" }}>
-                  <img
-                    src={file.previewUrl}
-                    alt={file.name}
-                    style={{ width: "100%", height: "100%", objectFit: "contain", padding: 8 }}
-                  />
-                  <button
-                    type="button"
-                    aria-label={`Remove ${file.name}`}
-                    disabled={file.status === "uploading"}
-                    onClick={() => removeFile(file.id)}
-                    style={{
-                      position: "absolute",
-                      top: 6,
-                      right: 6,
-                      border: "none",
-                      borderRadius: 999,
-                      background: "rgba(0,0,0,0.55)",
-                      color: "white",
-                      padding: 4,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-                <p style={{ fontWeight: 700, fontSize: "0.78rem", margin: "8px 0 2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {file.name}
-                </p>
-                <p style={{ opacity: 0.5, fontSize: "0.72rem", margin: 0 }}>{formatSize(file.file.size)}</p>
-                <div style={{ height: 6, background: "var(--bg-tertiary)", marginTop: 8, overflow: "hidden" }}>
-                  <div
-                    style={{
-                      height: "100%",
-                      width: `${file.progress}%`,
-                      background: file.status === "error" ? "var(--color-danger)" : "var(--color-wise-green)",
-                    }}
-                  />
-                </div>
-                <div className="flex items-center gap-1" style={{ marginTop: 6, fontSize: "0.72rem", opacity: 0.7 }}>
-                  {file.status === "success" ? <CheckCircle2 size={13} /> : null}
-                  {file.status === "uploading" ? <Loader2 size={13} className="animate-spin" /> : null}
-                  <span>{file.error ?? file.status}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-
-      <div style={{ marginTop: 20 }}>
-        <Link href={storeId ? `/mockups?storeId=${storeId}` : "/mockups"} className="btn btn-secondary">
-          Xem thư viện
-        </Link>
+function Tip({
+  icon,
+  title,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={tipRow}>
+      <span style={tipIcon}>{icon}</span>
+      <div>
+        <strong style={{ display: "block", fontSize: 13, marginBottom: 4 }}>{title}</strong>
+        <p style={{ margin: 0, color: "#475467", fontSize: 12, lineHeight: 1.45 }}>{children}</p>
       </div>
     </div>
   );
 }
+
+function StoreAvatar({ name }: { name: string }) {
+  return <span style={storeAvatar}>{name.slice(0, 2).toUpperCase()}</span>;
+}
+
+const pageWrap: React.CSSProperties = {
+  minHeight: "calc(100vh - 4rem)",
+  display: "grid",
+  placeItems: "start center",
+  padding: "3rem 1rem",
+};
+
+const modalCard: React.CSSProperties = {
+  width: "min(920px, 100%)",
+  border: "1px solid #dfe4ea",
+  borderRadius: 14,
+  background: "#fff",
+  boxShadow: "0 30px 90px rgba(16, 24, 40, 0.18)",
+  padding: 28,
+};
+
+const header: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 20,
+  marginBottom: 18,
+};
+
+const title: React.CSSProperties = {
+  margin: 0,
+  color: "#101828",
+  fontSize: 24,
+  lineHeight: 1.2,
+  fontWeight: 700,
+};
+
+const subtitle: React.CSSProperties = {
+  margin: "6px 0 0",
+  color: "#667085",
+  fontSize: 14,
+};
+
+const closeButton: React.CSSProperties = {
+  width: 34,
+  height: 34,
+  borderRadius: 8,
+  display: "grid",
+  placeItems: "center",
+  color: "#344054",
+  textDecoration: "none",
+};
+
+const storePillRow: React.CSSProperties = {
+  display: "flex",
+  marginBottom: 20,
+};
+
+const storePill: React.CSSProperties = {
+  minHeight: 46,
+  border: "1px solid #dfe4ea",
+  borderRadius: 10,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 10,
+  padding: "0 12px",
+};
+
+const storeAvatar: React.CSSProperties = {
+  width: 30,
+  height: 30,
+  borderRadius: 8,
+  background: "#111827",
+  color: "#fff",
+  display: "grid",
+  placeItems: "center",
+  fontSize: 10,
+  fontWeight: 700,
+};
+
+const storeSelect: React.CSSProperties = {
+  border: "none",
+  outline: "none",
+  background: "transparent",
+  color: "#101828",
+  font: "inherit",
+  fontWeight: 600,
+};
+
+const activeBadge: React.CSSProperties = {
+  border: "1px solid #b7e4b2",
+  background: "#ecfdf3",
+  color: "#2f7d32",
+  borderRadius: 7,
+  padding: "3px 9px",
+  fontSize: 12,
+  fontWeight: 600,
+};
+
+const printifyBadge: React.CSSProperties = {
+  ...activeBadge,
+};
+
+const warningBadge: React.CSSProperties = {
+  border: "1px solid #fed7aa",
+  background: "#fff7ed",
+  color: "#b45309",
+  borderRadius: 7,
+  padding: "3px 9px",
+  fontSize: 12,
+  fontWeight: 600,
+};
+
+const topGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) 320px",
+  gap: 24,
+  marginBottom: 24,
+};
+
+const dropzone: React.CSSProperties = {
+  minHeight: 260,
+  border: "1.5px dashed #d9dee7",
+  borderRadius: 12,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  textAlign: "center",
+  cursor: "pointer",
+  color: "#101828",
+  padding: 28,
+};
+
+const dropIcon: React.CSSProperties = {
+  width: 70,
+  height: 70,
+  borderRadius: "50%",
+  background: "#e9f8e3",
+  color: "#35a527",
+  display: "grid",
+  placeItems: "center",
+};
+
+const mutedText: React.CSSProperties = { marginTop: 8, color: "#667085", fontSize: 14 };
+
+const chooseFilesButton: React.CSSProperties = {
+  marginTop: 18,
+  minHeight: 42,
+  borderRadius: 8,
+  background: "linear-gradient(180deg, #45b832, #2f9e24)",
+  color: "#fff",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "0 22px",
+  fontWeight: 600,
+};
+
+const browseText: React.CSSProperties = {
+  marginTop: 14,
+  color: "#475467",
+  fontSize: 13,
+};
+
+const tipsCard: React.CSSProperties = {
+  border: "1px solid #dfe4ea",
+  borderRadius: 12,
+  padding: 20,
+  background: "linear-gradient(135deg, #fbfff8, #fff)",
+};
+
+const tipsTitle: React.CSSProperties = { margin: "0 0 16px", fontSize: 16, fontWeight: 700 };
+
+const tipRow: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "34px minmax(0, 1fr)",
+  gap: 12,
+  alignItems: "start",
+  marginBottom: 18,
+};
+
+const tipIcon: React.CSSProperties = {
+  width: 34,
+  height: 34,
+  borderRadius: 9,
+  border: "1px solid #b7e4b2",
+  background: "#f0faec",
+  color: "#35a527",
+  display: "grid",
+  placeItems: "center",
+};
+
+const errorRow: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  alignItems: "center",
+  color: "#b42318",
+  fontSize: 13,
+  marginBottom: 16,
+};
+
+const fileSection: React.CSSProperties = { marginTop: 8 };
+
+const fileHeader: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  marginBottom: 10,
+};
+
+const clearButton: React.CSSProperties = {
+  border: "none",
+  background: "transparent",
+  color: "#475467",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  cursor: "pointer",
+};
+
+const fileList: React.CSSProperties = {
+  border: "1px solid #dfe4ea",
+  borderRadius: 10,
+  overflow: "hidden",
+};
+
+const fileRow: React.CSSProperties = {
+  minHeight: 78,
+  display: "grid",
+  gridTemplateColumns: "24px 58px minmax(150px, 1fr) 210px 136px 116px 28px",
+  gap: 12,
+  alignItems: "center",
+  padding: "8px 14px",
+  borderBottom: "1px solid #edf0f2",
+};
+
+const thumbnailWrap: React.CSSProperties = {
+  width: 58,
+  height: 58,
+  borderRadius: 8,
+  background: "#f2f4f7",
+  overflow: "hidden",
+  display: "grid",
+  placeItems: "center",
+};
+
+const thumbnail: React.CSSProperties = {
+  width: "100%",
+  height: "100%",
+  objectFit: "contain",
+  padding: 5,
+};
+
+const fileName: React.CSSProperties = {
+  display: "block",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  color: "#101828",
+  fontSize: 13,
+};
+
+const fileSize: React.CSSProperties = {
+  display: "block",
+  marginTop: 4,
+  color: "#667085",
+  fontSize: 12,
+};
+
+const progressCell: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "1fr 42px",
+  gap: 10,
+  alignItems: "center",
+};
+const progressTrack: React.CSSProperties = {
+  height: 5,
+  borderRadius: 99,
+  background: "#edf0f2",
+  overflow: "hidden",
+};
+const progressBar: React.CSSProperties = { height: "100%", borderRadius: 99 };
+const progressText: React.CSSProperties = { color: "#475467", fontSize: 12 };
+
+const fieldWrap: React.CSSProperties = { display: "grid", gap: 6 };
+const fieldLabel: React.CSSProperties = { color: "#667085", fontSize: 11, fontWeight: 600 };
+const selectShell: React.CSSProperties = {
+  minHeight: 36,
+  border: "1px solid #dfe4ea",
+  borderRadius: 8,
+  display: "flex",
+  alignItems: "center",
+  padding: "0 8px",
+};
+const metadataSelect: React.CSSProperties = {
+  flex: 1,
+  border: "none",
+  outline: "none",
+  background: "transparent",
+  font: "inherit",
+  fontSize: 13,
+  color: "#101828",
+  appearance: "none",
+};
+
+const removeButton: React.CSSProperties = {
+  width: 28,
+  height: 28,
+  border: "none",
+  background: "transparent",
+  display: "grid",
+  placeItems: "center",
+  cursor: "pointer",
+  color: "#101828",
+};
+
+const footer: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "flex-end",
+  gap: 12,
+  marginTop: 28,
+};
+
+const secondaryButton: React.CSSProperties = {
+  minHeight: 44,
+  border: "1px solid #d9dee7",
+  borderRadius: 9,
+  background: "#fff",
+  color: "#101828",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "0 24px",
+  fontWeight: 600,
+  textDecoration: "none",
+};
+
+const primaryButton: React.CSSProperties = {
+  minHeight: 44,
+  border: "none",
+  borderRadius: 9,
+  background: "linear-gradient(180deg, #45b832, #2f9e24)",
+  color: "#fff",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+  padding: "0 24px",
+  fontWeight: 600,
+  cursor: "pointer",
+};

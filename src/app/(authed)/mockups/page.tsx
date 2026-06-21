@@ -9,6 +9,16 @@ export const metadata = {
   title: "Mockups - MockupAI",
 };
 
+type MockupCompositeRegion = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotationDeg: number;
+  imageWidth: number;
+  imageHeight: number;
+};
+
 /**
  * Mockups list — Server Component.
  * Store-first entry point: mockups are loaded only after a valid store is selected.
@@ -24,20 +34,25 @@ export default async function MockupsPage({
   if (!canUseMockups) redirect("/dashboard");
 
   const { storeId } = await searchParams;
-  const limit = 20;
+  const limit = 12;
 
   const stores = await prisma.store.findMany({
     where: { tenantId: session.tenantId, status: "ACTIVE" },
-    select: { id: true, name: true },
+    select: { id: true, name: true, shopifyDomain: true },
     orderBy: { name: "asc" },
   });
 
-  const selectedStore = storeId ? stores.find((store) => store.id === storeId) ?? null : null;
+  const selectedStore = storeId ? (stores.find((store) => store.id === storeId) ?? null) : null;
   const invalidStoreSelected = Boolean(storeId && !selectedStore);
 
   const mockups = selectedStore
     ? await prisma.mockupLibraryItem.findMany({
-        where: { tenantId: session.tenantId, isActive: true, deletedAt: null, storeId: selectedStore.id },
+        where: {
+          tenantId: session.tenantId,
+          isActive: true,
+          deletedAt: null,
+          storeId: selectedStore.id,
+        },
         orderBy: [{ createdAt: "desc" }, { id: "asc" }],
         take: limit,
         include: { _count: { select: { templateItems: true } } },
@@ -46,7 +61,12 @@ export default async function MockupsPage({
 
   const total = selectedStore
     ? await prisma.mockupLibraryItem.count({
-        where: { tenantId: session.tenantId, isActive: true, deletedAt: null, storeId: selectedStore.id },
+        where: {
+          tenantId: session.tenantId,
+          isActive: true,
+          deletedAt: null,
+          storeId: selectedStore.id,
+        },
       })
     : 0;
 
@@ -59,7 +79,7 @@ export default async function MockupsPage({
         height: m.height,
         view: m.view,
         sceneType: m.sceneType,
-        compositeRegionPx: m.compositeRegionPx as any,
+        compositeRegionPx: m.compositeRegionPx as MockupCompositeRegion | null,
         templateAttachmentCount: m._count.templateItems,
       }))
     : [];
@@ -68,7 +88,11 @@ export default async function MockupsPage({
   return (
     <MockupsClient
       initialMockups={initialMockups}
-      stores={stores}
+      stores={stores.map((store) => ({
+        id: store.id,
+        name: store.name,
+        domain: store.shopifyDomain,
+      }))}
       initialStoreId={selectedStore?.id ?? null}
       invalidStoreSelected={invalidStoreSelected}
       initialTotal={initialTotal}

@@ -54,7 +54,10 @@ const assignmentSchema = z.object({
 
 // ─── CREATE ─────────────────────────────────────────────────────────────────
 
+export const MAILBOX_HISTORY_WINDOW_MONTHS = 6;
+
 export const createMailboxSchema = z.object({
+  storeId: z.string().min(1),
   name: z.string().min(1, "Name is required").max(200),
   email: z.string().email("Invalid email"),
   provider: z.enum(["gmail", "custom"]),
@@ -64,13 +67,7 @@ export const createMailboxSchema = z.object({
   // Custom mode: full inbound/outbound required
   inbound: inboundCreateSchema.optional(),
   outbound: outboundCreateSchema.optional(),
-  assignments: z.array(assignmentSchema).optional(),
-  // Import mode: controls how Zammad handles existing emails on first sync
-  // - new_only: keep_on_server=true → only fetch unread emails (fastest)
-  // - all_archive: default Zammad + archive mode → import all, old → closed
-  // - all: default Zammad → import all, delete from server
-  importMode: z.enum(["new_only", "all_archive", "all"]).default("new_only"),
-}).refine(
+}).strict().refine(
   (d) => {
     if (d.provider === "gmail") return !!d.appPassword;
     return !!d.inbound && !!d.outbound;

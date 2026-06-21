@@ -171,9 +171,9 @@ describe("createTicketArticle", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
         id: 5, ticket_id: 3, type_id: 10, sender_id: 1,
-        from: "Agent", to: null, cc: null, subject: null,
+        from: "Agent", to: "customer@example.com", cc: null, subject: null,
         body: "Thank you", content_type: "text/plain",
-        internal: false, type: "note", sender: "Agent",
+        internal: false, type: "email", sender: "Agent",
         attachments: [], created_by: "admin@example.com",
         updated_by: "admin@example.com",
         created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
@@ -181,7 +181,7 @@ describe("createTicketArticle", () => {
     );
 
     const { createTicketArticle } = await importClient();
-    await createTicketArticle(3, "Thank you");
+    await createTicketArticle(3, "Thank you", "customer@example.com");
 
     const [, opts] = fetchSpy.mock.calls[0];
     const body = JSON.parse(opts!.body as string);
@@ -189,7 +189,9 @@ describe("createTicketArticle", () => {
       ticket_id: 3,
       body: "Thank you",
       content_type: "text/plain",
-      type: "note",
+      type: "email",
+      sender: "Agent",
+      to: "customer@example.com",
       internal: false,
     });
   });
@@ -268,5 +270,93 @@ describe("updateTicketState", () => {
     const body = JSON.parse(opts!.body as string);
     expect(body.state).toBe("closed");
     expect(body.pending_time).toBeUndefined();
+  });
+});
+
+describe("updateEmailChannelInbound", () => {
+  it("fetches the channels, merges the overrides, and calls PUT on the channel", async () => {
+    const mockChannelsResponse = {
+      assets: {
+        Channel: {
+          "3": {
+            id: 3,
+            group_id: 3,
+            area: "Email::Account",
+            active: true,
+            options: {
+              inbound: {
+                adapter: "imap",
+                options: {
+                  host: "imap.gmail.com",
+                  port: 993,
+                  ssl: "ssl",
+                  user: "test@example.com",
+                  password: "password123",
+                  ssl_verify: true,
+                  folder: "inbox"
+                }
+              },
+              outbound: {
+                adapter: "smtp",
+                options: {
+                  host: "smtp.gmail.com",
+                  port: 587,
+                  user: "test@example.com",
+                  password: "password123"
+                }
+              }
+            }
+          }
+        }
+      }
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(mockChannelsResponse), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const { updateEmailChannelInbound } = await importClient();
+    const result = await updateEmailChannelInbound(3, { keep_on_server: true, folder: "custom-inbox" });
+
+    expect(result.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    const [putUrl, putOpts] = fetchSpy.mock.calls[1];
+    expect(putUrl).toContain("/api/v1/channels_email_verify");
+    expect(putOpts?.method).toBe("POST");
+
+    const body = JSON.parse(putOpts!.body as string);
+    expect(body.channel_id).toBe(3);
+    expect(body.group_id).toBe(3);
+    expect(body.meta.email).toBe("test@example.com");
+    expect(body.inbound.options.keep_on_server).toBe(true);
+    expect(body.inbound.options.folder).toBe("custom-inbox");
+    expect(body.inbound.options.host).toBe("imap.gmail.com");
+    expect(body.inbound.options.port).toBe(993);
+    expect(body.inbound.options.ssl).toBe("ssl");
+    expect(body.outbound.adapter).toBe("smtp");
+    expect(body.outbound.options.host).toBe("smtp.gmail.com");
+    expect(body.outbound.options.port).toBe(587);
+    expect(body.inbound.options.user).toBe("test@example.com");
+    expect(body.inbound.options.password).toBe("password123");
+    expect(body.inbound.options.ssl_verify).toBe(true);
+  });
+
+  it("returns ok: false when the channel ID does not exist", async () => {
+    const mockChannelsResponse = {
+      assets: {
+        Channel: {}
+      }
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify(mockChannelsResponse), { status: 200 })
+    );
+
+    const { updateEmailChannelInbound } = await importClient();
+    const result = await updateEmailChannelInbound(99, { keep_on_server: true });
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(404);
   });
 });

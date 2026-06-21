@@ -281,6 +281,7 @@ export async function getTicketArticles(
 export async function createTicketArticle(
   ticketId: number,
   text: string,
+  to: string,
 ): Promise<ZammadResponse<NormalizedThread>> {
   const result = await zammadRequest<ZammadArticle>({
     method: "POST",
@@ -289,7 +290,9 @@ export async function createTicketArticle(
       ticket_id: ticketId,
       body: text,
       content_type: "text/plain",
-      type: "note",
+      type: "email",
+      sender: "Agent",
+      to,
       internal: false,
     },
   });
@@ -491,6 +494,17 @@ export async function disableEmailChannel(
   });
 }
 
+/** Delete an email channel after a failed mailbox create rollback */
+export async function deleteEmailChannel(
+  channelId: number,
+): Promise<ZammadResponse<Record<string, never>>> {
+  return zammadRequest<Record<string, never>>({
+    method: "DELETE",
+    path: "/api/v1/channels_email",
+    body: { id: channelId },
+  });
+}
+
 /**
  * Find a channel by group_id after verify creates it.
  *
@@ -541,32 +555,72 @@ export async function updateEmailChannelInbound(
   // Get current channel config from the assets list
   const channelsResult = await listEmailChannels();
   if (!channelsResult.ok || !channelsResult.data) {
-    return { ok: false, status: 500, data: null };
+    return {
+      ok: false,
+      status: channelsResult.status,
+      data: null,
+      error: channelsResult.error ?? `Failed to load email channels before updating channel ${channelId}`,
+    };
   }
 
   const channel = channelsResult.data.assets.Channel[String(channelId)];
   if (!channel) {
-    return { ok: false, status: 404, data: null };
+    return {
+      ok: false,
+      status: 404,
+      data: null,
+      error: `Email channel ${channelId} not found`,
+    };
   }
 
   const currentOptions = channel.options as Record<string, unknown>;
   const currentInbound = currentOptions.inbound as Record<string, unknown> | undefined;
+  const currentOutbound = currentOptions.outbound as Record<string, unknown> | undefined;
   const currentInboundOptions = (currentInbound?.options ?? {}) as Record<string, unknown>;
+  const mergedInboundOptions = { ...currentInboundOptions, ...inboundOverrides };
+  const email =
+    typeof mergedInboundOptions.user === "string"
+      ? mergedInboundOptions.user
+      : `channel-${channelId}@localhost`;
 
-  // Merge overrides into inbound.options
+  // Generic IMAP/SMTP channels are updated through Zammad's verify endpoint.
+  // The channel_id lets Zammad unmask existing password values.
   return zammadRequest({
-    method: "PUT",
-    path: `/api/v1/channels/${channelId}`,
+    method: "POST",
+    path: "/api/v1/channels_email_verify",
+    timeoutMs: VERIFY_TIMEOUT_MS,
     body: {
-      options: {
-        ...currentOptions,
-        inbound: {
-          ...(currentInbound ?? {}),
-          options: { ...currentInboundOptions, ...inboundOverrides },
-        },
+      meta: {
+        realname: email,
+        email,
       },
+      group_id: channel.group_id,
+      channel_id: channelId,
+      inbound: {
+        ...(currentInbound ?? {}),
+        options: mergedInboundOptions,
+      },
+      outbound: currentOutbound ?? {},
     },
   });
+}
+
+/**
+ * Apply the app's fixed mailbox history window.
+ *
+ * This intentionally fails closed until we verify the exact Zammad channel
+ * option that limits initial IMAP history by date. Returning success here
+ * without that support would risk importing the whole mailbox.
+ */
+export async function applyMailboxHistoryWindow(
+  channelId: number,
+): Promise<ZammadResponse<unknown>> {
+  return {
+    ok: false,
+    status: 422,
+    data: null,
+    error: `Zammad channel ${channelId} does not have a verified six-month history-window mapping yet`,
+  };
 }
 
 // ─── Password redaction utility ─────────────────────────────────────────────

@@ -979,7 +979,9 @@ export function resolveShopifyMockupMedia(input: {
       ? parseMockupSourceUrl(image.sourceUrl)
       : { kind: "printify" as const };
     const hasRealPrintifySource =
-      isAllowedRemoteMockupUrl(image.sourceUrl) || parsedSource.kind === "custom";
+      isAllowedRemoteMockupUrl(image.sourceUrl) ||
+      parsedSource.kind === "custom" ||
+      parsedSource.kind === "library";
     if (input.requireRealPrintifyMockups && !hasRealPrintifySource) continue;
 
     const path = input.storage.resolvePath(source);

@@ -12,6 +12,7 @@ import {
 
 describe("createMailboxSchema", () => {
   const validCustomInput = {
+    storeId: "store_123",
     name: "Support",
     email: "support@example.com",
     provider: "custom",
@@ -20,6 +21,7 @@ describe("createMailboxSchema", () => {
   };
 
   const validGmailInput = {
+    storeId: "store_123",
     name: "Support",
     email: "support@gmail.com",
     provider: "gmail",
@@ -79,9 +81,9 @@ describe("createMailboxSchema", () => {
     expect(createMailboxSchema.safeParse({ ...validCustomInput, inbound: { ...validCustomInput.inbound, encryption: "tls" } }).success).toBe(false);
   });
 
-  it("accepts optional assignments on custom", () => {
+  it("rejects assignments on custom", () => {
     const input = { ...validCustomInput, assignments: [{ userId: "abc", canReply: true, canUpdateStatus: false }] };
-    expect(createMailboxSchema.safeParse(input).success).toBe(true);
+    expect(createMailboxSchema.safeParse(input).success).toBe(false);
   });
 
   it("accepts optional fromName", () => {

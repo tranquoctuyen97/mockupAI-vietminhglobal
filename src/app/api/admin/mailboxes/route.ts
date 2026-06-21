@@ -1,40 +1,117 @@
 /**
  * Admin Mailbox Management — List + Create
  *
- * GET  /api/admin/mailboxes — List all app-managed mailboxes
+ * GET  /api/admin/mailboxes?storeId=... — List mailboxes for a store
  * POST /api/admin/mailboxes — Create mailbox (group + channel + local record)
  *
  * Access: requireMailboxAdmin() — SUPER_ADMIN or ADMIN only
  * Audit: all operations logged without credentials
+ *
+ * Store-scoped: mailboxes belong to stores. storeId is required.
  */
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import { requireMailboxAdmin } from "@/lib/auth/mailbox-admin-guard";
 import { prisma } from "@/lib/db";
 import { logAudit, getRequestInfo } from "@/lib/audit";
-import { createMailboxSchema } from "@/lib/zammad/admin-validation";
+import { createMailboxSchema, MAILBOX_HISTORY_WINDOW_MONTHS } from "@/lib/zammad/admin-validation";
 import { toZammadInboundSsl, toZammadOutboundSsl } from "@/lib/zammad/admin-validation";
 import {
   createGroup,
   assignAdminToGroup,
+  updateGroup,
   deleteGroup,
   testEmailInbound,
   testEmailOutbound,
   verifyEmailChannel,
   findChannelByGroupId,
-  updateEmailChannelInbound,
   disableEmailChannel,
+  deleteEmailChannel,
   probeEmailSettings,
-  redactPasswords,
+  applyMailboxHistoryWindow,
+  updateEmailChannelInbound,
 } from "@/lib/zammad/client";
 import type { ZammadInboundConfig, ZammadOutboundConfig } from "@/lib/zammad/types";
 
-// ─── GET /api/admin/mailboxes ───────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-export async function GET() {
+async function validateStore(storeId: string, tenantId: string) {
+  return prisma.store.findFirst({
+    where: {
+      id: storeId,
+      tenantId,
+      status: "ACTIVE",
+      deletedAt: null,
+    },
+    select: { id: true, name: true },
+  });
+}
+
+async function rollbackCreatedZammadResources(channelId: number | null, groupId: number | null) {
+  if (channelId) {
+    await disableEmailChannel(channelId).catch((e) => {
+      console.error(
+        `[MAILBOX] CRITICAL: Failed to disable channel ${channelId} during rollback:`,
+        e,
+      );
+    });
+    await deleteEmailChannel(channelId).catch((e) => {
+      console.error(
+        `[MAILBOX] CRITICAL: Failed to delete channel ${channelId} during rollback. Manual cleanup required.`,
+        e,
+      );
+    });
+  }
+
+  if (groupId) {
+    const deleteResult = await deleteGroup(groupId).catch((e) => {
+      console.error(
+        `[MAILBOX] CRITICAL: Failed to delete group ${groupId} during rollback. Manual cleanup required.`,
+        e,
+      );
+      return null;
+    });
+    if (!deleteResult?.ok) {
+      await updateGroup(groupId, {
+        name: `archived-mailbox-${groupId}-${Date.now()}`,
+        active: false,
+      }).catch((e) => {
+        console.error(
+          `[MAILBOX] CRITICAL: Failed to archive group ${groupId} during rollback. Manual cleanup required.`,
+          e,
+        );
+      });
+    }
+  }
+}
+
+// ─── GET /api/admin/mailboxes?storeId=... ──────────────────────────────────────
+
+export async function GET(request: NextRequest) {
   const guard = await requireMailboxAdmin();
   if (guard.response) return guard.response;
+  const { session } = guard;
+
+  const { searchParams } = request.nextUrl;
+  const storeId = searchParams.get("storeId");
+
+  if (!storeId) {
+    return NextResponse.json(
+      { error: "storeId is required" },
+      { status: 422 },
+    );
+  }
+
+  const store = await validateStore(storeId, session.tenantId);
+  if (!store) {
+    return NextResponse.json({ error: "Store not found" }, { status: 404 });
+  }
 
   const mailboxes = await prisma.mailbox.findMany({
+    where: {
+      tenantId: session.tenantId,
+      storeId,
+    },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -44,31 +121,21 @@ export async function GET() {
       zammadGroupId: true,
       zammadChannelId: true,
       isActive: true,
+      storeId: true,
       createdAt: true,
       updatedAt: true,
     },
   });
 
-  // Count assigned users per mailbox
-  const groupIds = mailboxes.map((m) => m.zammadGroupId);
-  const accessCounts = await prisma.userMailboxAccess.groupBy({
-    by: ["zammadGroupId"],
-    _count: { id: true },
-    where: { zammadGroupId: { in: groupIds } },
-  });
-  const countMap = new Map(accessCounts.map((a) => [a.zammadGroupId, a._count.id]));
-
   return NextResponse.json({
-    mailboxes: mailboxes.map((m) => ({
-      ...m,
-      assignedUsers: countMap.get(m.zammadGroupId) ?? 0,
-    })),
+    mailboxes,
+    store: { id: store.id, name: store.name },
   });
 }
 
 // ─── POST /api/admin/mailboxes ──────────────────────────────────────────────
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   const guard = await requireMailboxAdmin();
   if (guard.response) return guard.response;
   const { session } = guard;
@@ -90,11 +157,21 @@ export async function POST(request: Request) {
   }
 
   const input = parsed.data;
+
+  // 2. Validate store belongs to tenant
+  const store = await validateStore(input.storeId, session.tenantId);
+  if (!store) {
+    return NextResponse.json(
+      { error: "Store not found or not active" },
+      { status: 404 },
+    );
+  }
+
   let groupId: number | null = null;
   let channelId: number | null = null;
 
   try {
-    // 2. Create Zammad group
+    // 3. Create Zammad group
     const groupResult = await createGroup({ name: input.name });
     if (!groupResult.ok || !groupResult.data) {
       return NextResponse.json(
@@ -104,7 +181,7 @@ export async function POST(request: Request) {
     }
     groupId = groupResult.data.id;
 
-    // 2b. Assign admin user to the new group so API token can access its tickets
+    // 3b. Assign admin user to the new group so API token can access its tickets
     const assignResult = await assignAdminToGroup(groupId);
     if (!assignResult.ok) {
       console.warn(
@@ -160,10 +237,9 @@ export async function POST(request: Request) {
       };
     }
 
-    // 3. Test inbound connection
+    // 4. Test inbound connection
     const inboundTest = await testEmailInbound(inbound);
     if (!inboundTest.ok || inboundTest.data?.result !== "ok") {
-      // Rollback: delete group
       await deleteGroup(groupId).catch(() => {});
       return NextResponse.json(
         {
@@ -175,13 +251,12 @@ export async function POST(request: Request) {
       );
     }
 
-    // 4. Test outbound connection
+    // 5. Test outbound connection
     const outboundTest = await testEmailOutbound({
       ...outbound,
       email: input.email,
     });
     if (!outboundTest.ok || outboundTest.data?.result !== "ok") {
-      // Rollback: delete group
       await deleteGroup(groupId).catch(() => {});
       return NextResponse.json(
         {
@@ -193,7 +268,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 5. Verify + create channel (may block up to 30s)
+    // 6. Verify + create channel (may block up to 30s)
     const verifyResult = await verifyEmailChannel({
       meta: {
         realname: input.fromName ?? input.name,
@@ -205,7 +280,6 @@ export async function POST(request: Request) {
     });
 
     if (!verifyResult.ok || verifyResult.data?.result !== "ok") {
-      // Rollback: delete group
       await deleteGroup(groupId).catch(() => {});
       return NextResponse.json(
         {
@@ -217,32 +291,56 @@ export async function POST(request: Request) {
       );
     }
 
-    // 6. Extract channelId
+    // 7. Extract channelId
     const channel = await findChannelByGroupId(groupId, input.email);
     channelId = channel?.id ?? null;
     if (!channelId) {
-      console.warn(
+      console.error(
         `[MAILBOX] Channel created but could not extract channelId for groupId=${groupId}`,
+      );
+      await deleteGroup(groupId).catch(() => {});
+      return NextResponse.json(
+        { error: "Failed to locate configured mailbox channel in email system" },
+        { status: 502 },
       );
     }
 
-    // 6b. Set import mode on the channel (keep_on_server for "new_only")
-    if (channelId && input.importMode === "new_only") {
-      const updateResult = await updateEmailChannelInbound(channelId, {
-        keep_on_server: true,
-      });
-      if (!updateResult.ok) {
+    // 7a. Ensure keep_on_server: true is set on the email channel
+    const keepOnServerResult = await updateEmailChannelInbound(channelId, { keep_on_server: true });
+    if (!keepOnServerResult.ok) {
+      console.error(
+        `[zammad] failed to enable keep_on_server for channel=${channelId}: ${keepOnServerResult.error ?? "unknown error"}`,
+      );
+      await rollbackCreatedZammadResources(channelId, groupId);
+      return NextResponse.json(
+        {
+          error: "Failed to configure safety settings for mailbox",
+          details: keepOnServerResult.error ?? "Failed to set keep_on_server=true",
+        },
+        { status: 502 },
+      );
+    }
+    console.info(`[zammad] keep_on_server enabled for channel=${channelId}`);
+
+    // 7b. Apply fixed 6-month history window policy.
+    // The history window is not yet implemented at the Zammad channel level;
+    // this is recorded as a known limitation.
+    if (channelId) {
+      const historyResult = await applyMailboxHistoryWindow(channelId);
+      if (!historyResult.ok) {
         console.warn(
-          `[MAILBOX] Failed to set keep_on_server on channel ${channelId}. All emails may be imported.`,
+          `[MAILBOX] History window not applied for channel ${channelId}: ${historyResult.error}`,
         );
       }
     }
 
-    // 7. Save local Mailbox row
+    // 8. Save local Mailbox row — scoped to tenant and store
     let mailbox;
     try {
       mailbox = await prisma.mailbox.create({
         data: {
+          tenantId: session.tenantId,
+          storeId: input.storeId,
           name: input.name,
           email: input.email,
           provider: input.provider,
@@ -252,54 +350,12 @@ export async function POST(request: Request) {
         },
       });
     } catch (dbError) {
-      // Rollback: disable channel + delete group
       console.error("[MAILBOX] DB save failed, rolling back Zammad resources");
-      if (channelId) {
-        await disableEmailChannel(channelId).catch((e) => {
-          console.error(
-            `[MAILBOX] CRITICAL: Failed to disable channel ${channelId}. Manual cleanup required.`,
-            e,
-          );
-        });
-      }
-      await deleteGroup(groupId).catch((e) => {
-        console.error(
-          `[MAILBOX] CRITICAL: Failed to delete group ${groupId}. Manual cleanup required.`,
-          e,
-        );
-      });
+      await rollbackCreatedZammadResources(channelId, groupId);
       return NextResponse.json(
         { error: "Failed to save mailbox. Zammad resources cleaned up." },
         { status: 500 },
       );
-    }
-
-    // 8. Save assignments (if provided)
-    if (input.assignments && input.assignments.length > 0) {
-      const accessData = input.assignments.map((a) => ({
-        userId: a.userId,
-        zammadGroupId: groupId!,
-        mailboxName: input.name,
-        canReply: a.canReply,
-        canUpdateStatus: a.canUpdateStatus,
-      }));
-
-      for (const access of accessData) {
-        await prisma.userMailboxAccess.upsert({
-          where: {
-            userId_zammadGroupId: {
-              userId: access.userId,
-              zammadGroupId: access.zammadGroupId,
-            },
-          },
-          create: access,
-          update: {
-            canReply: access.canReply,
-            canUpdateStatus: access.canUpdateStatus,
-            mailboxName: access.mailboxName,
-          },
-        });
-      }
     }
 
     // 9. Audit log — no credentials
@@ -311,11 +367,14 @@ export async function POST(request: Request) {
       resourceType: "mailbox",
       resourceId: mailbox.id,
       metadata: {
+        storeId: input.storeId,
+        storeName: store.name,
         name: input.name,
         email: input.email,
         provider: input.provider,
         zammadGroupId: groupId,
         zammadChannelId: channelId,
+        historyWindowMonths: MAILBOX_HISTORY_WINDOW_MONTHS,
       },
       ...reqInfo,
     });
@@ -324,9 +383,7 @@ export async function POST(request: Request) {
   } catch (err) {
     // Unexpected error — try to clean up
     console.error("[MAILBOX] Unexpected error during create:", err);
-    if (groupId && !channelId) {
-      await deleteGroup(groupId).catch(() => {});
-    }
+    await rollbackCreatedZammadResources(channelId, groupId);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 },
