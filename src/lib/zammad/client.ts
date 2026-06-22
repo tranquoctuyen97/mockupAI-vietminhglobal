@@ -8,29 +8,28 @@
  */
 
 import type {
-  ZammadGroup,
-  ZammadTicket,
+  AppStatus,
+  NormalizedConversation,
+  NormalizedMailbox,
+  NormalizedThread,
   ZammadArticle,
+  ZammadChannelAsset,
+  ZammadChannelsEmailResponse,
+  ZammadConnectionTestResult,
+  ZammadGroup,
   ZammadInboundConfig,
   ZammadOutboundConfig,
+  ZammadTicket,
   ZammadVerifyInput,
-  ZammadConnectionTestResult,
-  ZammadChannelsEmailResponse,
-  ZammadChannelAsset,
-  NormalizedMailbox,
-  NormalizedConversation,
-  NormalizedThread,
-  ConversationDetail,
-  AppStatus,
 } from "./types";
 
 import {
-  normalizeGroup,
-  normalizeTicket,
-  normalizeArticle,
   appStatusToZammadSearchStates,
   appStatusToZammadUpdateState,
   enrichConversationIdentity,
+  normalizeArticle,
+  normalizeGroup,
+  normalizeTicket,
 } from "./types";
 
 const TIMEOUT_MS = 10_000;
@@ -54,10 +53,10 @@ export type ZammadMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 export interface ZammadRequestOptions {
   method: ZammadMethod;
-  path: string;             // e.g. "/api/v1/groups"
+  path: string; // e.g. "/api/v1/groups"
   queryParams?: URLSearchParams;
   body?: Record<string, unknown>;
-  timeoutMs?: number;       // override default 10s timeout
+  timeoutMs?: number; // override default 10s timeout
 }
 
 export interface ZammadResponse<T = unknown> {
@@ -78,7 +77,7 @@ export async function zammadRequest<T = unknown>(
   const token = getAdminToken();
 
   let url = `${baseUrl}${options.path}`;
-  if (options.queryParams && options.queryParams.toString()) {
+  if (options.queryParams?.toString()) {
     url += `?${options.queryParams.toString()}`;
   }
 
@@ -129,8 +128,7 @@ export async function zammadRequest<T = unknown>(
   } catch (err) {
     clearTimeout(timeoutId);
 
-    const isTimeout =
-      err instanceof DOMException && err.name === "AbortError";
+    const isTimeout = err instanceof DOMException && err.name === "AbortError";
 
     console.error(
       `[ZAMMAD] ${isTimeout ? "Timeout" : "Network error"} on ${options.method} ${options.path}`,
@@ -238,9 +236,7 @@ export async function searchTicketsWithIdentity(opts: {
 }
 
 /** Get a single ticket by ID */
-export async function getTicket(
-  ticketId: number,
-): Promise<ZammadResponse<NormalizedConversation>> {
+export async function getTicket(ticketId: number): Promise<ZammadResponse<NormalizedConversation>> {
   const result = await zammadRequest<ZammadTicket>({
     method: "GET",
     path: `/api/v1/tickets/${ticketId}`,
@@ -361,9 +357,7 @@ export async function createGroup(input: {
  * Without this, newly created groups are invisible via the API because
  * Zammad's ticket search is scoped to the requesting user's group_ids.
  */
-export async function assignAdminToGroup(
-  groupId: number,
-): Promise<ZammadResponse<unknown>> {
+export async function assignAdminToGroup(groupId: number): Promise<ZammadResponse<unknown>> {
   // 1. Get current admin user + their group permissions
   const meResult = await zammadRequest<{
     id: number;
@@ -402,9 +396,7 @@ export async function updateGroup(
 }
 
 /** Delete a Zammad group */
-export async function deleteGroup(
-  groupId: number,
-): Promise<ZammadResponse<Record<string, never>>> {
+export async function deleteGroup(groupId: number): Promise<ZammadResponse<Record<string, never>>> {
   return zammadRequest<Record<string, never>>({
     method: "DELETE",
     path: `/api/v1/groups/${groupId}`,
@@ -531,7 +523,9 @@ export async function findChannelByGroupId(
   // Multiple matches — prefer one with matching email in options
   if (email) {
     const emailMatch = matches.find((ch) => {
-      const inboundUser = (ch.options?.inbound as Record<string, unknown>)?.options as Record<string, unknown> | undefined;
+      const inboundUser = (ch.options?.inbound as Record<string, unknown>)?.options as
+        | Record<string, unknown>
+        | undefined;
       return inboundUser?.user === email;
     });
     if (emailMatch) return emailMatch;
@@ -559,7 +553,9 @@ export async function updateEmailChannelInbound(
       ok: false,
       status: channelsResult.status,
       data: null,
-      error: channelsResult.error ?? `Failed to load email channels before updating channel ${channelId}`,
+      error:
+        channelsResult.error ??
+        `Failed to load email channels before updating channel ${channelId}`,
     };
   }
 
@@ -630,11 +626,7 @@ export function redactPasswords<T extends Record<string, unknown>>(obj: T): T {
   const clone = JSON.parse(JSON.stringify(obj)) as T;
   function walk(o: Record<string, unknown>) {
     for (const key of Object.keys(o)) {
-      if (
-        typeof key === "string" &&
-        /password/i.test(key) &&
-        typeof o[key] === "string"
-      ) {
+      if (typeof key === "string" && /password/i.test(key) && typeof o[key] === "string") {
         o[key] = "[REDACTED]";
       } else if (o[key] && typeof o[key] === "object" && !Array.isArray(o[key])) {
         walk(o[key] as Record<string, unknown>);

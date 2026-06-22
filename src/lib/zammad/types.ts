@@ -23,7 +23,7 @@ export interface ZammadInboundConfig {
   options: {
     host: string;
     port: string;
-    ssl: string;       // "ssl" | "starttls" | "false"
+    ssl: string; // "ssl" | "starttls" | "false"
     user: string;
     password: string;
     folder?: string;
@@ -115,8 +115,8 @@ export interface ZammadArticle {
   body: string;
   content_type: string;
   internal: boolean;
-  type: string;       // "note" | "email" | "web" | "phone"
-  sender: string;     // "Agent" | "Customer" | "System"
+  type: string; // "note" | "email" | "web" | "phone"
+  sender: string; // "Agent" | "Customer" | "System"
   attachments: ZammadAttachment[];
   created_by: string;
   updated_by: string;
@@ -148,9 +148,9 @@ export interface NormalizedMailbox {
 
 export interface NormalizedConversation {
   id: number;
-  mailboxId: number;       // zammad group_id
+  mailboxId: number; // zammad group_id
   number: string;
-  subject: string;         // ticket.title
+  subject: string; // ticket.title
   status: "active" | "pending" | "closed";
   customerId: number;
   assigneeId?: number;
@@ -189,12 +189,12 @@ export type AppStatus = "active" | "pending" | "closed";
 /** Zammad state_id → app status */
 export function stateIdToAppStatus(stateId: number): AppStatus {
   switch (stateId) {
-    case 1:  // new
-    case 2:  // open
+    case 1: // new
+    case 2: // open
       return "active";
-    case 3:  // pending reminder
+    case 3: // pending reminder
       return "pending";
-    case 4:  // closed
+    case 4: // closed
       return "closed";
     default:
       return "active"; // merged (5), pending close (6) → treat as active
@@ -272,9 +272,10 @@ export function enrichConversationIdentity(
   conversation: NormalizedConversation,
   articles: NormalizedThread[],
 ): NormalizedConversation {
-  const source = articles.find((article) => {
-    return !article.internal && article.type === "email" && Boolean(article.from);
-  }) ?? articles.find((article) => !article.internal && Boolean(article.from));
+  const source =
+    articles.find((article) => {
+      return !article.internal && article.type === "email" && Boolean(article.from);
+    }) ?? articles.find((article) => !article.internal && Boolean(article.from));
 
   if (!source?.from) return conversation;
 

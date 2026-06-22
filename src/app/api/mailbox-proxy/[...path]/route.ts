@@ -13,10 +13,10 @@
  * - Redacts API tokens from all logs
  * - 10-second timeout on upstream requests
  */
-import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import { logAudit } from "@/lib/audit";
 import { requireFeature } from "@/lib/auth/guards";
-import { logAudit, getRequestInfo } from "@/lib/audit";
 import {
   getMailboxAuthContext,
   listStoreMailboxes,
@@ -24,14 +24,14 @@ import {
   requireZammadUser,
 } from "@/lib/zammad/auth";
 import {
-  searchTicketsWithIdentity,
+  createTicketArticle,
   getTicket,
   getTicketArticles,
-  createTicketArticle,
+  searchTicketsWithIdentity,
   updateTicketState,
 } from "@/lib/zammad/client";
-import { validateReplyBody, validateStatusBody } from "@/lib/zammad/validation";
 import type { AppStatus } from "@/lib/zammad/types";
+import { validateReplyBody, validateStatusBody } from "@/lib/zammad/validation";
 
 // ──────────────────────────── Helpers ────────────────────────────
 
@@ -52,10 +52,7 @@ function parsePath(segments: string[]): string {
 
 // ──────────────────────────── Route handler ────────────────────────────
 
-async function handler(
-  request: NextRequest,
-  { params }: { params: Promise<{ path?: string[] }> },
-) {
+async function handler(request: NextRequest, { params }: { params: Promise<{ path?: string[] }> }) {
   // 1. Auth + feature gate
   const guard = await requireFeature("mailboxes");
   if (guard.response) return guard.response;
@@ -178,12 +175,11 @@ async function handleListConversations(
   const effectiveStatus = status && validStatuses.includes(status) ? status : undefined;
 
   const pageRaw = url.searchParams.get("page");
-  const page = pageRaw && /^\d+$/.test(pageRaw) && Number(pageRaw) > 0
-    ? Number(pageRaw) : 1;
+  const page = pageRaw && /^\d+$/.test(pageRaw) && Number(pageRaw) > 0 ? Number(pageRaw) : 1;
 
   const pageSizeRaw = url.searchParams.get("pageSize");
-  const pageSize = pageSizeRaw && /^\d+$/.test(pageSizeRaw)
-    ? Math.min(Number(pageSizeRaw), 100) : 25;
+  const pageSize =
+    pageSizeRaw && /^\d+$/.test(pageSizeRaw) ? Math.min(Number(pageSizeRaw), 100) : 25;
 
   const result = await searchTicketsWithIdentity({
     groupId: mailboxId,
@@ -199,9 +195,10 @@ async function handleListConversations(
     page: {
       size: pageSize,
       number: page,
-      totalElements: (result.data?.length ?? 0) < pageSize
-        ? (page - 1) * pageSize + (result.data?.length ?? 0)
-        : -1,
+      totalElements:
+        (result.data?.length ?? 0) < pageSize
+          ? (page - 1) * pageSize + (result.data?.length ?? 0)
+          : -1,
       totalPages: (result.data?.length ?? 0) < pageSize ? page : page + 1,
     },
   });
@@ -228,7 +225,10 @@ async function handleGetConversation(
     return handleUpstreamError(ticketResult.status);
   }
 
-  const conversation = ticketResult.data!;
+  const conversation = ticketResult.data;
+  if (!conversation) {
+    return errorJson("Không thể lấy thông tin cuộc trò chuyện từ hệ thống.", 502);
+  }
 
   // Enforce store-scoped active mailbox
   const mailbox = await requireActiveStoreMailbox(ctx, storeId, conversation.mailboxId);
@@ -264,7 +264,10 @@ async function handleReply(
 
   // Require ZammadUser mapping
   if (!requireZammadUser(ctx)) {
-    return errorJson("Tài khoản email của bạn chưa được cấu hình. Vui lòng liên hệ SUPER_ADMIN.", 404);
+    return errorJson(
+      "Tài khoản email của bạn chưa được cấu hình. Vui lòng liên hệ SUPER_ADMIN.",
+      404,
+    );
   }
 
   // Validate body
@@ -290,7 +293,10 @@ async function handleReply(
     return handleUpstreamError(ticketResult.status);
   }
 
-  const conversation = ticketResult.data!;
+  const conversation = ticketResult.data;
+  if (!conversation) {
+    return errorJson("Không thể lấy thông tin cuộc trò chuyện từ hệ thống.", 502);
+  }
 
   // Enforce store-scoped active mailbox (feature-based access)
   const mailbox = await requireActiveStoreMailbox(ctx, storeId, conversation.mailboxId);
@@ -360,7 +366,10 @@ async function handleStatusUpdate(
 
   // Require ZammadUser mapping
   if (!requireZammadUser(ctx)) {
-    return errorJson("Tài khoản email của bạn chưa được cấu hình. Vui lòng liên hệ SUPER_ADMIN.", 404);
+    return errorJson(
+      "Tài khoản email của bạn chưa được cấu hình. Vui lòng liên hệ SUPER_ADMIN.",
+      404,
+    );
   }
 
   // Validate body
@@ -386,7 +395,10 @@ async function handleStatusUpdate(
     return handleUpstreamError(ticketResult.status);
   }
 
-  const conversation = ticketResult.data!;
+  const conversation = ticketResult.data;
+  if (!conversation) {
+    return errorJson("Không thể lấy thông tin cuộc trò chuyện từ hệ thống.", 502);
+  }
 
   // Enforce store-scoped active mailbox (feature-based access)
   const mailbox = await requireActiveStoreMailbox(ctx, storeId, conversation.mailboxId);
