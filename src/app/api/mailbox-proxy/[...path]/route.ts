@@ -17,6 +17,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit";
 import { requireFeature } from "@/lib/auth/guards";
+import { parseEmailIdentity } from "@/lib/mailboxes/identity";
 import {
   getMailboxAuthContext,
   listStoreMailboxes,
@@ -25,6 +26,7 @@ import {
 } from "@/lib/zammad/auth";
 import {
   createTicketArticle,
+  formatMailboxFrom,
   getTicket,
   getTicketArticles,
   searchTicketsWithIdentity,
@@ -322,14 +324,18 @@ async function handleReply(
     return errorJson("Không tìm thấy địa chỉ người nhận cho phản hồi này.", 422);
   }
 
-  const { parseEmailIdentity } = await import("@/lib/mailboxes/identity");
   const customerEmail = parseEmailIdentity(firstInbound.from).email;
   if (!customerEmail) {
     return errorJson("Địa chỉ email người nhận phản hồi không hợp lệ.", 422);
   }
 
   // Create article on Zammad
-  const result = await createTicketArticle(conversationId, validation.text, customerEmail);
+  const result = await createTicketArticle(
+    conversationId,
+    validation.text,
+    customerEmail,
+    formatMailboxFrom({ displayName: mailbox.name, email: mailbox.email }),
+  );
 
   if (!result.ok) {
     if (result.status === 404) {

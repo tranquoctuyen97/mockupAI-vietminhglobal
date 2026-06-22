@@ -19,6 +19,7 @@ import type {
   ZammadGroup,
   ZammadInboundConfig,
   ZammadOutboundConfig,
+  ZammadSetting,
   ZammadTicket,
   ZammadVerifyInput,
 } from "./types";
@@ -34,6 +35,12 @@ import {
 
 const TIMEOUT_MS = 10_000;
 const VERIFY_TIMEOUT_MS = 45_000;
+export const ZAMMAD_SYSTEM_ADDRESS_SENDER_FORMAT = "SystemAddressName";
+
+export interface MailboxOutboundIdentity {
+  displayName: string;
+  email: string;
+}
 
 function getBaseUrl(): string {
   const url = process.env.ZAMMAD_URL;
@@ -278,6 +285,7 @@ export async function createTicketArticle(
   ticketId: number,
   text: string,
   to: string,
+  from?: string,
 ): Promise<ZammadResponse<NormalizedThread>> {
   const result = await zammadRequest<ZammadArticle>({
     method: "POST",
@@ -288,6 +296,7 @@ export async function createTicketArticle(
       content_type: "text/plain",
       type: "email",
       sender: "Agent",
+      ...(from ? { from } : {}),
       to,
       internal: false,
     },
@@ -464,6 +473,45 @@ export async function verifyEmailChannel(
   });
 }
 
+/** Enforce Zammad's global outgoing sender format for all email replies. */
+export async function ensureSystemAddressSenderFormat(): Promise<ZammadResponse<ZammadSetting>> {
+  const settingsResult = await zammadRequest<ZammadSetting[]>({
+    method: "GET",
+    path: "/api/v1/settings",
+  });
+
+  if (!settingsResult.ok || !settingsResult.data) {
+    return { ...settingsResult, data: null };
+  }
+
+  const setting = settingsResult.data.find((item) => item.name === "ticket_define_email_from");
+  if (!setting) {
+    return {
+      ok: false,
+      status: 404,
+      data: null,
+      error: "Zammad setting ticket_define_email_from not found",
+    };
+  }
+
+  const currentValue = setting.state_current?.value ?? setting.state;
+  if (currentValue === ZAMMAD_SYSTEM_ADDRESS_SENDER_FORMAT) {
+    return { ok: true, status: settingsResult.status, data: setting };
+  }
+
+  const updateResult = await zammadRequest<ZammadSetting>({
+    method: "PUT",
+    path: `/api/v1/settings/${setting.id}`,
+    body: { state: ZAMMAD_SYSTEM_ADDRESS_SENDER_FORMAT },
+  });
+
+  if (!updateResult.ok || !updateResult.data) {
+    return { ...updateResult, data: null };
+  }
+
+  return updateResult;
+}
+
 /** Enable a disabled email channel */
 export async function enableEmailChannel(
   channelId: number,
@@ -545,6 +593,7 @@ export async function findChannelByGroupId(
 export async function updateEmailChannelInbound(
   channelId: number,
   inboundOverrides: Record<string, unknown>,
+  identity?: MailboxOutboundIdentity,
 ): Promise<ZammadResponse<unknown>> {
   // Get current channel config from the assets list
   const channelsResult = await listEmailChannels();
@@ -574,10 +623,13 @@ export async function updateEmailChannelInbound(
   const currentOutbound = currentOptions.outbound as Record<string, unknown> | undefined;
   const currentInboundOptions = (currentInbound?.options ?? {}) as Record<string, unknown>;
   const mergedInboundOptions = { ...currentInboundOptions, ...inboundOverrides };
-  const email =
+  const fallbackEmail =
     typeof mergedInboundOptions.user === "string"
       ? mergedInboundOptions.user
       : `channel-${channelId}@localhost`;
+  const email = identity?.email ?? fallbackEmail;
+  const realname =
+    identity?.displayName ?? getEmailAddressRealname(channelsResult.data, channelId) ?? email;
 
   // Generic IMAP/SMTP channels are updated through Zammad's verify endpoint.
   // The channel_id lets Zammad unmask existing password values.
@@ -587,7 +639,7 @@ export async function updateEmailChannelInbound(
     timeoutMs: VERIFY_TIMEOUT_MS,
     body: {
       meta: {
-        realname: email,
+        realname,
         email,
       },
       group_id: channel.group_id,
@@ -599,6 +651,21 @@ export async function updateEmailChannelInbound(
       outbound: currentOutbound ?? {},
     },
   });
+}
+
+export function formatMailboxFrom(identity: MailboxOutboundIdentity): string {
+  const displayName = identity.displayName.trim() || identity.email;
+  const escapedDisplayName = displayName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `"${escapedDisplayName}" <${identity.email}>`;
+}
+
+function getEmailAddressRealname(
+  channels: ZammadChannelsEmailResponse,
+  channelId: number,
+): string | null {
+  const emailAddresses = Object.values(channels.assets.EmailAddress ?? {});
+  const match = emailAddresses.find((address) => address.channel_id === channelId);
+  return match?.realname?.trim() || null;
 }
 
 /**

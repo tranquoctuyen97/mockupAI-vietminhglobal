@@ -50,6 +50,14 @@ function findKeepOnServerVerifyCall(fetchSpy: FetchSpy) {
   });
 }
 
+function findSenderFormatUpdateCall(fetchSpy: FetchSpy) {
+  return fetchSpy.mock.calls.find(([u, opts]: [unknown, RequestInit?]) => {
+    if (!String(u).includes("/api/v1/settings/77")) return false;
+    const body = JSON.parse(opts!.body as string);
+    return body.state === "SystemAddressName";
+  });
+}
+
 describe("Mailbox Admin API Routes", () => {
   beforeEach(() => {
     vi.stubEnv("ZAMMAD_URL", "http://localhost:8050/");
@@ -89,6 +97,23 @@ describe("Mailbox Admin API Routes", () => {
         }
         if (urlStr.includes("/api/v1/channels_email_outbound")) {
           return new Response(JSON.stringify({ result: "ok" }), { status: 200 });
+        }
+        if (urlStr.includes("/api/v1/settings/77")) {
+          return new Response(JSON.stringify({ id: 77, name: "ticket_define_email_from" }), {
+            status: 200,
+          });
+        }
+        if (urlStr.includes("/api/v1/settings")) {
+          return new Response(
+            JSON.stringify([
+              {
+                id: 77,
+                name: "ticket_define_email_from",
+                state_current: { value: "AgentNameSystemAddressName" },
+              },
+            ]),
+            { status: 200 },
+          );
         }
         if (urlStr.includes("/api/v1/channels_email_verify")) {
           return new Response(JSON.stringify({ result: "ok" }), { status: 200 });
@@ -136,6 +161,12 @@ describe("Mailbox Admin API Routes", () => {
 
       const keepOnServerCall = findKeepOnServerVerifyCall(fetchSpy);
       expect(keepOnServerCall).toBeDefined();
+      expect(findSenderFormatUpdateCall(fetchSpy)).toBeDefined();
+      const keepOnServerBody = JSON.parse(keepOnServerCall![1]!.body as string);
+      expect(keepOnServerBody.meta).toEqual({
+        realname: "Support Mailbox",
+        email: "test@example.com",
+      });
 
       // Verify DB creation happened
       expect(mockPrisma.mailbox.create).toHaveBeenCalledOnce();
@@ -164,6 +195,23 @@ describe("Mailbox Admin API Routes", () => {
         }
         if (urlStr.includes("/api/v1/channels_email_outbound")) {
           return new Response(JSON.stringify({ result: "ok" }), { status: 200 });
+        }
+        if (urlStr.includes("/api/v1/settings/77")) {
+          return new Response(JSON.stringify({ id: 77, name: "ticket_define_email_from" }), {
+            status: 200,
+          });
+        }
+        if (urlStr.includes("/api/v1/settings")) {
+          return new Response(
+            JSON.stringify([
+              {
+                id: 77,
+                name: "ticket_define_email_from",
+                state_current: { value: "AgentNameSystemAddressName" },
+              },
+            ]),
+            { status: 200 },
+          );
         }
         if (urlStr.includes("/api/v1/channels_email_verify")) {
           const body = JSON.parse(String(opts?.body ?? "{}"));
@@ -251,6 +299,23 @@ describe("Mailbox Admin API Routes", () => {
 
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, opts) => {
         const urlStr = String(url);
+        if (urlStr.includes("/api/v1/settings/77")) {
+          return new Response(JSON.stringify({ id: 77, name: "ticket_define_email_from" }), {
+            status: 200,
+          });
+        }
+        if (urlStr.includes("/api/v1/settings")) {
+          return new Response(
+            JSON.stringify([
+              {
+                id: 77,
+                name: "ticket_define_email_from",
+                state_current: { value: "AgentNameSystemAddressName" },
+              },
+            ]),
+            { status: 200 },
+          );
+        }
         if (urlStr.includes("/api/v1/channels_email_verify")) {
           return new Response(JSON.stringify({ result: "ok" }), { status: 200 });
         }
@@ -292,6 +357,12 @@ describe("Mailbox Admin API Routes", () => {
 
       const keepOnServerCall = findKeepOnServerVerifyCall(fetchSpy);
       expect(keepOnServerCall).toBeDefined();
+      expect(findSenderFormatUpdateCall(fetchSpy)).toBeDefined();
+      const keepOnServerBody = JSON.parse(keepOnServerCall![1]!.body as string);
+      expect(keepOnServerBody.meta).toEqual({
+        realname: "Support",
+        email: "test@example.com",
+      });
 
       expect(mockPrisma.mailbox.update).toHaveBeenCalledOnce();
     });
@@ -311,9 +382,26 @@ describe("Mailbox Admin API Routes", () => {
 
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, opts) => {
         const urlStr = String(url);
+        if (urlStr.includes("/api/v1/settings/77")) {
+          return new Response(JSON.stringify({ id: 77, name: "ticket_define_email_from" }), {
+            status: 200,
+          });
+        }
+        if (urlStr.includes("/api/v1/settings")) {
+          return new Response(
+            JSON.stringify([
+              {
+                id: 77,
+                name: "ticket_define_email_from",
+                state_current: { value: "AgentNameSystemAddressName" },
+              },
+            ]),
+            { status: 200 },
+          );
+        }
         if (urlStr.includes("/api/v1/channels_email_verify")) {
           const body = JSON.parse(String(opts?.body ?? "{}"));
-          if (body.channel_id === 102) {
+          if (body.channel_id === 102 && body.inbound?.options?.keep_on_server === true) {
             return new Response("Update failed", { status: 500 });
           }
           return new Response(JSON.stringify({ result: "ok" }), { status: 200 });

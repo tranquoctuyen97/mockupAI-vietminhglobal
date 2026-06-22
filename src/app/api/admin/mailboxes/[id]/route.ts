@@ -7,19 +7,29 @@
  * Store-scoped: verifies mailbox belongs to session tenant.
  */
 import { NextResponse } from "next/server";
+import { getRequestInfo, logAudit } from "@/lib/audit";
 import { requireMailboxAdmin } from "@/lib/auth/mailbox-admin-guard";
 import { prisma } from "@/lib/db";
-import { logAudit, getRequestInfo } from "@/lib/audit";
-import { updateMailboxSchema, toZammadInboundSsl, toZammadOutboundSsl } from "@/lib/zammad/admin-validation";
-import { updateGroup, verifyEmailChannel, updateEmailChannelInbound } from "@/lib/zammad/client";
+import {
+  toZammadInboundSsl,
+  toZammadOutboundSsl,
+  updateMailboxSchema,
+} from "@/lib/zammad/admin-validation";
+import {
+  ensureSystemAddressSenderFormat,
+  updateEmailChannelInbound,
+  updateGroup,
+  verifyEmailChannel,
+} from "@/lib/zammad/client";
 import type { ZammadInboundConfig, ZammadOutboundConfig } from "@/lib/zammad/types";
 
 const ZAMMAD_MASK = "**********";
 
-export async function GET(
-  _request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+function mailboxDisplayName(name: string | undefined, email: string): string {
+  return name?.trim() || email;
+}
+
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requireMailboxAdmin();
   if (guard.response) return guard.response;
   const { session } = guard;
@@ -55,10 +65,7 @@ export async function GET(
   return NextResponse.json({ mailbox });
 }
 
-export async function PUT(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requireMailboxAdmin();
   if (guard.response) return guard.response;
   const { session } = guard;
@@ -90,6 +97,13 @@ export async function PUT(
   }
 
   const input = parsed.data;
+  const outboundIdentity = {
+    displayName: mailboxDisplayName(
+      input.fromName ?? input.name ?? mailbox.name,
+      input.email ?? mailbox.email,
+    ),
+    email: input.email ?? mailbox.email,
+  };
 
   // Update Zammad group name if changed
   if (input.name && input.name !== mailbox.name) {
@@ -131,8 +145,8 @@ export async function PUT(
 
     const verifyResult = await verifyEmailChannel({
       meta: {
-        realname: input.fromName ?? input.name ?? mailbox.name,
-        email: input.email ?? mailbox.email,
+        realname: outboundIdentity.displayName,
+        email: outboundIdentity.email,
       },
       group_id: mailbox.zammadGroupId,
       channel_id: mailbox.zammadChannelId,
@@ -152,9 +166,28 @@ export async function PUT(
     }
   }
 
+  const senderFormatResult = await ensureSystemAddressSenderFormat();
+  if (!senderFormatResult.ok) {
+    console.error(
+      `[zammad] failed to set sender format to SystemAddressName for channel=${mailbox.zammadChannelId ?? "none"}: ${senderFormatResult.error ?? "unknown error"}`,
+    );
+    return NextResponse.json(
+      {
+        error: "Failed to configure outbound mailbox identity",
+        details: senderFormatResult.error ?? "Failed to set Zammad sender format",
+      },
+      { status: 502 },
+    );
+  }
+  console.info("[zammad] sender format set to SystemAddressName");
+
   // Ensure keep_on_server: true is set on the email channel
   if (mailbox.zammadChannelId) {
-    const keepOnServerResult = await updateEmailChannelInbound(mailbox.zammadChannelId, { keep_on_server: true });
+    const keepOnServerResult = await updateEmailChannelInbound(
+      mailbox.zammadChannelId,
+      { keep_on_server: true },
+      outboundIdentity,
+    );
     if (!keepOnServerResult.ok) {
       console.error(
         `[zammad] failed to enable keep_on_server for channel=${mailbox.zammadChannelId}: ${keepOnServerResult.error ?? "unknown error"}`,

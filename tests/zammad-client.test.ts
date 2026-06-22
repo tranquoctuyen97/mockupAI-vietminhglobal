@@ -181,7 +181,12 @@ describe("createTicketArticle", () => {
     );
 
     const { createTicketArticle } = await importClient();
-    await createTicketArticle(3, "Thank you", "customer@example.com");
+    await createTicketArticle(
+      3,
+      "Thank you",
+      "customer@example.com",
+      '"Support Team" <support@example.com>',
+    );
 
     const [, opts] = fetchSpy.mock.calls[0];
     const body = JSON.parse(opts!.body as string);
@@ -191,8 +196,49 @@ describe("createTicketArticle", () => {
       content_type: "text/plain",
       type: "email",
       sender: "Agent",
+      from: '"Support Team" <support@example.com>',
       to: "customer@example.com",
       internal: false,
+    });
+  });
+});
+
+describe("ensureSystemAddressSenderFormat", () => {
+  it("sets Zammad sender format to System Address Display Name", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              id: 7,
+              name: "ticket_define_email_from",
+              state_current: { value: "AgentNameSystemAddressName" },
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: 7,
+            name: "ticket_define_email_from",
+            state_current: { value: "SystemAddressName" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    const { ensureSystemAddressSenderFormat } = await importClient();
+    const result = await ensureSystemAddressSenderFormat();
+
+    expect(result.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(String(fetchSpy.mock.calls[1][0])).toContain("/api/v1/settings/7");
+    expect(fetchSpy.mock.calls[1][1]?.method).toBe("PUT");
+    expect(JSON.parse(fetchSpy.mock.calls[1][1]!.body as string)).toEqual({
+      state: "SystemAddressName",
     });
   });
 });
@@ -316,7 +362,11 @@ describe("updateEmailChannelInbound", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
 
     const { updateEmailChannelInbound } = await importClient();
-    const result = await updateEmailChannelInbound(3, { keep_on_server: true, folder: "custom-inbox" });
+    const result = await updateEmailChannelInbound(
+      3,
+      { keep_on_server: true, folder: "custom-inbox" },
+      { displayName: "Support Team", email: "test@example.com" },
+    );
 
     expect(result.ok).toBe(true);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
@@ -329,6 +379,7 @@ describe("updateEmailChannelInbound", () => {
     expect(body.channel_id).toBe(3);
     expect(body.group_id).toBe(3);
     expect(body.meta.email).toBe("test@example.com");
+    expect(body.meta.realname).toBe("Support Team");
     expect(body.inbound.options.keep_on_server).toBe(true);
     expect(body.inbound.options.folder).toBe("custom-inbox");
     expect(body.inbound.options.host).toBe("imap.gmail.com");

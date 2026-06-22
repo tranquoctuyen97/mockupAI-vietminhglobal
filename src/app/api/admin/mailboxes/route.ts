@@ -9,27 +9,33 @@
  *
  * Store-scoped: mailboxes belong to stores. storeId is required.
  */
-import { NextResponse } from "next/server";
+
 import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import { getRequestInfo, logAudit } from "@/lib/audit";
 import { requireMailboxAdmin } from "@/lib/auth/mailbox-admin-guard";
 import { prisma } from "@/lib/db";
-import { logAudit, getRequestInfo } from "@/lib/audit";
-import { createMailboxSchema, MAILBOX_HISTORY_WINDOW_MONTHS } from "@/lib/zammad/admin-validation";
-import { toZammadInboundSsl, toZammadOutboundSsl } from "@/lib/zammad/admin-validation";
 import {
-  createGroup,
+  createMailboxSchema,
+  MAILBOX_HISTORY_WINDOW_MONTHS,
+  toZammadInboundSsl,
+  toZammadOutboundSsl,
+} from "@/lib/zammad/admin-validation";
+import {
+  applyMailboxHistoryWindow,
   assignAdminToGroup,
-  updateGroup,
+  createGroup,
+  deleteEmailChannel,
   deleteGroup,
+  disableEmailChannel,
+  ensureSystemAddressSenderFormat,
+  findChannelByGroupId,
+  probeEmailSettings,
   testEmailInbound,
   testEmailOutbound,
-  verifyEmailChannel,
-  findChannelByGroupId,
-  disableEmailChannel,
-  deleteEmailChannel,
-  probeEmailSettings,
-  applyMailboxHistoryWindow,
   updateEmailChannelInbound,
+  updateGroup,
+  verifyEmailChannel,
 } from "@/lib/zammad/client";
 import type { ZammadInboundConfig, ZammadOutboundConfig } from "@/lib/zammad/types";
 
@@ -85,6 +91,10 @@ async function rollbackCreatedZammadResources(channelId: number | null, groupId:
   }
 }
 
+function mailboxDisplayName(name: string | undefined, email: string): string {
+  return name?.trim() || email;
+}
+
 // ─── GET /api/admin/mailboxes?storeId=... ──────────────────────────────────────
 
 export async function GET(request: NextRequest) {
@@ -96,10 +106,7 @@ export async function GET(request: NextRequest) {
   const storeId = searchParams.get("storeId");
 
   if (!storeId) {
-    return NextResponse.json(
-      { error: "storeId is required" },
-      { status: 422 },
-    );
+    return NextResponse.json({ error: "storeId is required" }, { status: 422 });
   }
 
   const store = await validateStore(storeId, session.tenantId);
@@ -157,14 +164,15 @@ export async function POST(request: NextRequest) {
   }
 
   const input = parsed.data;
+  const outboundIdentity = {
+    displayName: mailboxDisplayName(input.fromName ?? input.name, input.email),
+    email: input.email,
+  };
 
   // 2. Validate store belongs to tenant
   const store = await validateStore(input.storeId, session.tenantId);
   if (!store) {
-    return NextResponse.json(
-      { error: "Store not found or not active" },
-      { status: 404 },
-    );
+    return NextResponse.json({ error: "Store not found or not active" }, { status: 404 });
   }
 
   let groupId: number | null = null;
@@ -204,35 +212,56 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             error: "Gmail auto-detect failed",
-            details: probeResult.data?.message_human ?? probeResult.data?.message ?? "Could not connect to Gmail. Check email and App Password.",
+            details:
+              probeResult.data?.message_human ??
+              probeResult.data?.message ??
+              "Could not connect to Gmail. Check email and App Password.",
           },
           { status: 422 },
         );
       }
-      inbound = probeResult.data.setting.inbound!;
-      outbound = probeResult.data.setting.outbound!;
+      if (!probeResult.data.setting.inbound || !probeResult.data.setting.outbound) {
+        await deleteGroup(groupId).catch(() => {});
+        return NextResponse.json(
+          {
+            error: "Gmail auto-detect failed",
+            details: "Could not detect both inbound and outbound Gmail settings.",
+          },
+          { status: 422 },
+        );
+      }
+      inbound = probeResult.data.setting.inbound;
+      outbound = probeResult.data.setting.outbound;
     } else {
+      if (!input.inbound || !input.outbound) {
+        await deleteGroup(groupId).catch(() => {});
+        return NextResponse.json(
+          { error: "Custom provider requires inbound and outbound settings" },
+          { status: 400 },
+        );
+      }
+
       // Custom: use manual input
       inbound = {
         adapter: "imap",
         options: {
-          host: input.inbound!.host,
-          port: String(input.inbound!.port),
-          ssl: toZammadInboundSsl(input.inbound!.encryption),
-          user: input.inbound!.username,
-          password: input.inbound!.password,
-          folder: input.inbound!.folder ?? "inbox",
+          host: input.inbound.host,
+          port: String(input.inbound.port),
+          ssl: toZammadInboundSsl(input.inbound.encryption),
+          user: input.inbound.username,
+          password: input.inbound.password,
+          folder: input.inbound.folder ?? "inbox",
         },
       };
 
       outbound = {
         adapter: "smtp",
         options: {
-          host: input.outbound!.host,
-          port: input.outbound!.port,
-          ssl: toZammadOutboundSsl(input.outbound!.encryption),
-          user: input.outbound!.username,
-          password: input.outbound!.password,
+          host: input.outbound.host,
+          port: input.outbound.port,
+          ssl: toZammadOutboundSsl(input.outbound.encryption),
+          user: input.outbound.username,
+          password: input.outbound.password,
         },
       };
     }
@@ -271,8 +300,8 @@ export async function POST(request: NextRequest) {
     // 6. Verify + create channel (may block up to 30s)
     const verifyResult = await verifyEmailChannel({
       meta: {
-        realname: input.fromName ?? input.name,
-        email: input.email,
+        realname: outboundIdentity.displayName,
+        email: outboundIdentity.email,
       },
       group_id: groupId,
       inbound,
@@ -305,8 +334,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const senderFormatResult = await ensureSystemAddressSenderFormat();
+    if (!senderFormatResult.ok) {
+      console.error(
+        `[zammad] failed to set sender format to SystemAddressName for channel=${channelId}: ${senderFormatResult.error ?? "unknown error"}`,
+      );
+      await rollbackCreatedZammadResources(channelId, groupId);
+      return NextResponse.json(
+        {
+          error: "Failed to configure outbound mailbox identity",
+          details: senderFormatResult.error ?? "Failed to set Zammad sender format",
+        },
+        { status: 502 },
+      );
+    }
+    console.info("[zammad] sender format set to SystemAddressName");
+
     // 7a. Ensure keep_on_server: true is set on the email channel
-    const keepOnServerResult = await updateEmailChannelInbound(channelId, { keep_on_server: true });
+    const keepOnServerResult = await updateEmailChannelInbound(
+      channelId,
+      { keep_on_server: true },
+      outboundIdentity,
+    );
     if (!keepOnServerResult.ok) {
       console.error(
         `[zammad] failed to enable keep_on_server for channel=${channelId}: ${keepOnServerResult.error ?? "unknown error"}`,
@@ -335,7 +384,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 8. Save local Mailbox row — scoped to tenant and store
-    let mailbox;
+    let mailbox: { id: string };
     try {
       mailbox = await prisma.mailbox.create({
         data: {
@@ -349,7 +398,7 @@ export async function POST(request: NextRequest) {
           isActive: true,
         },
       });
-    } catch (dbError) {
+    } catch {
       console.error("[MAILBOX] DB save failed, rolling back Zammad resources");
       await rollbackCreatedZammadResources(channelId, groupId);
       return NextResponse.json(
@@ -384,9 +433,6 @@ export async function POST(request: NextRequest) {
     // Unexpected error — try to clean up
     console.error("[MAILBOX] Unexpected error during create:", err);
     await rollbackCreatedZammadResources(channelId, groupId);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

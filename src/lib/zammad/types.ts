@@ -62,6 +62,13 @@ export interface ZammadConnectionTestResult {
   };
 }
 
+export interface ZammadSetting {
+  id: number;
+  name: string;
+  state_current?: { value?: unknown };
+  state?: unknown;
+}
+
 export interface ZammadChannelAsset {
   id: number;
   group_id: number | null;
@@ -78,6 +85,15 @@ export interface ZammadChannelsEmailResponse {
   email_address_ids: number[];
   assets: {
     Channel: Record<string, ZammadChannelAsset>;
+    EmailAddress?: Record<
+      string,
+      {
+        id: number;
+        realname?: string | null;
+        email?: string | null;
+        channel_id?: number | null;
+      }
+    >;
   };
 }
 
