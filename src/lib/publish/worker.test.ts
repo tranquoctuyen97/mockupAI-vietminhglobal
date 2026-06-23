@@ -281,6 +281,35 @@ describe("resolveShopifyMockupMedia", () => {
     assert.deepEqual(result.missingColorNames, []);
   });
 
+  it("prefers backend compositeUrl for Shopify media", () => {
+    const result = resolveShopifyMockupMedia({
+      images: [
+        {
+          colorName: "White",
+          compositeUrl: "custom-mockups/renders/job-1/image-1-output.webp",
+          sourceUrl: "mockup://library/template-item-1",
+        },
+      ],
+      storage: {
+        resolvePath: (key: string) => `/abs/media/${key}`,
+      },
+      colorNames: ["White"],
+      requireRealPrintifyMockups: false,
+    });
+
+    assert.deepEqual(result.mockupImages, [
+      {
+        kind: "local",
+        path: "/abs/media/custom-mockups/renders/job-1/image-1-output.webp",
+        colorName: "White",
+      },
+    ]);
+    assert.deepEqual(result.mockupPaths, [
+      "/abs/media/custom-mockups/renders/job-1/image-1-output.webp",
+    ]);
+    assert.deepEqual(result.missingColorNames, []);
+  });
+
   it("keeps local storage media for non-strict development fallback", () => {
     const result = resolveShopifyMockupMedia({
       images: [
