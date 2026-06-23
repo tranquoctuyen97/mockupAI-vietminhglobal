@@ -12,7 +12,7 @@ import {
   compositeImage,
   compositeImageOnCustomMockup,
 } from "./composite";
-import { normalizeCompositeRegionPx } from "./custom-library";
+import { normalizeCompositeRegionPx, scaleCompositeRegionToImage } from "./custom-library";
 import {
   computeCustomPrintAreaPx,
   computeListingReadyRegion,
@@ -127,15 +127,13 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
           const effectiveRegion = compositeRegionPx
             ? normalizeCompositeRegionPx(compositeRegionPx)
             : null;
-          if (effectiveRegion) {
-            // Scale to actual image dimensions if needed
-            effectiveRegion.imageWidth = imgW;
-            effectiveRegion.imageHeight = imgH;
-          }
+          const runtimeRegion = effectiveRegion
+            ? scaleCompositeRegionToImage(effectiveRegion, imgW, imgH)
+            : null;
 
           let region: CustomCompositeRegion;
-          if (effectiveRegion) {
-            const stored = coerceCustomCompositeRegion(effectiveRegion);
+          if (runtimeRegion) {
+            const stored = coerceCustomCompositeRegion(runtimeRegion);
             if (!isBadCompositeRegion(stored, printAreaPx)) {
               region = stored;
             } else {

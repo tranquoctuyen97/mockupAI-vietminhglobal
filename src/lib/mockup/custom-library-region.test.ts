@@ -210,6 +210,9 @@ test("generation and worker use template mockup items instead of legacy custom s
   assert.match(generation, /templateMockupItem/);
   assert.match(worker, /templateMockupItem/);
   assert.match(worker, /pick\.compositeRegionPx \?\? pick\.templateMockupItem\.mockup\.compositeRegionPx/);
+  assert.match(worker, /scaleCompositeRegionToImage/);
+  assert.doesNotMatch(worker, /effectiveRegion\.imageWidth = imgW/);
+  assert.doesNotMatch(worker, /effectiveRegion\.imageHeight = imgH/);
   assert.doesNotMatch(generation, /customMockupSource/);
   assert.doesNotMatch(worker, /customMockupSource/);
 });
