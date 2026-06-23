@@ -62,7 +62,7 @@ test("wizard custom default blocks missing custom colors without printify fallba
   assert.match(stepSource, /Màu này chưa có mockup custom/);
   assert.match(stepSource, /Bỏ màu/);
   assert.match(panelSource, /Màu này sẽ chưa thể tạo mockup/);
-  assert.match(panelSource, /Mở Thư viện mockup/);
+  assert.match(panelSource, /Mở cấu hình template/);
   assert.match(panelSource, /Đổi nguồn ảnh mặc định sang Printify/);
   assert.doesNotMatch(panelSource, /fallback sang Printify/);
   assert.match(generationSource, /CUSTOM_MOCKUP_MISSING_COLOR/);
@@ -111,9 +111,9 @@ test("draft upload modal edits composite placement inline and uploads region wit
   assert.match(panelSource, /form\.set\("view", "front"\)/);
   assert.match(panelSource, /form\.set\("sceneType", "flat_lay"\)/);
   assert.match(panelSource, /form\.set\("renderMode", "COMPOSITE"\)/);
-  assert.match(panelSource, /form\.set\("isPrimary", "false"\)/);
-  assert.match(panelSource, /form\.set\("sortOrder", "0"\)/);
   assert.match(panelSource, /form\.set\("compositeRegionPx", JSON\.stringify\(value\.compositeRegionPx\)\)/);
+  assert.doesNotMatch(panelSource, /form\.set\("isPrimary"/);
+  assert.doesNotMatch(panelSource, /form\.set\("sortOrder"/);
   assert.doesNotMatch(panelSource, /view: value\.view|sceneType: value\.sceneType|sortOrder: value\.sortOrder|isPrimary: value\.isPrimary/);
   assert.match(modalSource, /designImageUrl\?: string \| null/);
   assert.match(modalSource, /imageWidth: Math\.round\(region\.imageWidth\)/);
