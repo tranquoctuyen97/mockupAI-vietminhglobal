@@ -340,3 +340,26 @@ test("ColorMockupCardGrid contains readiness header, per-card upload, and placem
   assert.match(cardSource, /CanvasPlacementEditor/);
   assert.match(cardSource, /savePlacement/);
 });
+
+test("mockup preview modal uses user-facing publish labels instead of renderer labels", () => {
+  const source = read("src/components/mockup/ColorMockupCard.tsx");
+
+  assert.match(
+    source,
+    /<button(?:(?!<\/button>)[\s\S])*activeTab === "live"(?:(?!<\/button>)[\s\S])*onClick=\{\(\) => setActiveTab\("live"\)\}(?:(?!<\/button>)[\s\S])*>\s*Ảnh xem trước\s*<\/button>/,
+  );
+  assert.match(
+    source,
+    /<button(?:(?!<\/button>)[\s\S])*activeTab === "generated"(?:(?!<\/button>)[\s\S])*onClick=\{\(\) => setActiveTab\("generated"\)\}(?:(?!<\/button>)[\s\S])*>\s*Ảnh sẽ publish\s*<\/button>/,
+  );
+  assert.doesNotMatch(
+    source,
+    /<button(?:(?!<\/button>)[\s\S])*activeTab === "live"(?:(?!<\/button>)[\s\S])*onClick=\{\(\) => setActiveTab\("live"\)\}(?:(?!<\/button>)[\s\S])*>\s*Ảnh sẽ publish\s*<\/button>/,
+  );
+  assert.doesNotMatch(
+    source,
+    /<button(?:(?!<\/button>)[\s\S])*activeTab === "generated"(?:(?!<\/button>)[\s\S])*onClick=\{\(\) => setActiveTab\("generated"\)\}(?:(?!<\/button>)[\s\S])*>\s*Ảnh xem trước\s*<\/button>/,
+  );
+  assert.doesNotMatch(source, /Vị trí hiện tại \(Live Preview\)/);
+  assert.doesNotMatch(source, /Ảnh mockup đã tạo \(Backend Output\)/);
+});

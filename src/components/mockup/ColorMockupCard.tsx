@@ -616,7 +616,7 @@ export function MockupPreviewModal({
               style={{ fontSize: "0.8rem", padding: "6px 14px" }}
               onClick={() => setActiveTab("live")}
             >
-              Vị trí hiện tại (Live Preview)
+              Ảnh xem trước
             </button>
             <button
               type="button"
@@ -624,7 +624,7 @@ export function MockupPreviewModal({
               style={{ fontSize: "0.8rem", padding: "6px 14px" }}
               onClick={() => setActiveTab("generated")}
             >
-              Ảnh mockup đã tạo (Backend Output)
+              Ảnh sẽ publish
             </button>
           </div>
         )}
