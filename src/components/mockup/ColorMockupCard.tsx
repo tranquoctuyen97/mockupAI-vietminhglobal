@@ -681,7 +681,7 @@ export function MockupPreviewModal({
                     style={{
                       width: "100%",
                       height: "100%",
-                      objectFit: "fill",
+                      objectFit: "contain",
                       display: "block",
                     }}
                   />

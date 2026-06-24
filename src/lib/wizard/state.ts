@@ -5,6 +5,7 @@
 import { Prisma, type DraftStatus } from "@prisma/client";
 import { pairDesigns } from "@/lib/designs/design-pairing";
 import { prisma } from "@/lib/db";
+import { buildTemplateMockupPickPlan } from "@/lib/mockup/template-mockup-matching";
 import { deleteDraftWithPrintifyCleanup } from "./cleanup";
 import {
   buildPairRowsFromDraftDesigns,
@@ -344,6 +345,65 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
         });
 
         nextPairIds.push(saved.id);
+      }
+    }
+
+    // ── Đồng bộ mockup library picks khi enabledColorIds thay đổi ──
+    // Chỉ chạy khi template là CUSTOM (Printify không dùng picks)
+    if (sanitized.enabledColorIds !== undefined) {
+      const activeTemplateId = sanitized.templateId ?? draft.templateId;
+      if (activeTemplateId) {
+        const tmpl = await tx.storeMockupTemplate.findUnique({
+          where: { id: activeTemplateId },
+          select: { defaultMockupSource: true },
+        });
+
+        if (tmpl?.defaultMockupSource === "CUSTOM") {
+          const templateMockupItems = await tx.templateMockupItem.findMany({
+            where: {
+              templateId: activeTemplateId,
+              mockup: { renderMode: "COMPOSITE", isActive: true, deletedAt: null },
+            },
+            select: {
+              id: true, appliesToColorIds: true,
+              sortOrder: true, isPrimary: true, createdAt: true,
+            },
+          });
+
+          const existingPicks = await tx.wizardDraftMockupLibraryPick.findMany({
+            where: { draftId: id },
+            select: { id: true, templateMockupItemId: true, colorId: true, compositeRegionPx: true },
+          });
+
+          const plan = buildTemplateMockupPickPlan({
+            selectedColorIds: sanitized.enabledColorIds,
+            templateMockupItems,
+            existingPicks,
+          });
+
+          if (plan.deleteIds.length > 0) {
+            await tx.wizardDraftMockupLibraryPick.deleteMany({
+              where: { id: { in: plan.deleteIds } },
+            });
+          }
+          for (const entry of plan.update) {
+            await tx.wizardDraftMockupLibraryPick.update({
+              where: { id: entry.id },
+              data: { sortOrder: entry.sortOrder, isPrimary: entry.isPrimary },
+            });
+          }
+          if (plan.create.length > 0) {
+            await tx.wizardDraftMockupLibraryPick.createMany({
+              data: plan.create.map((e) => ({
+                draftId: id,
+                templateMockupItemId: e.templateMockupItemId,
+                colorId: e.colorId,
+                sortOrder: e.sortOrder,
+                isPrimary: e.isPrimary,
+              })),
+            });
+          }
+        }
       }
     }
 

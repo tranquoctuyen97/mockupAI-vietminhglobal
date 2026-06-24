@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { ColorMockupCard, type CardSource } from "./ColorMockupCard";
 import { UploadMockupModal, type UploadMockupModalValue } from "./UploadMockupModal";
+import { useWizardStore } from "@/lib/wizard/use-wizard-store";
 
 // --- Types ---
 
@@ -221,6 +222,10 @@ export function ColorMockupCardGrid({
   const [uploadColorId, setUploadColorId] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
 
+  // Tự tải lại picks khi wizard store lưu xong (saving: true → false)
+  const saving = useWizardStore((s) => s.saving);
+  const prevSavingRef = useRef(false);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -245,6 +250,14 @@ export function ColorMockupCardGrid({
 
   useEffect(() => { void loadData(); }, [loadData]);
 
+  // Reload picks khi save hoàn tất (saving chuyển true → false)
+  useEffect(() => {
+    if (prevSavingRef.current && !saving) {
+      void loadData();
+    }
+    prevSavingRef.current = saving;
+  }, [saving, loadData]);
+
   // --- Compute gridRows: stable per-color mapping ---
   const gridRows = useMemo<GridRow[]>(() => {
     const pairs = designPairs ?? [];
@@ -252,50 +265,51 @@ export function ColorMockupCardGrid({
     const colorGroups = effectiveColorGroups ?? new Map();
     const designById = new Map(designs.map((d) => [d.id, d]));
     const designNameById = new Map(designs.map((d) => [d.id, d.design?.name ?? d.id]));
+    const activeDesign =
+      designs.find((design) => design.id === activeDraftDesignId) ?? designs[0] ?? null;
+    const activePair = pairs.find(
+      (pair) =>
+        pair.lightDraftDesignId === activeDesign?.id ||
+        pair.darkDraftDesignId === activeDesign?.id,
+    );
+    const activeIndependentDesign = activeDesign && !activePair ? activeDesign : null;
 
-    if (pairs.length > 0) {
-      // Pair mode: map each color to its pair's light/dark design
-      return pairs.flatMap((pair) =>
-        selectedColors.map((color) => {
-          const colorGroup = colorGroups.get(color.id) ?? "dark";
-          const mappedDraftDesignId = colorGroup === "light" ? pair.lightDraftDesignId : pair.darkDraftDesignId;
-          const mappedDesign = designById.get(mappedDraftDesignId);
-          const mappedDesignName = designNameById.get(mappedDraftDesignId) ?? mappedDraftDesignId;
-          const mappedDesignId = mappedDesign?.designId ?? "";
+    if (activePair) {
+      return selectedColors.map((color) => {
+        const colorGroup = colorGroups.get(color.id) ?? "dark";
+        const mappedDraftDesignId =
+          colorGroup === "light"
+            ? activePair.lightDraftDesignId
+            : activePair.darkDraftDesignId;
+        const mappedDesign = designById.get(mappedDraftDesignId);
+        const mappedDesignName = designNameById.get(mappedDraftDesignId) ?? mappedDraftDesignId;
+        const mappedDesignId = mappedDesign?.designId ?? "";
+        const mockupItem = findMockupItemForColor(color.id, templateItems);
+        const pickSource = picks
+          .filter((pick) => pick.colorId === color.id)
+          .map(pickToCardSource);
 
-          const mockupItem = findMockupItemForColor(color.id, templateItems);
-          const mappedMockupName = mockupItem?.mockup.name ?? "";
-
-          const pickSource = picks
-            .filter((p) => p.colorId === color.id)
-            .map(pickToCardSource);
-          const source = findSourceForColor(color.id, pickSource, selectedColors);
-
-          const activeDesign = designs.find((d) => d.id === activeDraftDesignId);
-          const activeInspectDesignName = activeDesign?.design?.name ?? "";
-
-          return {
-            key: `${pair.id}_${color.id}`,
-            color,
-            mappedDraftDesignId,
-            mappedDesignName,
-            mappedDesignId,
-            mappedMockupName,
-            source,
-            generatedOutputUrl: null, // filled below
-            isHighlighted: !activeDraftDesignId || mappedDraftDesignId === activeDraftDesignId,
-            activeInspectDesignName,
-            designPairBaseName: pair.baseName,
-          };
-        })
-      );
+        return {
+          key: `${activePair.id}_${color.id}`,
+          color,
+          mappedDraftDesignId,
+          mappedDesignName,
+          mappedDesignId,
+          mappedMockupName: mockupItem?.mockup.name ?? "",
+          source: findSourceForColor(color.id, pickSource, selectedColors),
+          generatedOutputUrl: null,
+          isHighlighted: !activeDraftDesignId || mappedDraftDesignId === activeDraftDesignId,
+          activeInspectDesignName: activeDesign?.design?.name ?? "",
+          designPairBaseName: activePair.baseName,
+        };
+      });
     }
 
-    // Independent mode: map to first draft design
-    const firstDesign = designs[0];
-    const mappedDraftDesignId = firstDesign?.id ?? "";
+    if (!activeIndependentDesign) return [];
+
+    const mappedDraftDesignId = activeIndependentDesign.id;
     const mappedDesignName = designNameById.get(mappedDraftDesignId) ?? "";
-    const mappedDesignId = firstDesign?.designId ?? "";
+    const mappedDesignId = activeIndependentDesign.designId;
 
     return selectedColors.map((color) => {
       const mockupItem = findMockupItemForColor(color.id, templateItems);
@@ -306,9 +320,6 @@ export function ColorMockupCardGrid({
         .map(pickToCardSource);
       const source = findSourceForColor(color.id, pickSource, selectedColors);
 
-      const activeDesign = designs.find((d) => d.id === activeDraftDesignId);
-      const activeInspectDesignName = activeDesign?.design?.name ?? "";
-
       return {
         key: `${mappedDraftDesignId}_${color.id}`,
         color,
@@ -318,8 +329,8 @@ export function ColorMockupCardGrid({
         mappedMockupName,
         source,
         generatedOutputUrl: null,
-        isHighlighted: !activeDraftDesignId || mappedDraftDesignId === activeDraftDesignId,
-        activeInspectDesignName,
+        isHighlighted: true,
+        activeInspectDesignName: activeIndependentDesign.design?.name ?? "",
       };
     });
   }, [selectedColors, designPairs, draftDesigns, effectiveColorGroups, picks, templateItems, activeDraftDesignId]);

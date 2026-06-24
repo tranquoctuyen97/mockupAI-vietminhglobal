@@ -39,6 +39,10 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
       const { mockupImageId, sourceUrl, designStoragePath, placementData, colorOverlayHex } =
         job.data;
 
+      if (!mockupImageId) {
+        throw new Error("mockupImageId is required in job payload");
+      }
+
       try {
         const currentImage = await prisma.mockupImage.findUnique({
           where: { id: mockupImageId },
@@ -199,6 +203,10 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
         console.error(`[MockupWorker] Failed to process image ${mockupImageId}`, error);
 
         const message = error instanceof Error ? error.message : "Unknown error";
+        if (!mockupImageId) {
+          throw error;
+        }
+
         if (isFinalBullMqAttempt(job.attemptsMade, job.opts.attempts)) {
           await markImageFailed(mockupImageId, message);
         } else {
@@ -279,6 +287,7 @@ function coerceCustomCompositeRegion(value: unknown): CustomCompositeRegion {
 }
 
 async function markImageCompleted(mockupImageId: string, relativePath: string): Promise<void> {
+  if (!mockupImageId) return;
   const image = await prisma.mockupImage.findUnique({
     where: { id: mockupImageId },
     select: { mockupJobId: true },
@@ -314,6 +323,7 @@ async function markImageCompleted(mockupImageId: string, relativePath: string): 
 }
 
 async function markImageFailed(mockupImageId: string, message: string): Promise<void> {
+  if (!mockupImageId) return;
   const image = await prisma.mockupImage.findUnique({
     where: { id: mockupImageId },
     select: { mockupJobId: true },

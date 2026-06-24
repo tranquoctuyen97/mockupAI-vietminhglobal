@@ -7,6 +7,7 @@ import { parseAIError } from "@/lib/ai/errors";
 import { withRetry } from "@/lib/ai/retry";
 import { recordAiUsageEvent } from "@/lib/ai/usage";
 import { normalizeOrganizationCollections } from "@/lib/wizard/product-organization";
+import { getIndependentDraftDesigns, getPairedDraftDesignIds } from "@/lib/wizard/publish-units";
 
 export async function POST(
   request: Request,
@@ -21,6 +22,12 @@ export async function POST(
   const body = await request.json().catch(() => ({}));
   const requestedPairId =
     typeof body.pairId === "string" && body.pairId.trim() ? body.pairId.trim() : null;
+  const requestedDesignId =
+    typeof body.designId === "string" && body.designId.trim() ? body.designId.trim() : null;
+
+  if (requestedPairId && requestedDesignId) {
+    return NextResponse.json({ error: "Choose either pairId or designId" }, { status: 400 });
+  }
 
   // Validate draft & user permissions
   const draft = await prisma.wizardDraft.findFirst({
@@ -66,154 +73,128 @@ export async function POST(
       .map((c: any) => c.name) || [];
   const placementObj = (draft.placementOverride as { position?: string }) || {};
   const productType = draft.template?.blueprintTitle || draft.store?.name || "T-Shirt";
+  const pairedDraftDesignIds = getPairedDraftDesignIds(draft.designPairs);
+  const independentDraftDesigns = getIndependentDraftDesigns(draft.draftDesigns, draft.designPairs);
 
-  if (draft.designPairs.length > 0) {
-    const targetPairs = requestedPairId
-      ? draft.designPairs.filter((pair) => pair.id === requestedPairId)
-      : draft.designPairs;
-
-    if (targetPairs.length === 0) {
-      return NextResponse.json({ error: "Design pair not found" }, { status: 404 });
-    }
-
-    try {
-      const { generator, config } = await getAiProvider(session.tenantId);
-      const generatedPairs = await runWithConcurrency(targetPairs, 3, async (pair) => {
-        const input = {
-          designName: `${pair.baseName} | Light: ${pair.lightDesign.design.name} | Dark: ${pair.darkDesign.design.name}`,
-          productType,
-          colors: colors.length > 0 ? colors : ["Default"],
-          placement: placementObj.position || "Front",
-        };
-        const cacheKey = generateCacheKey(input, config.provider, config.model, config.systemPrompt);
-        const cached = await getCachedContent(cacheKey);
-        const content = cached
-          ? cached
-          : await Promise.race([
-              withRetry(() => generator.generate(input), { maxAttempts: 2 }),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error("AI provider timeout (45s)")), 45_000),
-              ),
-            ]);
-
-        if (!cached) {
-          await saveToCache(cacheKey, content, config.provider, config.model);
-        }
-
-        const aiContent = {
-          title: content.title,
-          description: content.description,
-          tags: content.tags,
-          collections: normalizeOrganizationCollections((content as any).collections ?? []),
-          altText: content.altText,
-        };
-
-        await prisma.wizardDraftDesignPair.update({
-          where: { id: pair.id },
-          data: { aiContent },
-        });
-        await recordAiUsageEvent({
-          tenantId: session.tenantId,
-          provider: config.provider,
-          model: config.model,
-          draftId,
-          status: "success",
-          cacheHit: Boolean(cached),
-          tokensIn: cached ? undefined : content.tokensIn,
-          tokensOut: cached ? undefined : content.tokensOut,
-        });
-
-        return { id: pair.id, content: aiContent, cached: Boolean(cached) };
-      });
-
-      return NextResponse.json({
-        pairs: generatedPairs,
-        content: generatedPairs[0]?.content ?? null,
-        cached: generatedPairs.every((pair) => pair.cached),
-      });
-    } catch (error) {
-      console.error("[Wizard] Pair AI Content Generation Error:", error);
-      const parsed = parseAIError(error);
-      return NextResponse.json(
-        {
-          error: parsed.code,
-          message: parsed.userMessage,
-          retryable: parsed.retryable,
-          ...(parsed.supportHint ? { supportHint: parsed.supportHint } : {}),
-        },
-        { status: parsed.retryable ? 503 : 500 },
-      );
-    }
+  if (requestedDesignId && pairedDraftDesignIds.has(requestedDesignId)) {
+    return NextResponse.json(
+      { error: "Design belongs to a pair. Generate content by pairId instead." },
+      { status: 400 },
+    );
   }
 
-  const input = {
-    designName: primaryDesign.name,
-    productType,
-    colors: colors.length > 0 ? colors : ["Default"],
-    placement: placementObj.position || "Front",
-  };
+  const targetPairs = requestedPairId
+    ? draft.designPairs.filter((pair) => pair.id === requestedPairId)
+    : requestedDesignId
+      ? []
+      : draft.designPairs;
+  const targetIndependentDesigns = requestedDesignId
+    ? independentDraftDesigns.filter((draftDesign) => draftDesign.id === requestedDesignId)
+    : requestedPairId
+      ? []
+      : independentDraftDesigns;
+
+  if (requestedPairId && targetPairs.length === 0) {
+    return NextResponse.json({ error: "Design pair not found" }, { status: 404 });
+  }
+  if (requestedDesignId && targetIndependentDesigns.length === 0) {
+    return NextResponse.json({ error: "Draft design not found" }, { status: 404 });
+  }
+  if (targetPairs.length === 0 && targetIndependentDesigns.length === 0) {
+    return NextResponse.json({ error: "Design not selected" }, { status: 400 });
+  }
 
   let usageContext: { provider: string; model: string } | null = null;
 
   try {
     const { generator, config } = await getAiProvider(session.tenantId);
     usageContext = { provider: config.provider, model: config.model };
-    // Check cache
-    const cacheKey = generateCacheKey(input, config.provider, config.model, config.systemPrompt);
-    const cached = await getCachedContent(cacheKey);
 
-    if (cached) {
-      await prisma.wizardDraft.update({
-        where: { id: draftId },
-        data: { aiContent: cached as any },
-      });
+    const generateForInput = async (input: {
+      designName: string;
+      productType: string;
+      colors: string[];
+      placement: string;
+    }) => {
+      const cacheKey = generateCacheKey(input, config.provider, config.model, config.systemPrompt);
+      const cached = await getCachedContent(cacheKey);
+      const content = cached
+        ? cached
+        : await Promise.race([
+            withRetry(() => generator.generate(input), { maxAttempts: 2 }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("AI provider timeout (45s)")), 45_000),
+            ),
+          ]);
+
+      if (!cached) {
+        await saveToCache(cacheKey, content, config.provider, config.model);
+      }
+
+      const aiContent = {
+        title: content.title,
+        description: content.description,
+        tags: content.tags,
+        collections: normalizeOrganizationCollections((content as any).collections ?? []),
+        altText: content.altText,
+      };
+
       await recordAiUsageEvent({
         tenantId: session.tenantId,
         provider: config.provider,
         model: config.model,
         draftId,
         status: "success",
-        cacheHit: true,
+        cacheHit: Boolean(cached),
+        tokensIn: cached ? undefined : content.tokensIn,
+        tokensOut: cached ? undefined : content.tokensOut,
       });
-      return NextResponse.json({ content: cached, cached: true });
-    }
 
-    // Call provider with retry + overall timeout cap
-    const GENERATE_TIMEOUT_MS = 45_000;
-    const result = await Promise.race([
-      withRetry(() => generator.generate(input), { maxAttempts: 2 }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("AI provider timeout (45s)")), GENERATE_TIMEOUT_MS),
-      ),
-    ]);
-
-    // Save to Cache
-    await saveToCache(cacheKey, result, config.provider, config.model);
-
-    // Update draft
-    const aiContent = {
-      title: result.title,
-      description: result.description,
-      tags: result.tags,
-      altText: result.altText,
+      return { aiContent, cached: Boolean(cached) };
     };
 
-    await prisma.wizardDraft.update({
-      where: { id: draftId },
-      data: { aiContent },
-    });
-    await recordAiUsageEvent({
-      tenantId: session.tenantId,
-      provider: config.provider,
-      model: config.model,
-      draftId,
-      status: "success",
-      cacheHit: false,
-      tokensIn: result.tokensIn,
-      tokensOut: result.tokensOut,
+    const pairResults = await runWithConcurrency(targetPairs, 3, async (pair) => {
+      const { aiContent, cached } = await generateForInput({
+        designName: `${pair.baseName} | Light: ${pair.lightDesign.design.name} | Dark: ${pair.darkDesign.design.name}`,
+        productType,
+        colors: colors.length > 0 ? colors : ["Default"],
+        placement: placementObj.position || "Front",
+      });
+
+      await prisma.wizardDraftDesignPair.update({
+        where: { id: pair.id },
+        data: { aiContent },
+      });
+
+      return { id: pair.id, content: aiContent, cached };
     });
 
-    return NextResponse.json({ content: result, cached: false });
+    const designResults = await runWithConcurrency(
+      targetIndependentDesigns,
+      3,
+      async (draftDesign) => {
+        const { aiContent, cached } = await generateForInput({
+          designName: draftDesign.design.name,
+          productType,
+          colors: colors.length > 0 ? colors : ["Default"],
+          placement: placementObj.position || "Front",
+        });
+
+        await prisma.wizardDraftDesign.update({
+          where: { id: draftDesign.id },
+          data: { aiContent },
+        });
+
+        return { id: draftDesign.id, content: aiContent, cached };
+      },
+    );
+
+    return NextResponse.json({
+      pairs: pairResults,
+      designs: designResults,
+      content: pairResults[0]?.content ?? designResults[0]?.content ?? null,
+      cached: [...pairResults, ...designResults].every((entry) => entry.cached),
+    });
   } catch (error) {
     console.error("[Wizard] AI Content Generation Error:", error);
 

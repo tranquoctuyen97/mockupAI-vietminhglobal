@@ -9,11 +9,16 @@ import { prisma } from "@/lib/db";
 import { normalizeMoneyValue, resolveBaseTemplatePrice } from "@/lib/pricing/template-pricing";
 import { generateIdempotencyKey, runPublishWorker } from "@/lib/publish/worker";
 import { normalizeOrganizationCollections } from "@/lib/wizard/product-organization";
+import {
+  getIndependentDraftDesigns,
+  hasAiTitle,
+} from "@/lib/wizard/publish-units";
 
 type DraftDesignSelection = {
   id: string;
   designId: string;
   sortOrder: number;
+  aiContent?: unknown | null;
   design?: {
     id: string;
     name: string;
@@ -40,6 +45,7 @@ function resolveSelectedDraftDesigns(draft: any): DraftDesignSelection[] {
         id: entry.id,
         designId: entry.designId,
         sortOrder: entry.sortOrder ?? 0,
+        aiContent: entry.aiContent ?? null,
         design: entry.design ?? null,
       }));
   }
@@ -51,6 +57,7 @@ function resolveSelectedDraftDesigns(draft: any): DraftDesignSelection[] {
       id: draft.designId,
       designId: draft.designId,
       sortOrder: 0,
+      aiContent: null,
       design: draft.design
         ? {
             id: draft.design.id ?? draft.designId,
@@ -121,16 +128,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     });
   }
 
-  const aiContent = draft.aiContent as {
-    title?: string;
-    description?: string;
-    tags?: string[];
-    collections?: string[];
-  } | null;
-  if (!aiContent?.title) {
-    return NextResponse.json({ error: "AI content not generated" }, { status: 400 });
-  }
-
   const priceUsd =
     normalizeMoneyValue(body.priceUsd) ??
     resolveBaseTemplatePrice({
@@ -146,138 +143,52 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         hex: c.hex,
       })) || [];
 
-  if (draft.designPairs.length > 0) {
-    if (selectedDraftDesigns.length !== draft.designPairs.length * 2) {
-      return NextResponse.json(
-        { error: "Resolve unpaired light/dark designs before publishing" },
-        { status: 400 },
-      );
-    }
-
-    const listings: PublishListingResponse[] = [];
-    const workersToStart: Array<{ listingId: string }> = [];
-
-    for (const pair of draft.designPairs) {
-      const pairContent = pair.aiContent as {
-        title?: string;
-        description?: string;
-        tags?: string[];
-        collections?: string[];
-      } | null;
-
-      if (!pairContent?.title) {
-        return NextResponse.json(
-          { error: `AI content not generated for ${pair.baseName}` },
-          { status: 400 },
-        );
-      }
-
-      const existingListing = await prisma.listing.findUnique({
-        where: { wizardDraftDesignPairId: pair.id },
-      });
-
-      if (existingListing) {
-        listings.push({
-          listingId: existingListing.id,
-          designPairId: pair.id,
-          draftDesignId: existingListing.wizardDraftDesignId ?? null,
-          designId: existingListing.designId ?? pair.lightDesign.designId,
-          designName: pair.baseName,
-          status: existingListing.status,
-          alreadyPublished: true,
-        });
-        continue;
-      }
-
-      const listing = await prisma.listing.create({
-        data: {
-          tenantId: session.tenantId,
-          storeId: draft.storeId,
-          designId: pair.lightDesign.designId,
-          templateId: template?.id || null,
-          wizardDraftId: draftId,
-          wizardDraftDesignId: pair.lightDraftDesignId,
-          wizardDraftDesignPairId: pair.id,
-          title: pairContent.title || "",
-          descriptionHtml: formatDescriptionHtml(pairContent.description),
-          tags: pairContent.tags || [],
-          organizationCollections: normalizeOrganizationCollections(pairContent.collections),
-          priceUsd,
-          createdBy: session.id,
-          variants: {
-            create: colors.map((c) => ({
-              colorName: c.name,
-              colorHex: c.hex,
-            })),
-          },
-          publishJobs: {
-            create: [
-              {
-                idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, pair.id)}-shopify`,
-                stage: "SHOPIFY",
-              },
-              {
-                idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, pair.id)}-printify`,
-                stage: "PRINTIFY",
-              },
-            ],
-          },
-        },
-      });
-
-      listings.push({
-        listingId: listing.id,
-        designPairId: pair.id,
-        draftDesignId: listing.wizardDraftDesignId ?? null,
-        designId: pair.lightDesign.designId,
-        designName: pair.baseName,
-        status: "PUBLISHING",
-        alreadyPublished: false,
-      });
-      workersToStart.push({ listingId: listing.id });
-    }
-
-    await prisma.wizardDraft.update({
-      where: { id: draftId },
-      data: { status: "PUBLISHED" },
-    });
-
-    void runPublishWorkersWithConcurrency({
-      workers: workersToStart,
-      draftId,
-      tenantId: session.tenantId,
-    });
-
-    return NextResponse.json({ listings });
-  }
-
-  const hasDraftDesignRows = (draft.draftDesigns ?? []).length > 0;
   const listings: PublishListingResponse[] = [];
   const workersToStart: Array<{ listingId: string }> = [];
 
-  for (const legacyDraftDesign of selectedDraftDesigns) {
-    let existingListing = hasDraftDesignRows
-      ? await prisma.listing.findFirst({
-          where: { tenantId: session.tenantId, wizardDraftDesignId: legacyDraftDesign.id },
-        })
-      : null;
+  const independentDraftDesigns = getIndependentDraftDesigns(selectedDraftDesigns, draft.designPairs);
 
-    if (!existingListing) {
-      existingListing = await prisma.listing.findFirst({
-        where: {
-          tenantId: session.tenantId,
-          wizardDraftId: draftId,
-          designId: legacyDraftDesign.designId,
-        },
-      });
-    }
+  const pairMissingContent = draft.designPairs.find((pair) => !hasAiTitle(pair.aiContent));
+  if (pairMissingContent) {
+    return NextResponse.json(
+      { error: `Thiếu nội dung cho cặp ${pairMissingContent.baseName || pairMissingContent.id}` },
+      { status: 400 },
+    );
+  }
+
+  const independentMissingContent = independentDraftDesigns.find(
+    (draftDesign) => !hasAiTitle(draftDesign.aiContent),
+  );
+  if (independentMissingContent) {
+    return NextResponse.json(
+      {
+        error: `Thiếu nội dung cho design ${
+          independentMissingContent.design?.name || independentMissingContent.id
+        }`,
+      },
+      { status: 400 },
+    );
+  }
+
+  for (const pair of draft.designPairs) {
+    const pairContent = pair.aiContent as {
+      title?: string;
+      description?: string;
+      tags?: string[];
+      collections?: string[];
+    };
+
+    const existingListing = await prisma.listing.findUnique({
+      where: { wizardDraftDesignPairId: pair.id },
+    });
 
     if (existingListing) {
       listings.push({
         listingId: existingListing.id,
+        designPairId: pair.id,
         draftDesignId: existingListing.wizardDraftDesignId ?? null,
-        designId: existingListing.designId ?? legacyDraftDesign.designId,
-        designName: legacyDraftDesign.design?.name ?? "Design",
+        designId: existingListing.designId ?? pair.lightDesign.designId,
+        designName: pair.baseName,
         status: existingListing.status,
         alreadyPublished: true,
       });
@@ -288,14 +199,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       data: {
         tenantId: session.tenantId,
         storeId: draft.storeId,
-        designId: legacyDraftDesign.designId,
+        designId: pair.lightDesign.designId,
         templateId: template?.id || null,
         wizardDraftId: draftId,
-        wizardDraftDesignId: hasDraftDesignRows ? legacyDraftDesign.id : null,
-        title: aiContent.title || "",
-        descriptionHtml: formatDescriptionHtml(aiContent.description),
-        tags: aiContent.tags || [],
-        organizationCollections: normalizeOrganizationCollections(aiContent.collections),
+        wizardDraftDesignId: pair.lightDraftDesignId,
+        wizardDraftDesignPairId: pair.id,
+        title: pairContent.title || "",
+        descriptionHtml: formatDescriptionHtml(pairContent.description),
+        tags: pairContent.tags || [],
+        organizationCollections: normalizeOrganizationCollections(pairContent.collections),
         priceUsd,
         createdBy: session.id,
         variants: {
@@ -307,11 +219,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         publishJobs: {
           create: [
             {
-              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, legacyDraftDesign.id)}-shopify`,
+              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, pair.id)}-shopify`,
               stage: "SHOPIFY",
             },
             {
-              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, legacyDraftDesign.id)}-printify`,
+              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, pair.id)}-printify`,
               stage: "PRINTIFY",
             },
           ],
@@ -321,9 +233,83 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     listings.push({
       listingId: listing.id,
+      designPairId: pair.id,
       draftDesignId: listing.wizardDraftDesignId ?? null,
-      designId: legacyDraftDesign.designId,
-      designName: legacyDraftDesign.design?.name ?? "Design",
+      designId: pair.lightDesign.designId,
+      designName: pair.baseName,
+      status: "PUBLISHING",
+      alreadyPublished: false,
+    });
+    workersToStart.push({ listingId: listing.id });
+  }
+
+  for (const draftDesign of independentDraftDesigns) {
+    const independentContent = draftDesign.aiContent as {
+      title?: string;
+      description?: string;
+      tags?: string[];
+      collections?: string[];
+    };
+
+    const existingListing = await prisma.listing.findUnique({
+      where: { wizardDraftDesignId: draftDesign.id },
+    });
+
+    if (existingListing) {
+      listings.push({
+        listingId: existingListing.id,
+        designPairId: null,
+        draftDesignId: existingListing.wizardDraftDesignId ?? null,
+        designId: existingListing.designId ?? draftDesign.designId,
+        designName: draftDesign.design?.name ?? "Design",
+        status: existingListing.status,
+        alreadyPublished: true,
+      });
+      continue;
+    }
+
+    const listing = await prisma.listing.create({
+      data: {
+        tenantId: session.tenantId,
+        storeId: draft.storeId,
+        designId: draftDesign.designId,
+        templateId: template?.id || null,
+        wizardDraftId: draftId,
+        wizardDraftDesignId: draftDesign.id,
+        wizardDraftDesignPairId: null,
+        title: independentContent.title || "",
+        descriptionHtml: formatDescriptionHtml(independentContent.description),
+        tags: independentContent.tags || [],
+        organizationCollections: normalizeOrganizationCollections(independentContent.collections),
+        priceUsd,
+        createdBy: session.id,
+        variants: {
+          create: colors.map((c) => ({
+            colorName: c.name,
+            colorHex: c.hex,
+          })),
+        },
+        publishJobs: {
+          create: [
+            {
+              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, draftDesign.id)}-shopify`,
+              stage: "SHOPIFY",
+            },
+            {
+              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, draftDesign.id)}-printify`,
+              stage: "PRINTIFY",
+            },
+          ],
+        },
+      },
+    });
+
+    listings.push({
+      listingId: listing.id,
+      designPairId: null,
+      draftDesignId: listing.wizardDraftDesignId ?? null,
+      designId: draftDesign.designId,
+      designName: draftDesign.design?.name ?? "Design",
       status: "PUBLISHING",
       alreadyPublished: false,
     });
@@ -335,19 +321,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     data: { status: "PUBLISHED" },
   });
 
-  void (async () => {
-    for (const worker of workersToStart) {
-      try {
-        await runPublishWorker({
-          listingId: worker.listingId,
-          draftId,
-          tenantId: session.tenantId,
-        });
-      } catch (err) {
-        console.error(`[Publish API] Worker error for listing ${worker.listingId}:`, err);
-      }
-    }
-  })();
+  void runPublishWorkersWithConcurrency({
+    workers: workersToStart,
+    draftId,
+    tenantId: session.tenantId,
+  });
 
   return NextResponse.json({ listings });
 }

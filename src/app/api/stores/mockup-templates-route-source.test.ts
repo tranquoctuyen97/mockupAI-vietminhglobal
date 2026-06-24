@@ -20,3 +20,19 @@ test("mockup templates route no longer exposes template default composite region
   assert.doesNotMatch(source, /defaultCompositeRegionPx/);
   assert.match(source, /mockupItems/);
 });
+
+test("mockup templates routes include defaultTags in read and write contracts", () => {
+  const listRoute = readFileSync(join(process.cwd(), "src/app/api/stores/[id]/mockup-templates/route.ts"), "utf8");
+  const detailRoute = readFileSync(join(process.cwd(), "src/app/api/stores/[id]/mockup-templates/[templateId]/route.ts"), "utf8");
+  const service = readFileSync(join(process.cwd(), "src/lib/stores/store-service.ts"), "utf8");
+
+  assert.match(listRoute, /loadTemplateDefaultTags/);
+  assert.match(listRoute, /defaultTagsByTemplateId\.get\(template\.id\)\s*\?\?\s*\[\]/);
+  assert.match(listRoute, /defaultTags\?:\s*unknown/);
+  assert.match(listRoute, /normalizeTags\(data\.defaultTags/);
+  assert.match(detailRoute, /defaultTags:\s*body\.defaultTags/);
+  assert.match(service, /defaultTags\?:\s*unknown/);
+  assert.match(service, /function updateTemplateDefaultTags/);
+  assert.match(service, /loadTemplateDefaultTags/);
+  assert.match(service, /originalDefaultTags/);
+});

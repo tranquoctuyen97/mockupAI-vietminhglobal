@@ -113,8 +113,16 @@ export default function WizardLayout({
           return (
             <button
               key={step.num}
-              onClick={() => {
+            onClick={async () => {
                 if (isAccessible) {
+                  const store = useWizardStore.getState();
+                  if (store.step4SaveHandler) {
+                    try {
+                      await store.step4SaveHandler();
+                    } catch (err) {
+                      return;
+                    }
+                  }
                   router.push(`/wizard/${draftId}/${step.path}`);
                 }
               }}
@@ -167,7 +175,15 @@ export default function WizardLayout({
       >
         <button
           className="btn btn-secondary"
-          onClick={() => {
+          onClick={async () => {
+            const store = useWizardStore.getState();
+            if (store.step4SaveHandler) {
+              try {
+                await store.step4SaveHandler();
+              } catch (err) {
+                return;
+              }
+            }
             if (currentStep > 1) {
               router.push(`/wizard/${draftId}/step-${currentStep - 1}`);
             } else {
@@ -182,23 +198,21 @@ export default function WizardLayout({
           <button
             className="btn btn-primary"
             onClick={async () => {
+              const store = useWizardStore.getState();
+              if (store.step4SaveHandler) {
+                try {
+                  await store.step4SaveHandler();
+                } catch (err) {
+                  return;
+                }
+              }
               if (currentStep === 2) {
-                const store = useWizardStore.getState();
                 const selectedDesignCount = getDraftDesignIdsFromDraft(store.draft).length;
                 if (selectedDesignCount === 0) return;
 
                 await store.saveDraftImmediately();
-
-                const freshDraft = useWizardStore.getState().draft;
-                const pairCount = freshDraft?.designPairs?.length ?? 0;
-                // Only block when pairs exist and design count doesn't match pair expectation.
-                // Independent designs (pairCount === 0) are always valid.
-                if (pairCount > 0 && selectedDesignCount !== pairCount * 2) {
-                  return;
-                }
               }
               if (draft) {
-                const store = useWizardStore.getState();
                 store.updateDraft({
                   currentStep: Math.max(draft.currentStep, currentStep + 1),
                 });

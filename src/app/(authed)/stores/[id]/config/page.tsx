@@ -39,6 +39,7 @@ import {
   createPlacementDataWithFront,
   VIEW_LABELS,
 } from "@/lib/placement/views";
+import { MAX_TAGS, normalizeTags } from "@/lib/wizard/product-organization";
 
 interface TemplateDetail {
   id: string;
@@ -60,6 +61,7 @@ interface TemplateDetail {
   defaultMockupSource: "PRINTIFY" | "CUSTOM";
   basePriceUsd: number | null;
   priceBySizeDefault: Record<string, number> | null;
+  defaultTags: string[];
   blueprintImageUrl?: string | null;
   blueprintBrand?: string | null;
   colors: Array<{
@@ -636,6 +638,7 @@ function createEmptyTemplate(sortOrder: number, isDefault = false, name = ""): T
     defaultMockupSource: "PRINTIFY",
     basePriceUsd: null,
     priceBySizeDefault: null,
+    defaultTags: [],
     colors: [],
   };
 }
@@ -742,6 +745,7 @@ function TemplatesSection({
     if (JSON.stringify(tempTemplateData.enabledSizesByColor) !== JSON.stringify(originalTemplate.enabledSizesByColor)) return true;
     if (JSON.stringify(tempTemplateData.defaultPlacement) !== JSON.stringify(originalTemplate.defaultPlacement)) return true;
     if (JSON.stringify(tempTemplateData.priceBySizeDefault) !== JSON.stringify(originalTemplate.priceBySizeDefault)) return true;
+    if (JSON.stringify(tempTemplateData.defaultTags ?? []) !== JSON.stringify(originalTemplate.defaultTags ?? [])) return true;
 
     const tempColors = tempTemplateData.colors?.map((tc) => tc.color.name).sort().join(",") ?? "";
     const origColors = originalTemplate.colors?.map((tc) => tc.color.name).sort().join(",") ?? "";
@@ -942,6 +946,7 @@ function TemplatesSection({
         defaultMockupSource: tempTemplateData.defaultMockupSource,
         basePriceUsd: tempTemplateData.basePriceUsd,
         priceBySizeDefault: tempTemplateData.priceBySizeDefault,
+        defaultTags: tempTemplateData.defaultTags,
       };
 
       const res = await fetch(url, {
@@ -1580,6 +1585,10 @@ function EditorBlueprintStep({
             style={{ width: "100%" }}
           />
         </div>
+        <TemplateDefaultTagsField
+          value={value.defaultTags ?? []}
+          onChange={(defaultTags) => onChange({ defaultTags })}
+        />
       </div>
 
       <h4 style={{ fontWeight: 700, marginBottom: 16 }}>Chọn sản phẩm từ Printify</h4>
@@ -1758,6 +1767,79 @@ function EditorBlueprintStep({
 
       {/* Nguồn mockup mặc định */}
       <MockupSourceSection store={store} value={value} onChange={onChange} />
+    </div>
+  );
+}
+
+function TemplateDefaultTagsField({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (tags: string[]) => void;
+}) {
+  const [tagInput, setTagInput] = useState("");
+  const tags = normalizeTags(value);
+
+  function addTag() {
+    const next = normalizeTags([...tags, tagInput]);
+    onChange(next);
+    setTagInput("");
+  }
+
+  function removeTag(tag: string) {
+    onChange(tags.filter((item) => item !== tag));
+  }
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <label style={{ display: "block", fontWeight: 600, marginBottom: 6, fontSize: "0.85rem" }}>
+        Default tags ({tags.length}/{MAX_TAGS})
+      </label>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+        {tags.map((tag) => (
+          <span
+            key={tag}
+            className="flex items-center gap-1"
+            style={{ padding: "4px 10px", borderRadius: "var(--radius-sm)", backgroundColor: "var(--bg-tertiary)", fontSize: "0.78rem", fontWeight: 500 }}
+          >
+            {tag}
+            <button
+              type="button"
+              onClick={() => removeTag(tag)}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", opacity: 0.5 }}
+            >
+              <X size={12} />
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          className="input"
+          value={tagInput}
+          onChange={(event) => setTagInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              addTag();
+            }
+          }}
+          placeholder="Thêm default tag..."
+          style={{ flex: 1, maxWidth: 360 }}
+          disabled={tags.length >= MAX_TAGS}
+        />
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={addTag}
+          disabled={tags.length >= MAX_TAGS || !tagInput.trim()}
+          style={{ fontSize: "0.8rem" }}
+        >
+          <Plus size={14} /> Thêm
+        </button>
+      </div>
     </div>
   );
 }

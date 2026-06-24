@@ -7,7 +7,7 @@ import {
   getDraftDesignIdsFromDraft,
   useWizardStore,
 } from "@/lib/wizard/use-wizard-store";
-import { Image as ImageIcon, Check, Loader2, Search, X, AlertTriangle } from "lucide-react";
+import { Image as ImageIcon, Check, Loader2, Search, X } from "lucide-react";
 
 interface Design {
   id: string;
@@ -55,8 +55,7 @@ export default function Step2DesignPage() {
     .map((id) => availableDesigns.get(id))
     .filter((design): design is Design => Boolean(design));
   const pairing = pairDesigns(selectedDesigns);
-  const pairMode = pairing.pairs.length > 0;
-  const hasBlockingUnpairedPairs = pairMode && pairing.unpaired.length > 0;
+  const independentCount = pairing.independent.length + pairing.unpaired.length;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -119,7 +118,7 @@ export default function Step2DesignPage() {
         Chọn Design ({selectedDesignIds.length}/{MAX_WIZARD_DESIGNS} đã chọn)
       </h2>
       <p style={{ opacity: 0.5, fontSize: "0.85rem", margin: "0 0 20px" }}>
-        Bạn có thể chọn 1 design. Nếu dùng biến thể sáng/tối, hãy chọn đủ cặp tương ứng.
+        Design sáng/tối chỉ ghép cặp khi chọn đủ hai bản. Design còn lại sẽ publish riêng.
       </p>
 
       {!draft?.storeId && (
@@ -217,15 +216,9 @@ export default function Step2DesignPage() {
               <p style={{ fontWeight: 700, margin: 0 }}>Cặp sáng/tối</p>
               <p style={{ opacity: 0.5, fontSize: "0.78rem", margin: "3px 0 0" }}>
                 {pairing.pairs.length} cặp hợp lệ
-                {pairing.independent.length > 0 && ` · ${pairing.independent.length} design độc lập`}
+                {independentCount > 0 && ` · ${independentCount} design độc lập`}
               </p>
             </div>
-            {hasBlockingUnpairedPairs && (
-              <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#b45309", fontSize: "0.78rem", fontWeight: 700 }}>
-                <AlertTriangle size={15} />
-                Thiếu design để ghép cặp
-              </div>
-            )}
           </div>
 
           {pairing.pairs.length > 0 && (
@@ -259,25 +252,6 @@ export default function Step2DesignPage() {
             </div>
           )}
 
-          {pairing.unpaired.length > 0 && (
-            <div style={{ marginTop: 12, display: "grid", gap: 6 }}>
-              {pairing.unpaired.map((item) => (
-                <div
-                  key={item.id}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: "var(--radius-sm)",
-                    background: "rgba(180, 83, 9, 0.08)",
-                    color: "#92400e",
-                    fontSize: "0.78rem",
-                    fontWeight: 650,
-                  }}
-                >
-                  {item.name} — thiếu bản sáng/tối còn lại
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
 

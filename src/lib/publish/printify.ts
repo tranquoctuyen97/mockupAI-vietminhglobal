@@ -22,7 +22,8 @@ export interface PrintifyPublishInput {
   variants?: Array<{ id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean }>;
   mockupPaths: string[]; // absolute file paths
   selectedMockupIds?: string[]; // Printify mockup IDs selected by user
-  designPath: string; // original design file path
+  designPath?: string; // original design file path (optional if imageGroups provided)
+  imageGroups?: Array<{ imageId: string; variantIds: number[] }>;
   // Phase 6.10: placement from store preset
   placementMm?: {
     xMm: number;
@@ -49,18 +50,59 @@ export async function publishToPrintify(
     "Content-Type": "application/json",
   };
 
-  // Step 1: Upload design image to Printify (base64)
-  const designImageId = await uploadImageBase64(
-    headers,
-    input.designPath,
-    `design_${basename(input.designPath)}`,
-  );
+  // Step 1: Upload design image to Printify (base64) if imageGroups not provided
+  let designImageId: string | undefined;
+  if (!input.imageGroups?.length && input.designPath) {
+    designImageId = await uploadImageBase64(
+      headers,
+      input.designPath,
+      `design_${basename(input.designPath)}`,
+    );
+  }
 
   // Step 2: Create product
   // When explicit variants provided, print_areas must reference ALL their IDs
   const effectiveVariantIds = input.variants
-    ? input.variants.map(v => v.id)
+    ? input.variants.map((v) => v.id)
     : input.variantIds;
+
+  const printAreas = input.imageGroups?.length
+    ? input.imageGroups.map((group) => ({
+        variant_ids: group.variantIds,
+        placeholders: [
+          {
+            position: "front",
+            images: [
+              {
+                id: group.imageId,
+                ...mmToPrintifyCoords(
+                  input.placementMm,
+                  input.printAreaMm ?? { widthMm: 355.6, heightMm: 406.4 },
+                ),
+              },
+            ],
+          },
+        ],
+      }))
+    : [
+        {
+          variant_ids: effectiveVariantIds,
+          placeholders: [
+            {
+              position: "front",
+              images: [
+                {
+                  id: designImageId!,
+                  ...mmToPrintifyCoords(
+                    input.placementMm,
+                    input.printAreaMm ?? { widthMm: 355.6, heightMm: 406.4 },
+                  ),
+                },
+              ],
+            },
+          ],
+        },
+      ];
 
   const productPayload = {
     title: input.title,
@@ -72,25 +114,7 @@ export async function publishToPrintify(
       price: 2000, // Fallback if variants list not provided
       is_enabled: true,
     })),
-    print_areas: [
-      {
-        variant_ids: effectiveVariantIds,
-        placeholders: [
-          {
-            position: "front",
-            images: [
-              {
-                id: designImageId,
-                ...mmToPrintifyCoords(
-                  input.placementMm,
-                  input.printAreaMm ?? { widthMm: 355.6, heightMm: 406.4 },
-                ),
-              },
-            ],
-          },
-        ],
-      },
-    ],
+    print_areas: printAreas,
     // Tell Printify which mockups to generate/publish
     ...(input.selectedMockupIds && input.selectedMockupIds.length > 0
       ? {

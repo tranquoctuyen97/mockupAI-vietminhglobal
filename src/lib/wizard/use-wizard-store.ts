@@ -39,6 +39,7 @@ interface DraftDesign {
   id: string;
   designId: string;
   sortOrder: number;
+  aiContent?: unknown | null;
   design?: {
     id: string;
     name: string;
@@ -95,6 +96,7 @@ interface DraftData {
     enabledVariantIds?: number[];
     basePriceUsd?: number | string | null;
     priceBySizeDefault?: Record<string, number> | null;
+    defaultTags?: string[];
   } | null;
   store?: {
     defaultPriceUsd?: number | string | null;
@@ -105,6 +107,7 @@ interface DraftData {
       enabledVariantIds?: number[];
       basePriceUsd?: number | string | null;
       priceBySizeDefault?: Record<string, number> | null;
+      defaultTags?: string[];
     } | null;
     templates?: Array<{
       id: string;
@@ -118,6 +121,7 @@ interface DraftData {
       enabledSizesByColor?: Record<string, string[]> | null;
       basePriceUsd?: number | string | null;
       priceBySizeDefault?: Record<string, number> | null;
+      defaultTags?: string[];
     }>;
   } | null;
   placementOverride: unknown | null;
@@ -170,6 +174,8 @@ interface WizardStore {
   setDraft: (draft: DraftData) => void;
   updateMockupJob: (jobId: string, update: Partial<MockupJob>) => void;
   setChecklist: (cl: ChecklistData) => void;
+  step4SaveHandler: (() => Promise<void>) | null;
+  setStep4SaveHandler: (handler: (() => Promise<void>) | null) => void;
 }
 
 export function filterChangedDraftPatch(
@@ -219,6 +225,8 @@ export const useWizardStore = create<WizardStore>((set, get) => {
   saving: false,
   saveTimer: null,
   pendingPatch: {},
+  step4SaveHandler: null,
+  setStep4SaveHandler: (handler) => set({ step4SaveHandler: handler }),
 
   loadDraft: async (id: string, expand?: string) => {
     // Dedup key includes expand to distinguish slim vs expanded loads

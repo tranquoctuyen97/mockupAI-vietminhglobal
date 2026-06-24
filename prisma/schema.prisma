@@ -295,6 +295,7 @@ model StoreMockupTemplate {
   defaultMockupSource     TemplateDefaultMockupSource @default(PRINTIFY) @map("default_mockup_source")
   basePriceUsd            Decimal? @map("base_price_usd") @db.Decimal(10, 2)
   priceBySizeDefault      Json?    @map("price_by_size_default")
+  defaultTags             String[] @default([]) @map("default_tags")
 
   store        Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
   colors       TemplateColor[]
@@ -516,6 +517,8 @@ model WizardDraftDesign {
   lastError              String?  @map("last_error")
   createdAt              DateTime @default(now()) @map("created_at")
   updatedAt              DateTime @updatedAt @map("updated_at")
+
+  aiContent              Json?    @map("ai_content")
 
   draft    WizardDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
   design   Design      @relation(fields: [designId], references: [id], onDelete: Cascade)

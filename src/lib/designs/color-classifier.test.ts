@@ -21,3 +21,13 @@ test("resolveColorGroups honors manual override before auto classification", () 
   assert.equal(groups.get("grey"), "light");
   assert.equal(groups.get("navy"), "dark");
 });
+
+test("resolveColorGroups defaults Heather Mauve to dark", () => {
+  const groups = resolveColorGroups([
+    { id: "heather-mauve", name: "Heather Mauve", hex: "#C68EA3", colorGroup: "auto" },
+    { id: "forced-light", name: "Heather Mauve", hex: "#C68EA3", colorGroup: "light" },
+  ]);
+
+  assert.equal(groups.get("heather-mauve"), "dark");
+  assert.equal(groups.get("forced-light"), "light");
+});

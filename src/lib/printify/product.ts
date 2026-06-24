@@ -121,6 +121,7 @@ export async function createOrUpdatePrintifyProduct(input: {
   title: string;
   description: string;
   tags?: string[];
+  imageGroups?: Array<{ imageId: string; variantIds: number[] }>;
 }): Promise<{ productId: string; images: ParsedPrintifyMockupImage[] }> {
   // Fetch full catalog variants for this blueprint+provider.
   // Printify requires ALL variants to be present in the payload (especially for PUT).

@@ -510,9 +510,12 @@ export async function createCustomMockupJobForDraftDesign(
       select: { id: true, sourceUrl: true, compositeStatus: true },
       orderBy: { sortOrder: "asc" },
     });
+    console.log(`[generation.ts] mockupJobId: ${mockupJob.id}, createdImages count: ${createdImages.length}`);
     const pendingImages = createdImages.filter((img) => img.compositeStatus === "pending");
+    console.log(`[generation.ts] mockupJobId: ${mockupJob.id}, pendingImages count: ${pendingImages.length}`);
     const compositeQueue = getMockupCompositeQueue();
     for (const image of pendingImages) {
+      console.log(`[generation.ts] Enqueueing image: ${image.id}, sourceUrl: ${image.sourceUrl}`);
       await compositeQueue.add("composite-custom-mockup", {
         mockupImageId: image.id,
         sourceUrl: image.sourceUrl,
