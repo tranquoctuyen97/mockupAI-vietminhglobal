@@ -12,42 +12,51 @@ function toNumber(value: unknown): number {
   return 0;
 }
 
-/** Map of metricId → value from the TW metrics response */
-function buildMetricMap(metrics: TWMetric[]): Record<string, number> {
-  const map: Record<string, number> = {};
-  for (const m of metrics) {
-    map[m.metricId] = toNumber(m.values?.current);
-    // also store by id for convenience
-    map[m.id] = toNumber(m.values?.current);
+function eachDay(startDate: string, endDate: string): string[] {
+  const days: string[] = [];
+  const date = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+  while (date <= end) {
+    days.push(date.toISOString().slice(0, 10));
+    date.setUTCDate(date.getUTCDate() + 1);
   }
-  return map;
+  return days;
 }
 
-/** Convert TW metrics response into a single aggregated record */
-function metricsToRecord(metrics: TWMetric[], startDate: string): TWDailyRecord {
-  const m = buildMetricMap(metrics);
-  const orderRevenue = m["totalSales"] ?? m["sales"] ?? 0;
-  const netProfit = m["totalNetProfit"] ?? 0;
-  const orders = Math.round(m["totalOrders"] ?? m["orders"] ?? 0);
-  const paymentGateways = m["totalPaymentGatewayCosts"] ?? m["paymentGateways"] ?? 0;
-  const shipping = m["totalShippingCosts"] ?? m["shipping"] ?? 0;
-  const blendedAdSpend = m["blendedAds"] ?? m["adsSpend"] ?? 0;
-  const cogs = m["totalProductCosts"] ?? m["cogs"] ?? 0;
-  const totalCost = paymentGateways + shipping + blendedAdSpend + cogs;
-  const netMargin = orderRevenue > 0 ? netProfit / orderRevenue : 0;
+function chartValue(metric: TWMetric | undefined, index: number): number {
+  const point = Array.isArray(metric?.charts?.current) ? metric.charts.current[index] : undefined;
+  if (point && typeof point === "object" && "y" in point) return toNumber(point.y);
+  return index === 0 ? toNumber(metric?.values?.current) : 0;
+}
 
-  return {
-    date: startDate,
-    orderRevenue,
-    netProfit,
-    netMargin,
-    orders,
-    paymentGateways,
-    shipping,
-    blendedAdSpend,
-    cogs,
-    totalCost,
-  };
+/** Convert TW metrics response into daily records using chart points. */
+function metricsToRecords(metrics: TWMetric[], startDate: string, endDate: string): TWDailyRecord[] {
+  const byMetric: Record<string, TWMetric> = Object.fromEntries(
+    metrics.flatMap((metric) => [[metric.metricId, metric], [metric.id, metric]]),
+  );
+  return eachDay(startDate, endDate).map((date, index) => {
+    const orderRevenue = chartValue(byMetric.totalSales ?? byMetric.sales, index);
+    const netProfit = chartValue(byMetric.totalNetProfit, index);
+    const orders = Math.round(chartValue(byMetric.totalOrders ?? byMetric.orders, index));
+    const paymentGateways = chartValue(byMetric.totalPaymentGatewayCosts ?? byMetric.paymentGateways, index);
+    const shipping = chartValue(byMetric.totalShippingCosts ?? byMetric.shipping, index);
+    const blendedAdSpend = chartValue(byMetric.blendedAds ?? byMetric.adsSpend, index);
+    const cogs = chartValue(byMetric.totalProductCosts ?? byMetric.cogs, index);
+    const totalCost = paymentGateways + shipping + blendedAdSpend + cogs;
+
+    return {
+      date,
+      orderRevenue,
+      netProfit,
+      netMargin: orderRevenue > 0 ? netProfit / orderRevenue : 0,
+      orders,
+      paymentGateways,
+      shipping,
+      blendedAdSpend,
+      cogs,
+      totalCost,
+    };
+  });
 }
 
 function normalizeRecord(raw: Record<string, unknown>): TWDailyRecord {
@@ -111,7 +120,7 @@ export async function fetchSummaryData(opts: {
 
   // New response format: { metrics: [...] }
   if (!Array.isArray(json) && "metrics" in json && Array.isArray(json.metrics)) {
-    return [metricsToRecord(json.metrics, opts.startDate)];
+    return metricsToRecords(json.metrics, opts.startDate, opts.endDate);
   }
 
   // Legacy fallback: array of daily records

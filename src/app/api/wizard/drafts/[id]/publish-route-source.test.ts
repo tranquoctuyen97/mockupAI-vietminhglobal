@@ -16,4 +16,10 @@ describe("wizard publish listing organization snapshot source", () => {
     assert.match(source, /templateBasePriceUsd:\s*template\?\.basePriceUsd/);
     assert.doesNotMatch(source, /productPricingTemplate\.findFirst/);
   });
+
+  it("validates mixed unit content directly on pairs and draft designs", () => {
+    assert.match(source, /hasAiTitle\(pair\.aiContent\)/);
+    assert.match(source, /hasAiTitle\(draftDesign\.aiContent\)/);
+    assert.doesNotMatch(source, /if \(!aiContent\?\.title\)/);
+  });
 });

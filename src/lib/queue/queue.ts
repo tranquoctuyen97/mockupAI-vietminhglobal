@@ -37,6 +37,8 @@ const globalForQueues = globalThis as unknown as {
   healthCheckQueue?: Queue;
   mockupQueue?: Queue;
   tripleWhaleSyncQueue?: Queue;
+  mailboxSyncQueue?: Queue;
+  gmailLabelOperationsQueue?: Queue;
 };
 
 const DEFAULT_JOB_OPTIONS = {
@@ -104,4 +106,43 @@ export function getTripleWhaleSyncQueue(): Queue {
     });
   }
   return globalForQueues.tripleWhaleSyncQueue;
+}
+
+export const MAILBOX_SYNC_QUEUE_NAME = "mailbox-sync";
+export const GMAIL_LABEL_OPERATIONS_QUEUE_NAME = "gmail-label-operations";
+
+export function getMailboxSyncQueue(): Queue {
+  if (!globalForQueues.mailboxSyncQueue) {
+    globalForQueues.mailboxSyncQueue = new Queue(MAILBOX_SYNC_QUEUE_NAME, {
+      connection: redisConnection,
+      defaultJobOptions: {
+        removeOnComplete: 100,
+        removeOnFail: 100,
+        attempts: 5,
+        backoff: { type: "exponential" as const, delay: 10_000 },
+      },
+    });
+    globalForQueues.mailboxSyncQueue.on("error", (err) => {
+      console.error("[Queue/mailbox-sync] Redis error:", err.message);
+    });
+  }
+  return globalForQueues.mailboxSyncQueue;
+}
+
+export function getGmailLabelOperationsQueue(): Queue {
+  if (!globalForQueues.gmailLabelOperationsQueue) {
+    globalForQueues.gmailLabelOperationsQueue = new Queue(GMAIL_LABEL_OPERATIONS_QUEUE_NAME, {
+      connection: redisConnection,
+      defaultJobOptions: {
+        removeOnComplete: 100,
+        removeOnFail: 100,
+        attempts: 5,
+        backoff: { type: "exponential" as const, delay: 5_000 },
+      },
+    });
+    globalForQueues.gmailLabelOperationsQueue.on("error", (err) => {
+      console.error("[Queue/gmail-label-operations] Redis error:", err.message);
+    });
+  }
+  return globalForQueues.gmailLabelOperationsQueue;
 }

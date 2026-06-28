@@ -10,14 +10,8 @@ interface Props {
   onCreated: () => void;
 }
 
-type Provider = "gmail" | "custom";
+type Provider = "gmail";
 type TestStatus = "idle" | "testing" | "ok" | "fail";
-type Encryption = "ssl" | "starttls" | "none";
-
-const GMAIL_PRESET = {
-  inbound: { host: "imap.gmail.com", port: 993, encryption: "ssl" as const },
-  outbound: { host: "smtp.gmail.com", port: 587, encryption: "starttls" as const },
-};
 
 const GMAIL_GUIDE_STEPS = [
   {
@@ -63,39 +57,12 @@ export function CreateMailboxModal({ storeId, onClose, onCreated }: Props) {
     return () => setIsMounted(false);
   }, []);
 
-  // Step 2 — Custom only
-  const [inHost, setInHost] = useState(GMAIL_PRESET.inbound.host);
-  const [inPort, setInPort] = useState(GMAIL_PRESET.inbound.port);
-  const [inEnc, setInEnc] = useState<Encryption>(GMAIL_PRESET.inbound.encryption);
-  const [inUser, setInUser] = useState("");
-  const [inPass, setInPass] = useState("");
-  const [outHost, setOutHost] = useState(GMAIL_PRESET.outbound.host);
-  const [outPort, setOutPort] = useState(GMAIL_PRESET.outbound.port);
-  const [outEnc, setOutEnc] = useState<Encryption>(GMAIL_PRESET.outbound.encryption);
-  const [outUser, setOutUser] = useState("");
-  const [outPass, setOutPass] = useState("");
-
-  const [inTest, setInTest] = useState<TestStatus>("idle");
-  const [outTest, setOutTest] = useState<TestStatus>("idle");
-  const [testError, setTestError] = useState("");
-
   // Gmail probe result
   const [probeStatus, setProbeStatus] = useState<TestStatus>("idle");
   const [probeError, setProbeError] = useState("");
 
   const applyPreset = (p: Provider) => {
     setProvider(p);
-    if (p === "gmail") {
-      setInHost(GMAIL_PRESET.inbound.host);
-      setInPort(GMAIL_PRESET.inbound.port);
-      setInEnc(GMAIL_PRESET.inbound.encryption);
-      setOutHost(GMAIL_PRESET.outbound.host);
-      setOutPort(GMAIL_PRESET.outbound.port);
-      setOutEnc(GMAIL_PRESET.outbound.encryption);
-    } else {
-      setInHost(""); setInPort(993); setInEnc("ssl");
-      setOutHost(""); setOutPort(587); setOutEnc("starttls");
-    }
   };
 
   const goStep2 = () => {
@@ -103,17 +70,11 @@ export function CreateMailboxModal({ storeId, onClose, onCreated }: Props) {
       toast.error("Nhập tên và email");
       return;
     }
-    if (provider === "gmail") {
-      if (!appPassword.trim()) {
-        toast.error("Nhập App Password");
-        return;
-      }
-      // Gmail: probe auto-detect
-      doGmailProbe();
-    } else {
-      setInUser(email); setOutUser(email);
-      setStep(2);
+    if (!appPassword.trim()) {
+      toast.error("Nhập App Password");
+      return;
     }
+    doGmailProbe();
   };
 
   const doGmailProbe = async () => {
@@ -140,45 +101,10 @@ export function CreateMailboxModal({ storeId, onClose, onCreated }: Props) {
     }
   };
 
-  const doTest = async (direction: "inbound" | "outbound") => {
-    const setter = direction === "inbound" ? setInTest : setOutTest;
-    setter("testing");
-    setTestError("");
-    try {
-      const payload: Record<string, unknown> = {};
-      if (direction === "inbound") {
-        payload.inbound = { host: inHost, port: inPort, encryption: inEnc, username: inUser, password: inPass };
-      } else {
-        payload.outbound = { host: outHost, port: outPort, encryption: outEnc, username: outUser, password: outPass, email };
-      }
-      const res = await fetch("/api/admin/mailboxes/test-connection", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      const result = direction === "inbound" ? data.inbound : data.outbound;
-      if (result?.result === "ok") {
-        setter("ok");
-        toast.success(`${direction === "inbound" ? "IMAP" : "SMTP"} kết nối thành công`);
-      } else {
-        setter("fail");
-        setTestError(result?.message_human || result?.message || "Connection failed");
-      }
-    } catch {
-      setter("fail");
-      setTestError("Lỗi kết nối");
-    }
-  };
-
   const doSave = async () => {
     setSaving(true);
     try {
-      const payload: Record<string, unknown> = { storeId, name, email, provider };
-      if (provider === "gmail") {
-        payload.appPassword = appPassword;
-      } else {
-        payload.inbound = { host: inHost, port: inPort, encryption: inEnc, username: inUser, password: inPass };
-        payload.outbound = { host: outHost, port: outPort, encryption: outEnc, username: outUser, password: outPass };
-      }
+      const payload: Record<string, unknown> = { storeId, name, email, appPassword };
       const res = await fetch("/api/admin/mailboxes", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -195,13 +121,6 @@ export function CreateMailboxModal({ storeId, onClose, onCreated }: Props) {
     } finally {
       setSaving(false);
     }
-  };
-
-  const TestIcon = ({ status }: { status: TestStatus }) => {
-    if (status === "testing") return <Loader2 size={14} className="animate-spin" />;
-    if (status === "ok") return <CheckCircle2 size={14} style={{ color: "#16a34a" }} />;
-    if (status === "fail") return <XCircle size={14} style={{ color: "#dc2626" }} />;
-    return null;
   };
 
   return (
@@ -242,7 +161,6 @@ export function CreateMailboxModal({ storeId, onClose, onCreated }: Props) {
               Provider
               <select value={provider} onChange={(e) => applyPreset(e.target.value as Provider)} style={inputStyle}>
                 <option value="gmail">Gmail</option>
-                <option value="custom">Custom IMAP/SMTP</option>
               </select>
             </label>
 
@@ -334,7 +252,7 @@ export function CreateMailboxModal({ storeId, onClose, onCreated }: Props) {
             )}
 
             <button onClick={goStep2} style={primaryBtnStyle}>
-              {provider === "gmail" ? "Kiểm tra & Tiếp tục" : "Tiếp tục"}
+              Kiểm tra & Tiếp tục
             </button>
           </div>
         )}
@@ -395,58 +313,6 @@ export function CreateMailboxModal({ storeId, onClose, onCreated }: Props) {
           </div>
         )}
 
-        {/* ── Step 2 Custom: Manual IMAP/SMTP ────────────────────── */}
-        {step === 2 && provider === "custom" && !saving && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-            <fieldset style={fieldsetStyle}>
-              <legend style={{ fontWeight: 600 }}>Inbound (IMAP)</legend>
-              <div style={gridStyle}>
-                <label style={labelStyle}>Host<input value={inHost} onChange={(e) => setInHost(e.target.value)} style={inputStyle} /></label>
-                <label style={labelStyle}>Port<input type="number" value={inPort} onChange={(e) => setInPort(Number(e.target.value))} style={inputStyle} /></label>
-              </div>
-              <div style={gridStyle}>
-                <label style={labelStyle}>Encryption
-                  <select value={inEnc} onChange={(e) => setInEnc(e.target.value as Encryption)} style={inputStyle}>
-                    <option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="none">None</option>
-                  </select>
-                </label>
-                <label style={labelStyle}>Username<input value={inUser} onChange={(e) => setInUser(e.target.value)} style={inputStyle} /></label>
-              </div>
-              <label style={labelStyle}>Password<input type="password" value={inPass} onChange={(e) => setInPass(e.target.value)} style={inputStyle} /></label>
-              <button onClick={() => doTest("inbound")} disabled={inTest === "testing"} style={testBtnStyle}>
-                <TestIcon status={inTest} /> Test Inbound
-              </button>
-            </fieldset>
-
-            <fieldset style={fieldsetStyle}>
-              <legend style={{ fontWeight: 600 }}>Outbound (SMTP)</legend>
-              <div style={gridStyle}>
-                <label style={labelStyle}>Host<input value={outHost} onChange={(e) => setOutHost(e.target.value)} style={inputStyle} /></label>
-                <label style={labelStyle}>Port<input type="number" value={outPort} onChange={(e) => setOutPort(Number(e.target.value))} style={inputStyle} /></label>
-              </div>
-              <div style={gridStyle}>
-                <label style={labelStyle}>Encryption
-                  <select value={outEnc} onChange={(e) => setOutEnc(e.target.value as Encryption)} style={inputStyle}>
-                    <option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="none">None</option>
-                  </select>
-                </label>
-                <label style={labelStyle}>Username<input value={outUser} onChange={(e) => setOutUser(e.target.value)} style={inputStyle} /></label>
-              </div>
-              <label style={labelStyle}>Password<input type="password" value={outPass} onChange={(e) => setOutPass(e.target.value)} style={inputStyle} /></label>
-              <button onClick={() => doTest("outbound")} disabled={outTest === "testing"} style={testBtnStyle}>
-                <TestIcon status={outTest} /> Test Outbound
-              </button>
-            </fieldset>
-
-            {testError && <p style={{ color: "#dc2626", fontSize: "0.8rem", margin: 0 }}>{testError}</p>}
-
-            <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
-              <button onClick={() => setStep(1)} style={secondaryBtnStyle}>Quay lại</button>
-              <button onClick={doSave} style={primaryBtnStyle}>Tạo Mailbox</button>
-            </div>
-          </div>
-        )}
-
         {saving && (
           <div style={{ textAlign: "center", padding: "2rem" }}>
             <Loader2 size={32} className="animate-spin" style={{ margin: "0 auto 1rem" }} />
@@ -487,11 +353,8 @@ const modalStyle: React.CSSProperties = {
 };
 const labelStyle: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 4, fontSize: "0.8rem", fontWeight: 500 };
 const inputStyle: React.CSSProperties = { padding: "0.5rem", border: "1px solid var(--border-color, #d1d5db)", borderRadius: 6, fontSize: "0.875rem" };
-const gridStyle: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" };
-const fieldsetStyle: React.CSSProperties = { border: "1px solid var(--border-color, #d1d5db)", borderRadius: 8, padding: "1rem", display: "flex", flexDirection: "column", gap: "0.75rem" };
 const primaryBtnStyle: React.CSSProperties = { padding: "0.625rem 1.25rem", background: "var(--color-primary, #4f46e5)", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer" };
 const secondaryBtnStyle: React.CSSProperties = { padding: "0.625rem 1.25rem", background: "transparent", border: "1px solid var(--border-color, #d1d5db)", borderRadius: 8, fontWeight: 600, cursor: "pointer" };
-const testBtnStyle: React.CSSProperties = { display: "flex", alignItems: "center", gap: 6, padding: "0.5rem 1rem", border: "1px solid var(--border-color, #d1d5db)", borderRadius: 6, background: "transparent", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600, alignSelf: "flex-start" };
 
 const guideContainerStyle: React.CSSProperties = {
   border: "1px solid var(--border-color, #e5e7eb)",

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  assertPairingIsPublishable,
   buildPairRowsFromDraftDesigns,
   stablePairKey,
 } from "./design-pairs";
@@ -55,30 +54,6 @@ test("stablePairKey changes when either side of a pair changes", () => {
       baseName: "Cat",
       lightDraftDesignId: "light_2",
       darkDraftDesignId: "dark_1",
-    }),
-  );
-});
-
-test("assertPairingIsPublishable blocks unpaired selections", () => {
-  assert.throws(
-    () =>
-      assertPairingIsPublishable({
-        pairs: [],
-        unpaired: [{ id: "design_1", name: "Cat - sáng", reason: "missing_pair_match" }],
-        independent: [],
-        hasPairIntent: true,
-      }),
-    /unpaired/i,
-  );
-});
-
-test("assertPairingIsPublishable allows single independent design", () => {
-  assert.doesNotThrow(() =>
-    assertPairingIsPublishable({
-      pairs: [],
-      unpaired: [],
-      independent: [{ id: "design_1", name: "My Design" }],
-      hasPairIntent: false,
     }),
   );
 });

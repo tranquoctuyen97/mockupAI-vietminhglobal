@@ -12,6 +12,7 @@ import { getDraft, updateDraft, deleteDraft } from "@/lib/wizard/state";
 import { getClientForStore } from "@/lib/printify/account";
 import { ensureVariantCostCache, groupSizes } from "@/lib/printify/variant-catalog";
 import { hasActiveMockupJob, regenerateMockupsForDraft } from "@/lib/mockup/regenerate";
+import { loadTemplateDefaultTags } from "@/lib/stores/store-service";
 import { buildChecklist } from "./checklist";
 
 export async function GET(
@@ -67,7 +68,29 @@ export async function GET(
       : Promise.resolve(undefined),
   ]);
 
-  const response: Record<string, unknown> = { ...draft, checklist };
+  const defaultTagsByTemplateId = await loadTemplateDefaultTags([
+    ...(draft.template ? [draft.template.id] : []),
+    ...(draft.store?.templates?.map((template) => template.id) ?? []),
+  ]);
+  const response: Record<string, unknown> = {
+    ...draft,
+    template: draft.template
+      ? {
+          ...draft.template,
+          defaultTags: defaultTagsByTemplateId.get(draft.template.id) ?? [],
+        }
+      : null,
+    store: draft.store
+      ? {
+          ...draft.store,
+          templates: draft.store.templates.map((template) => ({
+            ...template,
+            defaultTags: defaultTagsByTemplateId.get(template.id) ?? [],
+          })),
+        }
+      : null,
+    checklist,
+  };
   if (sizesData !== undefined) response.sizes = sizesData;
 
   return NextResponse.json(response);

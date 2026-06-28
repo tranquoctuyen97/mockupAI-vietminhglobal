@@ -28,4 +28,41 @@ describe("Step 4 product organization UI source", () => {
     assert.match(source, /handleSaveManual/);
     assert.match(source, /collections/);
   });
+
+  it("seeds template default tags only when active content has no tags", () => {
+    assert.match(source, /templateDefaultTags/);
+    assert.match(source, /existingTags\.length\s*>\s*0\s*\?\s*existingTags\s*:\s*templateDefaultTags/);
+    assert.match(source, /normalizeTags\(draft\?\.template\?\.defaultTags/);
+  });
+
+  it("does not merge template default tags inside AI generation", () => {
+    const generateHandler = source.match(/async function handleGenerateAI\(\)[\s\S]*?^\s*}\n\n  \/\/ ── Manual save/m)?.[0] ?? "";
+    assert.ok(generateHandler, "expected handleGenerateAI block");
+    assert.doesNotMatch(generateHandler, /templateDefaultTags/);
+    assert.doesNotMatch(generateHandler, /defaultTags/);
+  });
+
+  it("builds Step 4 tabs from both pairs and independent draft designs", () => {
+    assert.match(source, /getIndependentDraftDesigns/);
+    assert.match(source, /kind:\s*"pair"/);
+    assert.match(source, /kind:\s*"independent"/);
+    assert.match(source, /draftDesign\.aiContent/);
+  });
+
+  it("saves independent content through the draft design content endpoint", () => {
+    assert.match(source, /\/api\/wizard\/drafts\/\$\{draftId\}\/designs\/\$\{activeTab\.id\}\/content/);
+    assert.match(source, /method:\s*"PATCH"/);
+  });
+
+  it("reads generated independent content from the designs response array", () => {
+    assert.match(source, /data\.designs/);
+    assert.match(source, /activeTab\.kind\s*===\s*"independent"/);
+  });
+
+  it("registers dynamic save handler to Zustand store for layout auto-save", () => {
+    assert.match(source, /setStep4SaveHandler/);
+    assert.match(source, /saveCurrentTab\s*=\s*async/);
+    assert.match(source, /isDirty/);
+    assert.match(source, /handleTabChange/);
+  });
 });

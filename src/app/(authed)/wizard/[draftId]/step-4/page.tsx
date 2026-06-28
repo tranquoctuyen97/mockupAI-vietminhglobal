@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -21,7 +21,9 @@ import {
   MAX_TAGS,
   mergeOptimizedTags,
   normalizeOrganizationCollections,
+  normalizeTags,
 } from "@/lib/wizard/product-organization";
+import { getIndependentDraftDesigns } from "@/lib/wizard/publish-units";
 import { useWizardStore } from "@/lib/wizard/use-wizard-store";
 
 type ContentState = "empty" | "ai-loading" | "ai-failed" | "manual-edit" | "ready";
@@ -38,31 +40,109 @@ interface AiContent {
 interface PairContentEntry {
   id: string;
   baseName: string;
+  lightDraftDesignId: string;
+  darkDraftDesignId: string;
+  sortOrder?: number | null;
   aiContent?: unknown | null;
   lightDesign?: { design?: { name?: string | null } | null } | null;
   darkDesign?: { design?: { name?: string | null } | null } | null;
 }
 
+interface DraftDesignEntry {
+  id: string;
+  designId: string;
+  sortOrder?: number | null;
+  aiContent?: unknown | null;
+  design?: { name?: string | null } | null;
+}
+
 export default function Step5ContentPage() {
   const { draftId } = useParams<{ draftId: string }>();
-  const { draft, updateDraft, loadDraft } = useWizardStore();
+  const { draft, updateDraft, loadDraft, setStep4SaveHandler } = useWizardStore();
 
-  const pairs = ((draft?.designPairs ?? []) as PairContentEntry[]).sort(
-    (a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
-  );
-  const pairMode = pairs.length > 0;
-  const [activePairId, setActivePairId] = useState("");
-  const activePair = pairs.find((pair) => pair.id === activePairId) ?? pairs[0] ?? null;
-  const existing = ((pairMode ? activePair?.aiContent : draft?.aiContent) as AiContent | null) || null;
+  const tabs = useMemo(() => {
+    const list: Array<{
+      key: string;
+      kind: "pair" | "independent" | "draft";
+      id: string;
+      name: string;
+      aiContent: any;
+    }> = [];
+
+    const sortedPairs = [...((draft?.designPairs ?? []) as PairContentEntry[])].sort(
+      (a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
+    );
+    for (const pair of sortedPairs) {
+      list.push({
+        key: `pair:${pair.id}`,
+        kind: "pair",
+        id: pair.id,
+        name: pair.baseName,
+        aiContent: pair.aiContent,
+      });
+    }
+
+    const childRows = (draft?.draftDesigns ?? []) as DraftDesignEntry[];
+    if (childRows.length > 0) {
+      const sortedIndependents = getIndependentDraftDesigns(childRows, sortedPairs)
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+      for (const draftDesign of sortedIndependents) {
+        list.push({
+          key: `independent:${draftDesign.id}`,
+          kind: "independent",
+          id: draftDesign.id,
+          name: draftDesign.design?.name ?? "Design",
+          aiContent: draftDesign.aiContent,
+        });
+      }
+    } else if (draft?.designId && list.length === 0) {
+      list.push({
+        key: "draft",
+        kind: "draft",
+        id: draft.id,
+        name: draft.design?.name ?? "Design",
+        aiContent: draft.aiContent,
+      });
+    }
+
+    return list;
+  }, [draft?.designPairs, draft?.draftDesigns, draft?.designId, draft?.design, draft?.aiContent]);
+
+  const [activeTabKey, setActiveTabKey] = useState("");
+  const activeTab = tabs.find((t) => t.key === activeTabKey) ?? tabs[0] ?? null;
+  const existing = (activeTab?.aiContent as AiContent | null) || null;
+  const templateDefaultTags = normalizeTags(draft?.template?.defaultTags);
+  const existingTags = normalizeTags(existing?.tags || []);
+  const initialTags = existingTags.length > 0 ? existingTags : templateDefaultTags;
+  const existingTagsKey = existingTags.join("\u0000");
+  const templateDefaultTagsKey = templateDefaultTags.join("\u0000");
 
   const [state, setState] = useState<ContentState>(existing?.title ? "ready" : "empty");
   const [content, setContent] = useState<AiContent>({
     title: existing?.title || "",
     description: existing?.description || "",
-    tags: existing?.tags || [],
+    tags: initialTags,
     collections: normalizeOrganizationCollections(existing?.collections || []),
     altText: existing?.altText || "",
   });
+
+  const isDirty = useMemo(() => {
+    if (!existing) {
+      return Boolean(
+        content.title.trim() ||
+        content.description.trim() ||
+        content.tags.length > 0 ||
+        content.collections.length > 0 ||
+        content.altText.trim()
+      );
+    }
+    const titleChanged = content.title !== (existing.title || "");
+    const descChanged = content.description !== (existing.description || "");
+    const tagsChanged = JSON.stringify(content.tags) !== JSON.stringify(normalizeTags(existing.tags || []));
+    const collsChanged = JSON.stringify(content.collections) !== JSON.stringify(normalizeOrganizationCollections(existing.collections || []));
+    const altChanged = content.altText !== (existing.altText || "");
+    return titleChanged || descChanged || tagsChanged || collsChanged || altChanged;
+  }, [content, existing]);
   const [aiError, setAiError] = useState<AIProviderError | null>(null);
   const [cached, setCached] = useState(false);
   const [tagInput, setTagInput] = useState("");
@@ -73,22 +153,22 @@ export default function Step5ContentPage() {
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
-    if (!activePairId && pairs[0]) {
-      setActivePairId(pairs[0].id);
+    if (!activeTabKey && tabs[0]) {
+      setActiveTabKey(tabs[0].key);
     }
-  }, [activePairId, pairs]);
+  }, [activeTabKey, tabs]);
 
   // Sync from draft (e.g. after navigation back)
   useEffect(() => {
     setContent({
       title: existing?.title || "",
       description: existing?.description || "",
-      tags: existing?.tags || [],
+      tags: initialTags,
       collections: normalizeOrganizationCollections(existing?.collections || []),
       altText: existing?.altText || "",
     });
     setState(existing?.title ? "ready" : "empty");
-  }, [activePairId, draft?.id, existing?.title]);
+  }, [activeTabKey, draft?.id, existing?.title, existingTagsKey, templateDefaultTagsKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,23 +188,69 @@ export default function Step5ContentPage() {
   // Ready content keeps current auto-save behavior. Manual edit content stays
   // pending in the wizard store for Save/Next, but does not debounce-write DB.
   useEffect(() => {
-    if (pairMode) return;
+    if (activeTab?.kind === "pair" || activeTab?.kind === "independent") return;
     if (state === "ready") {
       updateDraft({ aiContent: content });
     }
     if (state === "manual-edit") {
       updateDraft({ aiContent: { ...content, source: "manual" } }, { debounce: false });
     }
-  }, [content, pairMode, state, updateDraft]);
+  }, [content, activeTab?.kind, state, updateDraft]);
 
-  async function savePairContent(nextContent: AiContent) {
-    if (!activePair) return;
-    const res = await fetch(`/api/wizard/drafts/${draftId}/design-pairs/${activePair.id}/content`, {
+  // Register save handler to store for layout navigation auto-saves
+  useEffect(() => {
+    const saveCurrentTab = async () => {
+      if (!isDirty) return;
+
+      if (!content.title.trim()) {
+        toast.error("Vui lòng nhập tiêu đề sản phẩm.");
+        throw new Error("Title is required");
+      }
+
+      const contentToSave = {
+        ...content,
+        tags: mergeOptimizedTags([], content.tags),
+        collections: normalizeOrganizationCollections(content.collections),
+        source: (state === "manual-edit" ? "manual" : existing?.source) as "ai" | "manual" | undefined,
+      };
+
+      try {
+        await saveTabContent(contentToSave);
+        setState("ready");
+      } catch (err) {
+        toast.error("Không thể tự động lưu nội dung.");
+        throw err;
+      }
+    };
+
+    setStep4SaveHandler(saveCurrentTab);
+
+    return () => {
+      setStep4SaveHandler(null);
+    };
+  }, [content, activeTab, state, isDirty, existing?.source, setStep4SaveHandler]);
+
+  async function saveTabContent(nextContent: AiContent) {
+    if (!activeTab) return;
+    let url = "";
+    if (activeTab.kind === "pair") {
+      url = `/api/wizard/drafts/${draftId}/design-pairs/${activeTab.id}/content`;
+    } else if (activeTab.kind === "independent") {
+      url = `/api/wizard/drafts/${draftId}/designs/${activeTab.id}/content`;
+    } else {
+      updateDraft({ aiContent: nextContent });
+      await useWizardStore.getState().saveDraftImmediately();
+      return;
+    }
+
+    const res = await fetch(url, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(nextContent),
     });
-    if (!res.ok) throw new Error("Không lưu được nội dung pair");
+    if (!res.ok) {
+      throw new Error(`Không lưu được nội dung ${activeTab.kind === "pair" ? "cặp" : "design"}`);
+    }
     await loadDraft(draftId);
   }
 
@@ -141,7 +267,13 @@ export default function Step5ContentPage() {
       const res = await fetch(`/api/wizard/drafts/${draftId}/generate-content`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(
+          activeTab?.kind === "pair"
+            ? { pairId: activeTab.id }
+            : activeTab?.kind === "independent"
+              ? { designId: activeTab.id }
+              : {},
+        ),
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
@@ -160,12 +292,13 @@ export default function Step5ContentPage() {
         return;
       }
 
-      const pairContent = pairMode && activePair
-        ? (data.pairs as Array<{ id: string; content: AiContent }> | undefined)
-            ?.find((pair) => pair.id === activePair.id)
-            ?.content
-        : null;
-      const c = (pairContent ?? data.content) as AiContent;
+      let activeContent = null;
+      if (activeTab?.kind === "pair" && data.pairs) {
+        activeContent = data.pairs.find((p: any) => p.id === activeTab.id)?.content;
+      } else if (activeTab?.kind === "independent" && data.designs) {
+        activeContent = data.designs.find((d: any) => d.id === activeTab.id)?.content;
+      }
+      const c = (activeContent ?? data.content) as AiContent;
       setContent({
         title: c.title || "",
         description: c.description || "",
@@ -175,7 +308,9 @@ export default function Step5ContentPage() {
       });
       setCached(data.cached ?? false);
       setState("ready");
-      if (pairMode) await loadDraft(draftId);
+      if (activeTab?.kind === "pair" || activeTab?.kind === "independent") {
+        await loadDraft(draftId);
+      }
     } catch (err: any) {
       clearTimeout(timeoutId);
       if (err?.name === "AbortError") {
@@ -204,12 +339,7 @@ export default function Step5ContentPage() {
         source: "manual" as const,
       };
       setContent(manualContent);
-      if (pairMode) {
-        await savePairContent(manualContent);
-      } else {
-        updateDraft({ aiContent: manualContent });
-        await useWizardStore.getState().saveDraftImmediately();
-      }
+      await saveTabContent(manualContent);
       setState("ready");
     } catch {
       setSaveError("Không thể kết nối server.");
@@ -227,17 +357,37 @@ export default function Step5ContentPage() {
         tags: mergeOptimizedTags([], content.tags),
         collections: normalizeOrganizationCollections(content.collections),
       };
-      if (pairMode) {
-        await savePairContent(nextContent);
-      } else {
-        updateDraft({ aiContent: nextContent });
-        await useWizardStore.getState().saveDraftImmediately();
-      }
+      await saveTabContent(nextContent);
     } catch {
       // ignore
     } finally {
       setSaving(false);
     }
+  }
+
+  // ── Auto-save on tab change ───────────────────────────────────────────────
+  async function handleTabChange(nextTabKey: string) {
+    if (nextTabKey === activeTabKey) return;
+    if (isDirty) {
+      if (!content.title.trim()) {
+        toast.error("Vui lòng nhập tiêu đề sản phẩm trước khi chuyển tab.");
+        return;
+      }
+      const contentToSave = {
+        ...content,
+        tags: mergeOptimizedTags([], content.tags),
+        collections: normalizeOrganizationCollections(content.collections),
+        source: (state === "manual-edit" ? "manual" : existing?.source) as "ai" | "manual" | undefined,
+      };
+      try {
+        await saveTabContent(contentToSave);
+        setState("ready");
+      } catch (err) {
+        toast.error("Không thể tự động lưu nội dung tab cũ.");
+        return;
+      }
+    }
+    setActiveTabKey(nextTabKey);
   }
 
   // ── Tags ─────────────────────────────────────────────────────────────────
@@ -253,6 +403,7 @@ export default function Step5ContentPage() {
     setContent((current) => ({ ...current, tags: current.tags.filter((t) => t !== tag) }));
   }
 
+  // ── Optimize ─────────────────────────────────────────────────────────────
   async function handleOptimizeOrganization() {
     setOptimizing(true);
     try {
@@ -266,9 +417,9 @@ export default function Step5ContentPage() {
           canonicalProductType: null,
           currentTags: content.tags,
           currentCollections: content.collections,
-          designContext: activePair
-            ? `${activePair.baseName} ${activePair.lightDesign?.design?.name ?? ""} ${activePair.darkDesign?.design?.name ?? ""}`
-            : draft?.design?.name ?? null,
+          designContext: activeTab?.kind === "pair"
+            ? `${activeTab.name}`
+            : activeTab?.name ?? draft?.design?.name ?? null,
           niche: null,
         }),
       });
@@ -493,10 +644,10 @@ export default function Step5ContentPage() {
         )}
       </div>
       <p style={{ opacity: 0.5, fontSize: "0.85rem", margin: "0 0 20px" }}>
-        {pairMode ? "Tạo nội dung riêng cho từng cặp design" : "Tạo nội dung SEO bằng AI hoặc viết tay"}
+        {tabs.length > 1 ? "Tạo nội dung riêng cho từng listing" : "Tạo nội dung SEO bằng AI hoặc viết tay"}
       </p>
 
-      {pairMode && (
+      {tabs.length > 1 && (
         <div
           className="card"
           style={{
@@ -507,14 +658,14 @@ export default function Step5ContentPage() {
             overflowX: "auto",
           }}
         >
-          {pairs.map((pair) => {
-            const active = pair.id === activePair?.id;
-            const ready = Boolean((pair.aiContent as AiContent | null)?.title);
+          {tabs.map((tab) => {
+            const active = tab.key === activeTab?.key;
+            const ready = Boolean(tab.aiContent?.title);
             return (
               <button
-                key={pair.id}
+                key={tab.key}
                 type="button"
-                onClick={() => setActivePairId(pair.id)}
+                onClick={() => handleTabChange(tab.key)}
                 style={{
                   minWidth: 180,
                   textAlign: "left",
@@ -537,7 +688,7 @@ export default function Step5ContentPage() {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {pair.baseName}
+                  {tab.name}
                 </p>
                 <p style={{ margin: "3px 0 0", fontSize: "0.7rem", opacity: 0.55 }}>
                   {ready ? "Đã có content" : "Chưa có content"}

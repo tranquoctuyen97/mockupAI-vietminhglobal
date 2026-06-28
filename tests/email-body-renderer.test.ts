@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   buildEmailFrameDocument,
   htmlToReadableText,
@@ -77,6 +78,14 @@ describe("email body rendering helpers", () => {
 
     expect(document).toContain("<!doctype html>");
     expect(document).toContain('<base target="_blank">');
+    expect(document).toContain("overflow-x: hidden; overflow-y: visible");
     expect(document).toContain("<p>Hello</p>");
+  });
+
+  it("allows same-origin iframe measurement for auto height", () => {
+    const source = readFileSync("src/components/mailboxes/EmailBodyRenderer.tsx", "utf8");
+
+    expect(source).toContain('sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"');
+    expect(source).toContain("frame.contentDocument?.documentElement");
   });
 });

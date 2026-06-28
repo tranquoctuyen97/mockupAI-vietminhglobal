@@ -341,6 +341,15 @@ test("ColorMockupCardGrid contains readiness header, per-card upload, and placem
   assert.match(cardSource, /savePlacement/);
 });
 
+test("ColorMockupCardGrid maps cards from the active pair or active independent design", () => {
+  const source = read("src/components/mockup/ColorMockupCardGrid.tsx");
+
+  assert.match(source, /const activePair = pairs\.find/);
+  assert.match(source, /const activeIndependentDesign =/);
+  assert.match(source, /mappedDraftDesignId = activeIndependentDesign\.id/);
+  assert.doesNotMatch(source, /if \(pairs\.length > 0\)/);
+});
+
 test("mockup preview modal uses user-facing publish labels instead of renderer labels", () => {
   const source = read("src/components/mockup/ColorMockupCard.tsx");
 
@@ -362,4 +371,18 @@ test("mockup preview modal uses user-facing publish labels instead of renderer l
   );
   assert.doesNotMatch(source, /Vị trí hiện tại \(Live Preview\)/);
   assert.doesNotMatch(source, /Ảnh mockup đã tạo \(Backend Output\)/);
+});
+
+test("mockup live preview preserves design aspect ratio like the backend renderer", () => {
+  const source = read("src/components/mockup/ColorMockupCard.tsx");
+  const modalSource = source.slice(source.indexOf("export function MockupPreviewModal"));
+
+  assert.match(
+    modalSource,
+    /src=\{designImageUrl\}[\s\S]*?objectFit:\s*"contain"/,
+  );
+  assert.doesNotMatch(
+    modalSource,
+    /src=\{designImageUrl\}[\s\S]*?objectFit:\s*"fill"/,
+  );
 });

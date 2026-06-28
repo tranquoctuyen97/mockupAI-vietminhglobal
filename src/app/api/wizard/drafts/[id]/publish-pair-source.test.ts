@@ -4,10 +4,15 @@ import test from "node:test";
 
 const source = readFileSync("src/app/api/wizard/drafts/[id]/publish/route.ts", "utf8");
 
-test("publish route creates one listing per design pair", () => {
-  assert.match(source, /designPairs/);
+test("publish route creates listings for both design pairs and independent draft designs", () => {
+  assert.match(source, /getIndependentDraftDesigns/);
+  assert.match(source, /for \(const pair of draft\.designPairs\)/);
+  assert.match(source, /for \(const draftDesign of independentDraftDesigns\)/);
   assert.match(source, /wizardDraftDesignPairId/);
-  assert.match(source, /findUnique\(\{\s*where:\s*\{\s*wizardDraftDesignPairId/s);
-  assert.match(source, /pair\.aiContent/);
-  assert.doesNotMatch(source, /for \(const draftDesign of selectedDraftDesigns\)/);
+  assert.match(source, /wizardDraftDesignId/);
+});
+
+test("publish route does not require selected design count to equal pairs times two", () => {
+  assert.doesNotMatch(source, /selectedDraftDesigns\.length\s*!==\s*draft\.designPairs\.length\s*\*\s*2/);
+  assert.doesNotMatch(source, /hasUnpairedDraftDesigns/);
 });

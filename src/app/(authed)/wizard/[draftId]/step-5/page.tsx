@@ -18,6 +18,12 @@ import {
   resolvePriceForSize,
 } from "@/lib/pricing/template-pricing";
 import {
+  formatContentChecklistLabel,
+  formatListingSummaryLabel,
+  getIndependentDraftDesigns,
+  getPairedDraftDesignIds,
+} from "@/lib/wizard/publish-units";
+import {
   AlertTriangle,
   CheckCircle2,
   ClipboardCheck,
@@ -48,7 +54,6 @@ interface Checklist {
   contentComplete: boolean;
   placementValid: boolean;
   mockupsNotStale: boolean;
-  pairingComplete?: boolean;
   colorGroupsBalanced?: boolean;
   readyToPublish: boolean;
 }
@@ -83,6 +88,7 @@ interface DraftDesignEntry {
   id: string;
   designId: string;
   sortOrder: number;
+  aiContent?: unknown | null;
   design?: {
     id: string;
     name?: string | null;
@@ -206,7 +212,19 @@ export default function Step5ReviewPage() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const listingIdToDesignIdRef = useRef<Map<string, string>>(new Map());
 
-  const aiContent = (draft?.aiContent as AiContent | null) || null;
+  const designPairs = useMemo(() => {
+    return (draft?.designPairs ?? []) as Array<{
+      id: string;
+      baseName: string;
+      lightDraftDesignId: string;
+      darkDraftDesignId: string;
+      lightDesign?: any;
+      darkDesign?: any;
+      aiContent?: any;
+    }>;
+  }, [draft?.designPairs]);
+
+  const hasPairs = designPairs.length > 0;
   const storeColors = (draft?.store?.colors ?? []) as StoreColor[];
   const selectedColorIds = new Set(draft?.enabledColorIds ?? []);
   const colors = storeColors.filter((color) => selectedColorIds.has(color.id));
@@ -239,6 +257,18 @@ export default function Step5ReviewPage() {
       },
     ];
   }, [draft?.design, draft?.designId, draft?.draftDesigns, draft?.mockupJobs]);
+
+  const pairedDraftDesignIds = useMemo(
+    () => getPairedDraftDesignIds(designPairs),
+    [designPairs],
+  );
+
+  const independentDesigns = useMemo(
+    () => getIndependentDraftDesigns(selectedDraftDesigns, designPairs),
+    [selectedDraftDesigns, designPairs],
+  );
+
+  const independentCount = independentDesigns.length;
 
   const selectedDesignJobs = useMemo(() => {
     return selectedDraftDesigns.flatMap((entry) =>
@@ -354,6 +384,30 @@ export default function Step5ReviewPage() {
     );
   }, [activeDesignId, selectedDraftDesigns]);
 
+  const activePair = useMemo(() => {
+    if (!activeDesign) return null;
+    return (
+      designPairs.find(
+        (pair) =>
+          pair.lightDraftDesignId === activeDesign.id ||
+          pair.darkDraftDesignId === activeDesign.id,
+      ) ?? null
+    );
+  }, [activeDesign, designPairs]);
+
+  const activeIndependentDesign = useMemo(() => {
+    if (!activeDesign || pairedDraftDesignIds.has(activeDesign.id)) return null;
+    return independentDesigns.find((draftDesign) => draftDesign.id === activeDesign.id) ?? null;
+  }, [activeDesign, independentDesigns, pairedDraftDesignIds]);
+
+  const aiContent = useMemo(() => {
+    if (activePair) return (activePair.aiContent as AiContent | null) || null;
+    if (activeIndependentDesign) {
+      return (activeIndependentDesign?.aiContent as AiContent | null) || null;
+    }
+    return null;
+  }, [activePair, activeIndependentDesign]);
+
   const activeMockupJob = useMemo(() => {
     if (!activeDesign) return null;
     return latestMockupJobByDesign.get(activeDesign.id) ?? null;
@@ -379,11 +433,18 @@ export default function Step5ReviewPage() {
     : "var(--bg-tertiary)";
 
   const designPublishEntries = useMemo(() => {
-    return selectedDraftDesigns.map((entry) => ({
-      ...entry,
-      publish: publishStateByDesignId[entry.id] ?? defaultPublishState(),
-    }));
-  }, [publishStateByDesignId, selectedDraftDesigns]);
+    return selectedDraftDesigns.map((entry) => {
+      const pair = designPairs.find(
+        (p) => p.lightDraftDesignId === entry.id || p.darkDraftDesignId === entry.id,
+      );
+      const publishKey = pair ? pair.lightDraftDesignId : entry.id;
+
+      return {
+        ...entry,
+        publish: publishStateByDesignId[publishKey] ?? defaultPublishState(),
+      };
+    });
+  }, [publishStateByDesignId, selectedDraftDesigns, designPairs]);
 
   const overallPublishStatus = useMemo(() => {
     const states = designPublishEntries.map((entry) => entry.publish.status);
@@ -406,10 +467,23 @@ export default function Step5ReviewPage() {
 
   const selectedTemplateBlueprint = draft?.template?.blueprintTitle ?? draft?.store?.template?.blueprintTitle ?? draft?.productType;
   const selectedSizesCount = draft?.enabledSizes?.length ?? 0;
-  const summaryListingsCount = (draft?.designPairs as any[] ?? []).length > 0 ? (draft?.designPairs as any[]).length : selectedDraftDesigns.length;
-  const selectedMockupColorCount = colors.filter((color) =>
-    activeMockups.some((image) => normalizeColorName(image.colorName) === normalizeColorName(color.name)),
-  ).length;
+  const summaryListingsCount = designPairs.length + independentCount;
+  const selectedMockupColorCount = useMemo(() => {
+    const allMockupImages: MockupImage[] = [];
+    for (const entry of selectedDraftDesigns) {
+      const job = latestMockupJobByDesign.get(entry.id);
+      if (job && job.status.toLowerCase() === "completed") {
+        for (const img of job.images ?? []) {
+          if (isUsableMockupImage(img)) {
+            allMockupImages.push(img);
+          }
+        }
+      }
+    }
+    return colors.filter((color) =>
+      allMockupImages.some((image) => normalizeColorName(image.colorName) === normalizeColorName(color.name)),
+    ).length;
+  }, [colors, selectedDraftDesigns, latestMockupJobByDesign]);
 
   const isLoadingPage = loading || !draft;
   const canPublish = Boolean(localChecklist?.readyToPublish && selectedDraftDesigns.length > 0 && !publishing);
@@ -646,18 +720,15 @@ export default function Step5ReviewPage() {
     : activeDesignStatus === "running" || activeDesignStatus === "pending"
       ? "Đang render mockup..."
       : "Chưa có mockup";
-  const designPairs = (draft?.designPairs ?? []) as Array<{ id: string; baseName: string; lightDesign?: any; darkDesign?: any; aiContent?: any }>;
-  const hasPairs = designPairs.length > 0;
-  const listingsCount = hasPairs ? designPairs.length : selectedDraftDesigns.length;
-  const overallSummaryLabel = hasPairs
-    ? `${designPairs.length} cặp sáng/tối × ${colors.length} colors = ${designPairs.length} listings`
-    : `${selectedDraftDesigns.length} designs × ${colors.length} colors = ${selectedDraftDesigns.length} listings`;
+  const listingsCount = designPairs.length + independentCount;
+  const overallSummaryLabel = formatListingSummaryLabel(designPairs.length, independentCount);
+  const contentChecklistLabel = formatContentChecklistLabel(designPairs.length, independentCount);
 
   return (
     <div>
       <h2 style={{ fontWeight: 700, fontSize: "1.1rem", margin: "0 0 4px" }}>Review</h2>
       <p style={{ opacity: 0.5, fontSize: "0.85rem", margin: "0 0 24px" }}>
-        {overallSummaryLabel}. Tất cả listings dùng chung template, màu sắc, placement và nội dung.
+        {overallSummaryLabel}. Tất cả listings dùng chung template, màu sắc và placement.
       </p>
 
       {selectedDraftDesigns.length === 0 && (
@@ -684,14 +755,6 @@ export default function Step5ReviewPage() {
             <span style={{ fontWeight: 600 }}>Kiểm tra trước khi Publish</span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-            {hasPairs && localChecklist.pairingComplete !== undefined && (
-              <ChecklistItem
-                ok={localChecklist.pairingComplete}
-                label="Tất cả design đã ghép cặp sáng/tối"
-                linkLabel="Fix ở Designs"
-                linkHref={`/wizard/${draftId}/step-2`}
-              />
-            )}
             {hasPairs && localChecklist.colorGroupsBalanced !== undefined && (
               <ChecklistItem
                 ok={localChecklist.colorGroupsBalanced}
@@ -708,7 +771,7 @@ export default function Step5ReviewPage() {
             />
             <ChecklistItem
               ok={localChecklist.contentComplete}
-              label={hasPairs ? `Nội dung đầy đủ cho ${designPairs.length} cặp` : "Nội dung đầy đủ (title)"}
+              label={contentChecklistLabel}
               linkLabel="Fix ở Content"
               linkHref={`/wizard/${draftId}/step-4`}
             />
@@ -1250,7 +1313,7 @@ export default function Step5ReviewPage() {
               }}
             >
               {publishing ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-              Publish {selectedDraftDesigns.length} listings
+                  Publish {listingsCount} listings
             </button>
           </div>
         </div>

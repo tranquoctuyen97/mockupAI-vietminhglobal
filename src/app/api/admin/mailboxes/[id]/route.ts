@@ -1,32 +1,20 @@
-/**
- * Admin Mailbox — Detail + Update
- *
- * GET  /api/admin/mailboxes/:id — Get mailbox detail (no passwords)
- * PUT  /api/admin/mailboxes/:id — Update mailbox (name, email, connection settings)
- *
- * Store-scoped: verifies mailbox belongs to session tenant.
- */
 import { NextResponse } from "next/server";
 import { getRequestInfo, logAudit } from "@/lib/audit";
 import { requireMailboxAdmin } from "@/lib/auth/mailbox-admin-guard";
+import { encrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
-import {
-  toZammadInboundSsl,
-  toZammadOutboundSsl,
-  updateMailboxSchema,
-} from "@/lib/zammad/admin-validation";
-import {
-  ensureSystemAddressSenderFormat,
-  updateEmailChannelInbound,
-  updateGroup,
-  verifyEmailChannel,
-} from "@/lib/zammad/client";
-import type { ZammadInboundConfig, ZammadOutboundConfig } from "@/lib/zammad/types";
+import { removeRuntimeSecret } from "@/lib/mailboxes/credentials";
+import { createGmailAdapter } from "@/lib/mailboxes/gmail-client";
+import { verifyGmailSmtp } from "@/lib/mailboxes/gmail-smtp";
+import { removeRuntimeMailboxConfigs } from "@/lib/mailboxes/runtime-config";
+import { updateMailboxSchema } from "@/lib/mailboxes/validation";
+import { disableQueue } from "@/lib/rt/client";
+import { provisionMailbox } from "@/lib/rt/provisioning";
 
-const ZAMMAD_MASK = "**********";
+const DEFAULT_RUNTIME_DIR = process.env.MAILBOX_RUNTIME_DIR ?? "/run/mockupai-mailboxes";
 
-function mailboxDisplayName(name: string | undefined, email: string): string {
-  return name?.trim() || email;
+function cleanAppPassword(value: string): string {
+  return value.replace(/\s/g, "");
 }
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -36,10 +24,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   const { id } = await params;
   const mailbox = await prisma.mailbox.findFirst({
-    where: {
-      id,
-      tenantId: session.tenantId,
-    },
+    where: { id, tenantId: session.tenantId },
     select: {
       id: true,
       tenantId: true,
@@ -47,14 +32,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       name: true,
       email: true,
       provider: true,
-      zammadGroupId: true,
-      zammadChannelId: true,
+      rtQueueId: true,
+      syncStatus: true,
+      lastSyncAt: true,
+      lastSyncErrorCode: true,
       isActive: true,
       createdAt: true,
       updatedAt: true,
-      store: {
-        select: { id: true, name: true },
-      },
+      store: { select: { id: true, name: true } },
     },
   });
 
@@ -72,10 +57,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
 
   const { id } = await params;
   const mailbox = await prisma.mailbox.findFirst({
-    where: {
-      id,
-      tenantId: session.tenantId,
-    },
+    where: { id, tenantId: session.tenantId },
   });
   if (!mailbox) {
     return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
@@ -97,123 +79,93 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   }
 
   const input = parsed.data;
-  const outboundIdentity = {
-    displayName: mailboxDisplayName(
-      input.fromName ?? input.name ?? mailbox.name,
-      input.email ?? mailbox.email,
-    ),
-    email: input.email ?? mailbox.email,
-  };
+  const data: {
+    name?: string;
+    appPasswordEncrypted?: Uint8Array<ArrayBuffer>;
+    encryptionKeyId?: string;
+    syncStatus?: "PROVISIONING";
+    lastSyncErrorCode?: null;
+  } = {};
 
-  // Update Zammad group name if changed
-  if (input.name && input.name !== mailbox.name) {
-    const groupResult = await updateGroup(mailbox.zammadGroupId, { name: input.name });
-    if (!groupResult.ok) {
-      return NextResponse.json(
-        { error: "Failed to update group name in email system" },
-        { status: 502 },
-      );
-    }
-  }
+  if (input.name) data.name = input.name;
 
-  // If connection settings changed, re-verify channel
-  if ((input.inbound || input.outbound) && mailbox.zammadChannelId) {
-    const inbound: ZammadInboundConfig = {
-      adapter: "imap",
-      options: {
-        host: input.inbound?.host ?? "",
-        port: String(input.inbound?.port ?? 993),
-        ssl: toZammadInboundSsl(input.inbound?.encryption ?? "ssl"),
-        user: input.inbound?.username ?? "",
-        // Blank password = keep existing → send Zammad mask
-        password: input.inbound?.password || ZAMMAD_MASK,
-        folder: input.inbound?.folder ?? "inbox",
-      },
-    };
-
-    const outbound: ZammadOutboundConfig = {
-      adapter: "smtp",
-      options: {
-        host: input.outbound?.host ?? "",
-        port: input.outbound?.port ?? 587,
-        ssl: toZammadOutboundSsl(input.outbound?.encryption ?? "starttls"),
-        user: input.outbound?.username ?? "",
-        // Blank password = keep existing → send Zammad mask
-        password: input.outbound?.password || ZAMMAD_MASK,
-      },
-    };
-
-    const verifyResult = await verifyEmailChannel({
-      meta: {
-        realname: outboundIdentity.displayName,
-        email: outboundIdentity.email,
-      },
-      group_id: mailbox.zammadGroupId,
-      channel_id: mailbox.zammadChannelId,
-      inbound,
-      outbound,
-    });
-
-    if (!verifyResult.ok || verifyResult.data?.result !== "ok") {
+  if (input.appPassword) {
+    const appPassword = cleanAppPassword(input.appPassword);
+    const credentials = { email: mailbox.email, appPassword };
+    const smtp = await verifyGmailSmtp(credentials);
+    if (!smtp.ok) {
       return NextResponse.json(
         {
-          error: "Email verification failed",
-          details: verifyResult.data?.message_human ?? verifyResult.data?.message,
-          source: verifyResult.data?.source,
+          result: "failed",
+          error: smtp.error,
+          message_human:
+            smtp.error === "gmail_auth_failed"
+              ? "Gmail từ chối đăng nhập. Kiểm tra App Password."
+              : "Không thể kết nối Gmail SMTP. Vui lòng thử lại sau.",
         },
         { status: 422 },
       );
     }
-  }
-
-  const senderFormatResult = await ensureSystemAddressSenderFormat();
-  if (!senderFormatResult.ok) {
-    console.error(
-      `[zammad] failed to set sender format to SystemAddressName for channel=${mailbox.zammadChannelId ?? "none"}: ${senderFormatResult.error ?? "unknown error"}`,
-    );
-    return NextResponse.json(
-      {
-        error: "Failed to configure outbound mailbox identity",
-        details: senderFormatResult.error ?? "Failed to set Zammad sender format",
-      },
-      { status: 502 },
-    );
-  }
-  console.info("[zammad] sender format set to SystemAddressName");
-
-  // Ensure keep_on_server: true is set on the email channel
-  if (mailbox.zammadChannelId) {
-    const keepOnServerResult = await updateEmailChannelInbound(
-      mailbox.zammadChannelId,
-      { keep_on_server: true },
-      outboundIdentity,
-    );
-    if (!keepOnServerResult.ok) {
-      console.error(
-        `[zammad] failed to enable keep_on_server for channel=${mailbox.zammadChannelId}: ${keepOnServerResult.error ?? "unknown error"}`,
-      );
+    try {
+      await createGmailAdapter(credentials).probe();
+    } catch {
       return NextResponse.json(
         {
-          error: "Failed to configure safety settings for mailbox",
-          details: keepOnServerResult.error ?? "Failed to set keep_on_server=true",
+          result: "failed",
+          error: "gmail_imap_unavailable",
+          message_human: "Không thể kết nối Gmail IMAP. Kiểm tra IMAP và App Password.",
         },
-        { status: 502 },
+        { status: 422 },
       );
     }
-    console.info(`[zammad] keep_on_server enabled for channel=${mailbox.zammadChannelId}`);
+    const encrypted = encrypt(appPassword);
+    data.appPasswordEncrypted = encrypted.encrypted;
+    data.encryptionKeyId = encrypted.keyId;
+    data.syncStatus = "PROVISIONING";
+    data.lastSyncErrorCode = null;
   }
 
-  // Update local record (does not allow moving mailbox between stores)
   const updated = await prisma.mailbox.update({
     where: { id },
-    data: {
-      ...(input.name && { name: input.name }),
-      ...(input.email && { email: input.email }),
+    data,
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      provider: true,
+      rtQueueId: true,
+      syncStatus: true,
+      lastSyncAt: true,
+      lastSyncErrorCode: true,
+      isActive: true,
+      storeId: true,
+      createdAt: true,
+      updatedAt: true,
     },
   });
 
-  // Audit — no credentials in log
-  const reqInfo = getRequestInfo(request);
+  let finalMailbox = updated;
+  if (input.appPassword) {
+    await provisionMailbox(mailbox.id);
+    finalMailbox = await prisma.mailbox.findUnique({
+      where: { id: mailbox.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        provider: true,
+        rtQueueId: true,
+        syncStatus: true,
+        lastSyncAt: true,
+        lastSyncErrorCode: true,
+        isActive: true,
+        storeId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    }) ?? updated;
+  }
+
   await logAudit({
     actorUserId: session.id,
     tenantId: session.tenantId,
@@ -223,11 +175,46 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     metadata: {
       storeId: mailbox.storeId,
       name: input.name,
-      email: input.email,
-      connectionChanged: !!(input.inbound || input.outbound),
+      credentialChanged: Boolean(input.appPassword),
     },
-    ...reqInfo,
+    ...getRequestInfo(request),
   });
 
-  return NextResponse.json({ mailbox: updated });
+  return NextResponse.json({ mailbox: finalMailbox });
+}
+
+export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireMailboxAdmin();
+  if (guard.response) return guard.response;
+  const { session } = guard;
+
+  const { id } = await params;
+  const mailbox = await prisma.mailbox.findFirst({
+    where: { id, tenantId: session.tenantId },
+    select: { id: true, rtQueueId: true },
+  });
+  if (!mailbox) {
+    return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
+  }
+
+  if (mailbox.rtQueueId) {
+    await disableQueue(mailbox.rtQueueId).catch(() => undefined);
+  }
+  await Promise.all([
+    removeRuntimeSecret(mailbox.id, DEFAULT_RUNTIME_DIR).catch(() => undefined),
+    removeRuntimeMailboxConfigs(mailbox.id, DEFAULT_RUNTIME_DIR).catch(() => undefined),
+  ]);
+
+  await prisma.mailbox.delete({ where: { id } });
+
+  await logAudit({
+    actorUserId: session.id,
+    tenantId: session.tenantId,
+    action: "mailbox.delete",
+    resourceType: "mailbox",
+    resourceId: mailbox.id,
+    ...getRequestInfo(_request),
+  });
+
+  return new NextResponse(null, { status: 204 });
 }

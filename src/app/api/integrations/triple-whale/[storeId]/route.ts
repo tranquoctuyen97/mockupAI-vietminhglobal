@@ -3,10 +3,12 @@ import { z } from "zod";
 import { requireFeature } from "@/lib/auth/guards";
 import { encrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
+import { removePendingTripleWhaleSyncJobs } from "@/lib/triple-whale/queue";
 
 const upsertSchema = z.object({
   apiKey: z.string().min(10).optional(),
   customName: z.string().min(1).max(20),
+  syncIntervalMinutes: z.number().int().min(30).optional(),
 });
 
 export async function PUT(req: Request, { params }: { params: Promise<{ storeId: string }> }) {
@@ -44,6 +46,9 @@ export async function PUT(req: Request, { params }: { params: Promise<{ storeId:
           }
         : {}),
       customName: parsed.data.customName,
+      ...(parsed.data.syncIntervalMinutes
+        ? { syncIntervalMinutes: parsed.data.syncIntervalMinutes }
+        : {}),
       syncError: null,
     },
   });
@@ -61,6 +66,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ stor
   });
   if (!credential) return NextResponse.json({ error: "Credential not found" }, { status: 404 });
 
+  await removePendingTripleWhaleSyncJobs(credentialId);
   await prisma.tripleWhaleDailyStat.deleteMany({ where: { credentialId } });
   await prisma.tripleWhaleCredential.delete({ where: { id: credentialId } });
 

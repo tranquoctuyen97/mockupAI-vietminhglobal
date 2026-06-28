@@ -24,6 +24,11 @@ export function mergeOptimizedTags(aiTags: unknown[], currentTags: unknown[]): s
   return out;
 }
 
+export function normalizeTags(values: unknown, max = MAX_TAGS): string[] {
+  if (!Array.isArray(values)) return [];
+  return mergeOptimizedTags([], values).slice(0, max);
+}
+
 export function normalizeOrganizationCollections(
   values: unknown,
   max = MAX_ORGANIZATION_COLLECTIONS,

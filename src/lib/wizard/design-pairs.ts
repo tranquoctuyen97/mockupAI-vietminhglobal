@@ -49,19 +49,3 @@ export function buildPairRowsFromDraftDesigns({
     };
   });
 }
-
-export function assertPairingIsPublishable(pairing: PairingResult): void {
-  // Only block when there are pair-intent designs missing their counterpart
-  if (pairing.unpaired.length > 0) {
-    throw new Error("Resolve unpaired light/dark designs before continuing");
-  }
-
-  // At least one design (independent or paired) is required
-  if (pairing.pairs.length === 0 && pairing.independent.length === 0) {
-    throw new Error("Select at least one design");
-  }
-
-  if (pairing.pairs.length > 40) {
-    throw new Error("Select up to 40 design pairs");
-  }
-}

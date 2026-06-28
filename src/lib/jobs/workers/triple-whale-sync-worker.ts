@@ -1,6 +1,7 @@
 import { type Job, Worker } from "bullmq";
 import { redisConnection, TW_SYNC_QUEUE_NAME } from "@/lib/queue/queue";
 import { TWAuthError } from "@/lib/triple-whale/client";
+import { dispatchDueTripleWhaleSyncs, scheduleTripleWhaleSyncDispatcher } from "@/lib/triple-whale/queue";
 import { handleSyncError, syncStore } from "@/lib/triple-whale/sync";
 import type { TWSyncJobPayload } from "@/lib/triple-whale/types";
 
@@ -15,6 +16,10 @@ export function startTripleWhaleSyncWorker(): Worker<TWSyncJobPayload> {
   const worker = new Worker<TWSyncJobPayload>(
     TW_SYNC_QUEUE_NAME,
     async (job: Job<TWSyncJobPayload>) => {
+      if (job.name === "dispatch-due-triple-whale-syncs") {
+        return dispatchDueTripleWhaleSyncs();
+      }
+
       const { credentialId } = job.data;
       console.log(`[TripleWhaleSync] Starting sync for credential ${credentialId}`);
 
@@ -41,6 +46,7 @@ export function startTripleWhaleSyncWorker(): Worker<TWSyncJobPayload> {
     console.error(`[TripleWhaleSync] Job failed for credential ${job?.data.credentialId}:`, err.message);
   });
 
+  void scheduleTripleWhaleSyncDispatcher();
   globalForTWSyncWorker.tripleWhaleSyncWorker = worker;
   return worker;
 }

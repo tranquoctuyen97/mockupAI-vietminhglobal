@@ -147,7 +147,7 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
     // Load listing with all relations
     const listing = await prisma.listing.findUnique({
       where: { id: listingId },
-      include: { variants: true, publishJobs: true },
+      include: { variants: true, publishJobs: true, wizardDraftDesignPair: true },
     });
     if (!listing) throw new Error("Listing not found");
     draftDesignIdForEvents = listing.wizardDraftDesignId ?? null;
@@ -220,18 +220,50 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
     const draftDesign = listing.wizardDraftDesignId
       ? (draft.draftDesigns.find((entry) => entry.id === listing.wizardDraftDesignId) ?? null)
       : null;
-    const designJobKey = listing.wizardDraftDesignId ?? listing.designId ?? draft.designId ?? null;
-    const selectedMockupJob = designJobKey ? (latestJobsByDesign.get(designJobKey) ?? null) : null;
+    const pair = listing.wizardDraftDesignPair;
 
-    if (!selectedMockupJob || selectedMockupJob.status?.toLowerCase() !== "completed") {
-      throw new Error(
-        `Mockups chưa hoàn tất cho design ${draftDesign?.design?.name ?? draft.design?.name ?? listing.title}`,
+    let includedImages: any[] = [];
+    if (pair) {
+      const lightJobKey = pair.lightDraftDesignId;
+      const darkJobKey = pair.darkDraftDesignId;
+      const lightJob = latestJobsByDesign.get(lightJobKey);
+      const darkJob = latestJobsByDesign.get(darkJobKey);
+
+      const lightDraftDesign = draft.draftDesigns.find((entry) => entry.id === lightJobKey);
+      const darkDraftDesign = draft.draftDesigns.find((entry) => entry.id === darkJobKey);
+
+      if (!lightJob || lightJob.status?.toLowerCase() !== "completed") {
+        throw new Error(
+          `Mockups chưa hoàn tất cho thiết kế sáng: ${lightDraftDesign?.design?.name ?? "Sáng"}`,
+        );
+      }
+      if (!darkJob || darkJob.status?.toLowerCase() !== "completed") {
+        throw new Error(
+          `Mockups chưa hoàn tất cho thiết kế tối: ${darkDraftDesign?.design?.name ?? "Tối"}`,
+        );
+      }
+
+      const lightIncluded = (lightJob.images ?? []).filter(
+        (image) => image.included && Boolean(image.compositeUrl),
+      );
+      const darkIncluded = (darkJob.images ?? []).filter(
+        (image) => image.included && Boolean(image.compositeUrl),
+      );
+      includedImages = [...lightIncluded, ...darkIncluded];
+    } else {
+      const designJobKey = listing.wizardDraftDesignId ?? listing.designId ?? draft.designId ?? null;
+      const selectedMockupJob = designJobKey ? (latestJobsByDesign.get(designJobKey) ?? null) : null;
+
+      if (!selectedMockupJob || selectedMockupJob.status?.toLowerCase() !== "completed") {
+        throw new Error(
+          `Mockups chưa hoàn tất cho design ${draftDesign?.design?.name ?? draft.design?.name ?? listing.title}`,
+        );
+      }
+
+      includedImages = (selectedMockupJob.images ?? []).filter(
+        (image) => image.included && Boolean(image.compositeUrl),
       );
     }
-
-    const includedImages = (selectedMockupJob.images ?? []).filter(
-      (image) => image.included && Boolean(image.compositeUrl),
-    );
     const isDryRun = isPublishDryRun();
     const requireRealPrintifyMockups = PRODUCT_DEFAULTS.mockup.requireRealPrintifyMockups;
     const { mockupImages, mockupPaths, missingColorNames } = resolveShopifyMockupMedia({
@@ -485,6 +517,10 @@ export async function runPrintifyStage(
     sseChannels.emit(draftId, { type, data: payload });
   };
 
+  const pair = listing.wizardDraftDesignPair ?? (listing.wizardDraftDesignPairId
+    ? await prisma.wizardDraftDesignPair.findUnique({ where: { id: listing.wizardDraftDesignPairId } })
+    : null);
+
   const draftDesign = listing.wizardDraftDesignId
     ? (draft.draftDesigns?.find((entry: any) => entry.id === listing.wizardDraftDesignId) ?? null)
     : null;
@@ -504,7 +540,6 @@ export async function runPrintifyStage(
 
   const designJobKey = listing.wizardDraftDesignId ?? listing.designId ?? draft.designId ?? null;
   const latestJobsByDesign = getLatestJobByDraftDesignId(draft.mockupJobs ?? []);
-  const selectedMockupJob = designJobKey ? (latestJobsByDesign.get(designJobKey) ?? null) : null;
 
   emitEvent("publish.printify.start", { stage: "PRINTIFY" });
 
@@ -519,27 +554,62 @@ export async function runPrintifyStage(
     printifyResult = { printifyProductId: `dry-run-${Date.now()}` };
     await sleep(1000);
   } else {
-    if (!selectedMockupJob || selectedMockupJob.status?.toLowerCase() !== "completed") {
-      await prisma.publishJob.update({
-        where: { id: printifyJob.id },
-        data: { status: "FAILED", lastError: "Mockups not ready", attempts: { increment: 1 } },
-      });
-      await prisma.listing.update({
-        where: { id: listingId },
-        data: { status: "PARTIAL_FAILURE" },
-      });
-      emitEvent("publish.complete", {
-        status: "PARTIAL_FAILURE",
-        reason: `Mockups chưa hoàn tất cho design ${targetDesign?.name ?? listing.title}`,
-      });
-      return;
+    let includedImagesForPrintify: any[] = [];
+    if (pair) {
+      const lightJobKey = pair.lightDraftDesignId;
+      const darkJobKey = pair.darkDraftDesignId;
+      const lightJob = latestJobsByDesign.get(lightJobKey);
+      const darkJob = latestJobsByDesign.get(darkJobKey);
+
+      if (!lightJob || lightJob.status?.toLowerCase() !== "completed" || !darkJob || darkJob.status?.toLowerCase() !== "completed") {
+        const lightDraftDesign = draft.draftDesigns?.find((entry: any) => entry.id === lightJobKey);
+        const darkDraftDesign = draft.draftDesigns?.find((entry: any) => entry.id === darkJobKey);
+        await prisma.publishJob.update({
+          where: { id: printifyJob.id },
+          data: { status: "FAILED", lastError: "Mockups not ready for light or dark design", attempts: { increment: 1 } },
+        });
+        await prisma.listing.update({
+          where: { id: listingId },
+          data: { status: "PARTIAL_FAILURE" },
+        });
+        emitEvent("publish.complete", {
+          status: "PARTIAL_FAILURE",
+          reason: `Mockups chưa hoàn tất cho cặp design: ${lightDraftDesign?.design?.name ?? "Sáng"} / ${darkDraftDesign?.design?.name ?? "Tối"}`,
+        });
+        return;
+      }
+
+      includedImagesForPrintify = [
+        ...(lightJob.images ?? []).filter((img: any) => img.included),
+        ...(darkJob.images ?? []).filter((img: any) => img.included),
+      ];
+    } else {
+      const selectedMockupJob = designJobKey ? (latestJobsByDesign.get(designJobKey) ?? null) : null;
+      if (!selectedMockupJob || selectedMockupJob.status?.toLowerCase() !== "completed") {
+        await prisma.publishJob.update({
+          where: { id: printifyJob.id },
+          data: { status: "FAILED", lastError: "Mockups not ready", attempts: { increment: 1 } },
+        });
+        await prisma.listing.update({
+          where: { id: listingId },
+          data: { status: "PARTIAL_FAILURE" },
+        });
+        emitEvent("publish.complete", {
+          status: "PARTIAL_FAILURE",
+          reason: `Mockups chưa hoàn tất cho design ${targetDesign?.name ?? listing.title}`,
+        });
+        return;
+      }
+      includedImagesForPrintify = (selectedMockupJob.images ?? []).filter(
+        (img: any) => img.included,
+      );
     }
 
-    const designPath = targetDesign?.storagePath
+    const designPath = !pair && targetDesign?.storagePath
       ? storage.resolvePath(targetDesign.storagePath)
       : null;
 
-    if (!designPath) {
+    if (!pair && !designPath) {
       await prisma.publishJob.update({
         where: { id: printifyJob.id },
         data: { status: "FAILED", lastError: "Design file not found", attempts: { increment: 1 } },
@@ -551,10 +621,6 @@ export async function runPrintifyStage(
       emitEvent("publish.complete", { status: "PARTIAL_FAILURE", reason: "Design file not found" });
       return;
     }
-
-    const includedImagesForPrintify = (selectedMockupJob.images ?? []).filter(
-      (img: any) => img.included,
-    );
 
     const selectedMockupIds = includedImagesForPrintify
       .map((img: any) => img.printifyMockupId)
@@ -570,6 +636,96 @@ export async function runPrintifyStage(
     }
 
     const variantIds = resolvePublishVariantIds(listing, draft, template);
+
+    // Resolve imageGroups for design pairs
+    let imageGroups: Array<{ imageId: string; variantIds: number[] }> | undefined;
+    if (pair) {
+      const lightDraftDesign = draft.draftDesigns.find((d: any) => d.id === pair.lightDraftDesignId);
+      const darkDraftDesign = draft.draftDesigns.find((d: any) => d.id === pair.darkDraftDesignId);
+
+      if (!lightDraftDesign?.design || !darkDraftDesign?.design) {
+        await prisma.publishJob.update({
+          where: { id: printifyJob.id },
+          data: { status: "FAILED", lastError: "Pair design files not found in draft", attempts: { increment: 1 } },
+        });
+        await prisma.listing.update({
+          where: { id: listingId },
+          data: { status: "PARTIAL_FAILURE" },
+        });
+        emitEvent("publish.complete", { status: "PARTIAL_FAILURE", reason: "Pair design files not found in draft" });
+        return;
+      }
+
+      const { client: printifyClient } = await getClientForStore(store.id);
+
+      const lightImageId = await ensurePrintifyImage({
+        client: printifyClient,
+        designStoragePath: lightDraftDesign.design.storagePath,
+        cachedImageId: lightDraftDesign.printifyImageId,
+      });
+      const darkImageId = await ensurePrintifyImage({
+        client: printifyClient,
+        designStoragePath: darkDraftDesign.design.storagePath,
+        cachedImageId: darkDraftDesign.printifyImageId,
+      });
+
+      // Save back uploaded IDs
+      await prisma.wizardDraftDesign.update({
+        where: { id: lightDraftDesign.id },
+        data: { printifyImageId: lightImageId },
+      });
+      await prisma.wizardDraftDesign.update({
+        where: { id: darkDraftDesign.id },
+        data: { printifyImageId: darkImageId },
+      });
+
+      // Map variant IDs to light vs dark color groups
+      const blueprintId = template?.printifyBlueprintId ?? 0;
+      const printProviderId = template?.printifyPrintProviderId ?? 0;
+      const cachedVariants = await ensureVariantCostCache({
+        client: printifyClient,
+        shopId: externalShopId!,
+        blueprintId,
+        printProviderId,
+      });
+
+      const colorNameToId = new Map<string, string>();
+      for (const c of store.colors ?? []) {
+        colorNameToId.set(c.name.trim().toLowerCase(), c.id);
+      }
+
+      const { resolveColorGroups, classifyColorHex } = await import("@/lib/designs/color-classifier");
+      const colorGroups = resolveColorGroups(store.colors ?? []);
+
+      const lightVariantIds: number[] = [];
+      const darkVariantIds: number[] = [];
+
+      for (const cv of cachedVariants) {
+        const cId = colorNameToId.get(cv.colorName.trim().toLowerCase());
+        const grp = (() => {
+          if (cId) return colorGroups.get(cId);
+          const hex = cv.colorHex ?? "";
+          if (/^#[0-9a-fA-F]{6}$/.test(hex.trim())) {
+            try {
+              return classifyColorHex(hex);
+            } catch {}
+          }
+          return "light";
+        })();
+
+        if (grp === "dark") {
+          darkVariantIds.push(cv.variantId);
+        } else {
+          lightVariantIds.push(cv.variantId);
+        }
+      }
+
+      imageGroups = [
+        { imageId: lightImageId, variantIds: lightVariantIds },
+        { imageId: darkImageId, variantIds: darkVariantIds },
+      ];
+    }
+
     // Placement fallback chain (Guard 3): draft override → template default →
     // listing-ready ratio default (artwork only, never the print area) → legacy.
     const placementData =
@@ -661,7 +817,7 @@ export async function runPrintifyStage(
               draftId: draft.id,
               draftDesignId: draftDesign?.id ?? null,
               productId: draftProductId,
-              designStoragePath: designPath,
+              designStoragePath: designPath ?? "",
               cachedImageId: draftImageId,
               title: listing.title,
               description: listing.descriptionHtml,
@@ -670,6 +826,7 @@ export async function runPrintifyStage(
               variantIds,
               variants: printifyVariantsPayload,
               placementData,
+              imageGroups,
             }),
           printifyJob.id,
           "PRINTIFY",
@@ -688,7 +845,8 @@ export async function runPrintifyStage(
               variants: printifyVariantsPayload,
               mockupPaths: [],
               selectedMockupIds,
-              designPath,
+              designPath: designPath ?? undefined,
+              imageGroups,
             });
           },
           printifyJob.id,
@@ -815,7 +973,7 @@ async function publishExistingPrintifyDraftProduct(input: {
   draftId: string;
   draftDesignId?: string | null;
   productId: string;
-  designStoragePath: string;
+  designStoragePath?: string;
   cachedImageId?: string | null;
   title: string;
   description: string;
@@ -830,13 +988,16 @@ async function publishExistingPrintifyDraftProduct(input: {
     is_default?: boolean;
   }>;
   placementData: PlacementData;
+  imageGroups?: Array<{ imageId: string; variantIds: number[] }>;
 }): Promise<{ printifyProductId: string }> {
   const { client, externalShopId } = await getClientForStore(input.storeId);
-  const imageId = await ensurePrintifyImage({
-    client,
-    designStoragePath: input.designStoragePath,
-    cachedImageId: input.cachedImageId,
-  });
+  const imageId = input.imageGroups?.length
+    ? ""
+    : await ensurePrintifyImage({
+        client,
+        designStoragePath: input.designStoragePath!,
+        cachedImageId: input.cachedImageId,
+      });
 
   const commonPayload = {
     client,
@@ -849,6 +1010,7 @@ async function publishExistingPrintifyDraftProduct(input: {
     placementData: input.placementData,
     title: input.title,
     description: input.description,
+    imageGroups: input.imageGroups,
   };
 
   console.log(

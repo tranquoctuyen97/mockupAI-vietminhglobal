@@ -1,5 +1,5 @@
 export interface MailboxIdentityInput {
-  customerId: number;
+  customerId?: number;
   fromName?: string;
   fromEmail?: string;
 }
@@ -33,5 +33,5 @@ export function parseEmailIdentity(value?: string | null): ParsedEmailIdentity {
 }
 
 export function displayMailboxIdentity(input: MailboxIdentityInput): string {
-  return input.fromName || input.fromEmail || `Customer #${input.customerId}`;
+  return input.fromName || input.fromEmail || (input.customerId ? `Customer #${input.customerId}` : "Unknown sender");
 }

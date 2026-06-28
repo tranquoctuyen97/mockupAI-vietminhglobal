@@ -6,6 +6,8 @@ type ClosableWorker = Pick<Worker, "close" | "on">;
 let mockupWorker: ClosableWorker | null = null;
 let printifyMockupPollWorker: ClosableWorker | null = null;
 let tripleWhaleSyncWorker: ClosableWorker | null = null;
+let mailboxSyncWorker: ClosableWorker | null = null;
+let gmailLabelOperationsWorker: ClosableWorker | null = null;
 
 loadStandaloneWorkerEnv();
 
@@ -29,16 +31,24 @@ function loadStandaloneWorkerEnv() {
 }
 
 async function startWorkers() {
-  const [{ startMockupCompositeWorker }, { startPrintifyMockupPollWorker }, { startTripleWhaleSyncWorker }] =
+  const [
+    { startMockupCompositeWorker },
+    { startPrintifyMockupPollWorker },
+    { startTripleWhaleSyncWorker },
+    { startMailboxSyncWorker, startGmailLabelOperationsWorker },
+  ] =
     await Promise.all([
       import("./src/lib/mockup/worker"),
       import("./src/lib/mockup/printify-poll-worker"),
       import("./src/lib/jobs/workers/triple-whale-sync-worker"),
+      import("./src/lib/jobs/workers/mailbox-sync-worker"),
     ]);
 
   mockupWorker = startMockupCompositeWorker();
   printifyMockupPollWorker = startPrintifyMockupPollWorker();
   tripleWhaleSyncWorker = startTripleWhaleSyncWorker();
+  mailboxSyncWorker = await startMailboxSyncWorker();
+  gmailLabelOperationsWorker = startGmailLabelOperationsWorker();
 
   mockupWorker.on("ready", () => {
     console.log("Mockup composite worker is ready and listening to queue.");
@@ -51,6 +61,14 @@ async function startWorkers() {
   tripleWhaleSyncWorker.on("ready", () => {
     console.log("Triple Whale sync worker is ready and listening to queue.");
   });
+
+  mailboxSyncWorker.on("ready", () => {
+    console.log("Mailbox sync worker is ready and listening to queue.");
+  });
+
+  gmailLabelOperationsWorker.on("ready", () => {
+    console.log("Gmail label operations worker is ready and listening to queue.");
+  });
 }
 
 async function shutdown() {
@@ -59,6 +77,8 @@ async function shutdown() {
     mockupWorker?.close(),
     printifyMockupPollWorker?.close(),
     tripleWhaleSyncWorker?.close(),
+    mailboxSyncWorker?.close(),
+    gmailLabelOperationsWorker?.close(),
   ]);
   process.exit(0);
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
-import { getTripleWhaleSyncQueue } from "@/lib/queue/queue";
+import { enqueueTripleWhaleSync } from "@/lib/triple-whale/queue";
 
 export async function POST() {
   const { session, response } = await requireFeature("stores");
@@ -11,15 +11,10 @@ export async function POST() {
     where: { tenantId: session.tenantId },
     select: { id: true },
   });
-  const queue = getTripleWhaleSyncQueue();
 
   await Promise.all(
     credentials.map((credential) =>
-      queue.add(
-        "sync-store",
-        { credentialId: credential.id, tenantId: session.tenantId },
-        { jobId: `tw-sync-${credential.id}-${Date.now()}` },
-      ),
+      enqueueTripleWhaleSync(credential.id, session.tenantId),
     ),
   );
 

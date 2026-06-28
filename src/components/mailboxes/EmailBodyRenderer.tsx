@@ -16,6 +16,7 @@ interface Props {
   contentType: string;
   showImages?: boolean;
   mode?: EmailBodyViewMode;
+  compact?: boolean;
 }
 
 export function EmailBodyRenderer({
@@ -23,9 +24,11 @@ export function EmailBodyRenderer({
   contentType,
   showImages = true,
   mode = "rendered",
+  compact = false,
 }: Props) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
-  const [frameHeight, setFrameHeight] = useState(320);
+  const minimumFrameHeight = compact ? 64 : 220;
+  const [frameHeight, setFrameHeight] = useState(minimumFrameHeight);
   const html = isHtmlEmail(contentType, body);
   const sanitizedHtml = useMemo(() => sanitizeEmailHtml(body, showImages), [body, showImages]);
   const readableText = useMemo(() => (html ? htmlToReadableText(body) : body), [body, html]);
@@ -37,8 +40,16 @@ export function EmailBodyRenderer({
     if (!frame) return;
 
     const resize = () => {
-      const nextHeight = frame.contentDocument?.documentElement.scrollHeight ?? 320;
-      setFrameHeight(Math.max(220, Math.min(nextHeight, 1400)));
+      const documentElement = frame.contentDocument?.documentElement;
+      const bodyElement = frame.contentDocument?.body;
+      const nextHeight = Math.max(
+        documentElement?.scrollHeight ?? 0,
+        bodyElement?.scrollHeight ?? 0,
+        documentElement?.offsetHeight ?? 0,
+        bodyElement?.offsetHeight ?? 0,
+        minimumFrameHeight,
+      );
+      setFrameHeight(Math.max(minimumFrameHeight, Math.min(nextHeight, 12000)));
     };
 
     const timer = window.setTimeout(resize, 80);
@@ -47,23 +58,24 @@ export function EmailBodyRenderer({
       window.clearTimeout(timer);
       frame.removeEventListener("load", resize);
     };
-  }, [html, mode]);
+  }, [html, minimumFrameHeight, mode]);
 
   if (mode === "source") {
     return <pre style={sourceBlock}>{body}</pre>;
   }
 
   if (mode === "plain" || !html) {
-    return <div style={plainBlock}>{readableText}</div>;
+    return <div style={compact ? compactPlainBlock : plainBlock}>{readableText}</div>;
   }
 
   return (
     <iframe
       ref={frameRef}
       title="Email body"
-      sandbox="allow-popups allow-popups-to-escape-sandbox"
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      scrolling="no"
       srcDoc={frameDocument}
-      style={{ ...emailFrame, height: frameHeight }}
+      style={{ ...emailFrame, minHeight: minimumFrameHeight, height: frameHeight }}
     />
   );
 }
@@ -75,6 +87,12 @@ const plainBlock: CSSProperties = {
   lineHeight: 1.6,
   whiteSpace: "pre-wrap",
   overflowWrap: "anywhere",
+};
+
+const compactPlainBlock: CSSProperties = {
+  ...plainBlock,
+  padding: "12px 14px",
+  lineHeight: 1.5,
 };
 
 const sourceBlock: CSSProperties = {
@@ -91,7 +109,7 @@ const sourceBlock: CSSProperties = {
 const emailFrame: CSSProperties = {
   display: "block",
   width: "100%",
-  minHeight: 220,
   border: 0,
   background: "#fff",
+  overflow: "hidden",
 };

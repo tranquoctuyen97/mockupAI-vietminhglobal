@@ -196,6 +196,7 @@ export default function Step3PreviewPage() {
       resolveColorGroups(
         storeColors.map((color) => ({
           id: color.id,
+          name: color.name,
           hex: color.hex,
           colorGroup: color.colorGroup ?? "auto",
         })),

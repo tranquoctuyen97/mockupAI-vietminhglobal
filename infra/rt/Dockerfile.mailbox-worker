@@ -1,0 +1,14 @@
+FROM firefart/requesttracker@sha256:61542e700818c1422ee476750fa33dfd5470a407329f2586df6fd00a6b8d67a8 AS rt
+FROM node:22-bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 python3-pip perl perl-doc sensible-utils libwww-perl libhttp-message-perl ca-certificates \
+ && pip3 install --break-system-packages getmail6==6.20.0 \
+ && ln -s /usr/bin/perl /usr/local/bin/perl \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=rt /opt/rt/bin/rt-mailgate /opt/rt/bin/rt-mailgate
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --fetch-retries=5 --fetch-retry-maxtimeout=120000
+COPY . .
+RUN npx prisma generate
+CMD ["npm", "run", "worker"]

@@ -7,6 +7,7 @@ export interface PairColorFilterPair {
 
 export interface PairColorFilterColor {
   id: string;
+  name?: string;
   hex: string;
   colorGroup: string;
 }

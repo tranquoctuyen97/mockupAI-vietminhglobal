@@ -7,7 +7,11 @@
 import { NextResponse } from "next/server";
 import { requireFeature } from "@/lib/auth/guards";
 import { validateSession } from "@/lib/auth/session";
-import { createTemplate, updateTemplatePlacement } from "@/lib/stores/store-service";
+import {
+  createTemplate,
+  loadTemplateDefaultTags,
+  updateTemplatePlacement,
+} from "@/lib/stores/store-service";
 import { prisma } from "@/lib/db";
 import { enrichColorHex } from "@/lib/printify/color-hex";
 import {
@@ -18,6 +22,7 @@ import {
   getTemplateReadiness,
   getTemplateReadinessLabel,
 } from "@/lib/stores/template-readiness";
+import { normalizeTags } from "@/lib/wizard/product-organization";
 import type { Prisma } from "@prisma/client";
 
 export async function GET(
@@ -70,6 +75,9 @@ export async function GET(
       if (c.colorHex) cacheHexMap.set(c.colorName, c.colorHex);
     }
   }
+  const defaultTagsByTemplateId = await loadTemplateDefaultTags(
+    store.templates.map((template) => template.id),
+  );
 
   const templates = store.templates.map((template) => {
     const readiness = getTemplateReadiness(template);
@@ -99,6 +107,7 @@ export async function GET(
       defaultMockupSource: template.defaultMockupSource,
       basePriceUsd: template.basePriceUsd ? Number(template.basePriceUsd) : null,
       priceBySizeDefault: template.priceBySizeDefault ?? null,
+      defaultTags: defaultTagsByTemplateId.get(template.id) ?? [],
       enabledVariantIds: template.enabledVariantIds,
       enabledSizes: template.enabledSizes,
       defaultPlacement: template.defaultPlacement,
@@ -159,6 +168,7 @@ export async function POST(
     blueprintBrand?: string;
     basePriceUsd?: number | string | null;
     priceBySizeDefault?: Record<string, unknown> | null;
+    defaultTags?: unknown;
   };
 
   if (!data.name || !data.printifyBlueprintId || !data.printifyPrintProviderId) {
@@ -190,6 +200,7 @@ export async function POST(
     defaultMockupSource: data.defaultMockupSource,
     basePriceUsd: data.basePriceUsd ?? null,
     priceBySizeDefault: data.priceBySizeDefault ?? null,
+    defaultTags: normalizeTags(data.defaultTags),
   });
   return NextResponse.json(result);
 }
