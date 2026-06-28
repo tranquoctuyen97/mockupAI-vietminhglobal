@@ -1,5 +1,4 @@
 import type { Queue } from "bullmq";
-import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import {
   getGmailLabelOperationsQueue,
@@ -26,11 +25,11 @@ export async function enqueueMailboxSync(
     "sync-mailbox",
     { mailboxId },
     {
-      jobId: `sync-${mailboxId}-${randomUUID()}`,
+      jobId: `sync-${mailboxId}`,
       attempts: 5,
       backoff: { type: "exponential", delay: 30_000 },
-      removeOnComplete: 100,
-      removeOnFail: 100,
+      removeOnComplete: true,
+      removeOnFail: true,
     },
   );
 }

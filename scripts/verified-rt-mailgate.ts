@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { prisma } from "../src/lib/db";
+import { mailboxResponseMetrics } from "../src/lib/mailboxes/response-metrics";
 import { findMailgateIdentity, getTicket, getTicketTransactions, searchTickets } from "../src/lib/rt/client";
 
 export interface MailgateLoadResult {
@@ -11,12 +12,26 @@ export interface MailgateLoadResult {
   gmailMessageLinkId: string;
 }
 
+export interface MailgateMetricInput {
+  tenantId: string;
+  storeId: string;
+  mailboxId: string;
+  conversationId: string;
+  messageAt: Date;
+}
+
 export interface MailgateDependencies {
   load(mailboxId: string, rfcMessageId: string): Promise<MailgateLoadResult | null>;
   resolve(rfcMessageId: string, queueId: number, waitForMs: number): Promise<{ ticketId: number; transactionId: number } | null>;
   deliver(queueId: number, mime: Buffer): Promise<{ code: number | null; stdout: string; stderr: string }>;
   verify(ticketId: number, transactionId: number, queueId: number): Promise<boolean>;
-  persist(input: { gmailMessageLinkId: string; rtTicketId: number; rtTransactionId: number }): Promise<void>;
+  persist(input: {
+    gmailMessageLinkId: string;
+    rtTicketId: number;
+    rtTransactionId: number;
+    subject: string | null;
+  }): Promise<MailgateMetricInput | null>;
+  recordCustomerMessage(input: MailgateMetricInput): Promise<unknown>;
 }
 
 export function extractRfcMessageId(mime: Buffer): string | null {
@@ -45,14 +60,19 @@ function mailgateSucceeded(stdout: string, stderr: string): boolean {
 async function persistResolvedIdentity(
   mapping: MailgateLoadResult,
   identity: { ticketId: number; transactionId: number },
+  subject: string | null,
   dependencies: MailgateDependencies,
 ): Promise<boolean> {
   if (!await dependencies.verify(identity.ticketId, identity.transactionId, mapping.rtQueueId)) return false;
-  await dependencies.persist({
+  const metricInput = await dependencies.persist({
     gmailMessageLinkId: mapping.gmailMessageLinkId,
     rtTicketId: identity.ticketId,
     rtTransactionId: identity.transactionId,
+    subject,
   });
+  if (metricInput) {
+    await dependencies.recordCustomerMessage(metricInput);
+  }
   return true;
 }
 
@@ -84,16 +104,16 @@ export async function runVerifiedMailgate(
     if (mapping.duplicate) return 0;
     const existingIdentity = await dependencies.resolve(messageId, mapping.rtQueueId, 0);
     if (existingIdentity) {
-      return await persistResolvedIdentity(mapping, existingIdentity, dependencies) ? 0 : 75;
+      return await persistResolvedIdentity(mapping, existingIdentity, subject, dependencies) ? 0 : 75;
     }
     const delivery = await dependencies.deliver(mapping.rtQueueId, input.mime);
     if (delivery.code !== 0 || !mailgateSucceeded(delivery.stdout, delivery.stderr)) return 75;
     const identity = await dependencies.resolve(messageId, mapping.rtQueueId, 5_000);
-    if (identity) return await persistResolvedIdentity(mapping, identity, dependencies) ? 0 : 75;
+    if (identity) return await persistResolvedIdentity(mapping, identity, subject, dependencies) ? 0 : 75;
     if (!subject) return 75;
     const subjectIdentity = await resolveBySubject(mapping.rtQueueId, subject);
     if (!subjectIdentity) return 75;
-    return await persistResolvedIdentity(mapping, subjectIdentity, dependencies) ? 0 : 75;
+    return await persistResolvedIdentity(mapping, subjectIdentity, subject, dependencies) ? 0 : 75;
   } catch {
     return 75;
   }
@@ -172,8 +192,14 @@ const defaults: MailgateDependencies = {
     return ticket.ok && actualQueueId === queueId && transactions.ok && Boolean(transactions.data?.items.some((transaction) => transaction.id === transactionId));
   },
   async persist(input) {
-    await prisma.$transaction(async (tx) => {
-      const link = await tx.gmailMessageLink.findUniqueOrThrow({ where: { id: input.gmailMessageLinkId } });
+    const ticket = await getTicket(input.rtTicketId);
+    const ticketData = ticket.ok ? ticket.data : null;
+    return prisma.$transaction(async (tx) => {
+      const link = await tx.gmailMessageLink.findUniqueOrThrow({
+        where: { id: input.gmailMessageLinkId },
+        include: { mailbox: { select: { tenantId: true, storeId: true } } },
+      });
+      const internalDate = link.gmailInternalDate ?? link.createdAt;
       const existingConversation = await tx.mailboxConversation.findFirst({
         where: {
           mailboxId: link.mailboxId,
@@ -183,19 +209,45 @@ const defaults: MailgateDependencies = {
           ],
         },
       });
-      const conversation = existingConversation ?? await tx.mailboxConversation.create({
-        data: {
-          mailboxId: link.mailboxId,
-          rtTicketId: input.rtTicketId,
-          gmailThreadId: link.gmailThreadId,
-        },
-      });
+      const snapshot = {
+        subject: input.subject?.trim() || ticketData?.Subject || existingConversation?.subject || null,
+        articleCount: Math.max(
+          existingConversation?.articleCount ?? 0,
+          Number(ticketData?.TransactionCount ?? 0),
+          1,
+        ),
+        rtStatus: ticketData?.Status ?? existingConversation?.rtStatus ?? null,
+        rtCreatedAt: ticketData?.Created ? new Date(ticketData.Created) : existingConversation?.rtCreatedAt ?? null,
+        rtLastUpdatedAt: ticketData?.LastUpdated ? new Date(ticketData.LastUpdated) : internalDate,
+        lastActivityAt: internalDate,
+      };
+      const conversation = existingConversation
+        ? await tx.mailboxConversation.update({
+            where: { id: existingConversation.id },
+            data: snapshot,
+          })
+        : await tx.mailboxConversation.create({
+            data: {
+              ...snapshot,
+              mailboxId: link.mailboxId,
+              rtTicketId: input.rtTicketId,
+              gmailThreadId: link.gmailThreadId,
+            },
+          });
       await tx.gmailMessageLink.update({
         where: { id: link.id },
         data: { conversationId: conversation.id, rtTicketId: input.rtTicketId, rtTransactionId: input.rtTransactionId },
       });
+      return {
+        tenantId: link.mailbox.tenantId,
+        storeId: link.mailbox.storeId,
+        mailboxId: link.mailboxId,
+        conversationId: conversation.id,
+        messageAt: internalDate,
+      };
     });
   },
+  recordCustomerMessage: mailboxResponseMetrics.recordCustomerMessage,
 };
 
 async function runCli(): Promise<void> {

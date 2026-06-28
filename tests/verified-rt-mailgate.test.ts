@@ -9,7 +9,8 @@ function dependencies(overrides: Record<string, unknown> = {}) {
     resolve: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({ ticketId: 42, transactionId: 99 }),
     deliver: vi.fn().mockResolvedValue({ code: 0, stdout: "", stderr: "debug line\nok\n" }),
     verify: vi.fn().mockResolvedValue(true),
-    persist: vi.fn().mockResolvedValue(undefined),
+    persist: vi.fn().mockResolvedValue(null),
+    recordCustomerMessage: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -27,7 +28,12 @@ describe("verified RT mailgate", () => {
     expect(deps.resolve).toHaveBeenNthCalledWith(1, "<gate-1@example.test>", 7, 0);
     expect(deps.resolve).toHaveBeenNthCalledWith(2, "<gate-1@example.test>", 7, 5_000);
     expect(deps.verify).toHaveBeenCalledWith(42, 99, 7);
-    expect(deps.persist).toHaveBeenCalledWith({ gmailMessageLinkId: "link-1", rtTicketId: 42, rtTransactionId: 99 });
+    expect(deps.persist).toHaveBeenCalledWith({
+      gmailMessageLinkId: "link-1",
+      rtTicketId: 42,
+      rtTransactionId: 99,
+      subject: "test",
+    });
   });
 
   it("treats not-ok, timeout, mismatch and DB failures as retryable", async () => {

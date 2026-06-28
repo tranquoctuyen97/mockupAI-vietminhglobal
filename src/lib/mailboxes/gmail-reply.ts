@@ -13,6 +13,11 @@ export interface GmailReplyInput {
   gmailThreadId: string;
   latestExternalMessageId: string;
   references: string[];
+  attachments?: Array<{
+    filename: string;
+    content: Buffer;
+    contentType: string;
+  }>;
   lookupByMessageId(messageId: string): Promise<GmailMessageMetadata | null>;
   createTransport?: TransportFactory;
   generateMessageId?: () => string;
@@ -74,6 +79,7 @@ export async function sendGmailThreadReply(input: GmailReplyInput): Promise<Gmai
       messageId,
       inReplyTo: input.latestExternalMessageId,
       references: referenceHeader(input.references, input.latestExternalMessageId),
+      attachments: input.attachments,
     });
   } finally {
     transport.close();

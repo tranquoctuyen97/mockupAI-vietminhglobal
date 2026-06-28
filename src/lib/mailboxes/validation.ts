@@ -35,7 +35,13 @@ export const replaceConversationLabelsSchema = z.object({
   mailboxId: id,
   labelIds: z.array(id).max(500),
 }).strict();
-export const replySchema = z.object({ text: z.string().trim().min(1).max(50_000) }).strict();
+export const replySchema = z.object({
+  text: z.string().trim().min(1).max(50_000),
+  attachmentIds: z.array(id).max(10).optional(),
+}).strict();
+export const internalNoteSchema = z.object({
+  text: z.string().trim().min(1).max(50_000),
+}).strict();
 export const statusSchema = z.object({ status: z.enum(["active", "pending", "closed"]) }).strict();
 
 export type CreateMailboxInput = z.infer<typeof createMailboxSchema>;

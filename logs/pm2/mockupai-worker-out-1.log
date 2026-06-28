@@ -480,3 +480,184 @@ Shutting down workers...
 ◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
 Starting BullMQ workers...
 Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ override existing { override: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.upsert()` invocation:
+
+
+Unique constraint failed on the fields: (`conversation_id`)
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.upsert()` invocation:
+
+
+Unique constraint failed on the fields: (`conversation_id`)
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.upsert()` invocation:
+
+
+Unique constraint failed on the fields: (`conversation_id`)
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ override existing { override: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+[TripleWhaleSync] Starting sync for credential cmpcsc1rd000197t0rs2j81ng
+[TripleWhaleSync] Starting sync for credential cmpcs9ocp000097t0sm644in4
+[TripleWhaleSync] Synced credential cmpcs9ocp000097t0sm644in4
+[TripleWhaleSync] Synced credential cmpcsc1rd000197t0rs2j81ng
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+[TripleWhaleSync] Starting sync for credential cmpcs9ocp000097t0sm644in4
+[TripleWhaleSync] Synced credential cmpcs9ocp000097t0sm644in4
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+[TripleWhaleSync] Starting sync for credential cmqxyv3bc00004bt0zfdpffuq
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ enable debugging { debug: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+[MockupWorker] Successfully processed custom composite image cmqy15zqm00096zt05veiyovt
+Job 110 completed successfully

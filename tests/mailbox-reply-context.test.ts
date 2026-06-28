@@ -85,4 +85,33 @@ describe("Gmail reply context", () => {
       inboundMessageLinks: [],
     })).toBeNull();
   });
+
+  it("falls back to the stored conversation sender when RT threads lack a usable customer From header", () => {
+    const context = buildGmailReplyContext({
+      mailboxEmail: "support@example.test",
+      ticketId: 42,
+      threads: [{
+        id: 1,
+        conversationId: 42,
+        subject: "RT wrapper subject",
+        body: "wrapped email",
+        contentType: "text/plain",
+        from: "support@example.test",
+        type: "correspond",
+        internal: false,
+        attachments: [],
+        createdAt: "2026-06-24T10:00:00.000Z",
+      }],
+      inboundMessageLinks: [{ rfcMessageId: "<customer@example.test>", createdAt: "2026-06-24T10:00:00.000Z" }],
+      fallbackCustomerEmail: "customer@example.test",
+      fallbackSubject: "Stored subject",
+    });
+
+    expect(context).toEqual({
+      to: "customer@example.test",
+      subject: "Stored subject",
+      latestExternalMessageId: "<customer@example.test>",
+      references: [],
+    });
+  });
 });

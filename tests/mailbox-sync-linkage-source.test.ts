@@ -64,6 +64,14 @@ describe("mailbox sync verified-linkage contract", () => {
     expect(source).toContain("setTicketGmailLabels(");
     expect(source).toContain('"rt_label_sync_failed"');
   });
+
+  it("preserves list snapshot fields while syncing Gmail metadata", () => {
+    const source = readFileSync("src/lib/mailboxes/sync.ts", "utf8");
+
+    expect(source).toContain("subject:");
+    expect(source).toContain("articleCount");
+    expect(source).toContain("lastActivityAt");
+  });
 });
 
 describe("mailbox label mutation targeting", () => {

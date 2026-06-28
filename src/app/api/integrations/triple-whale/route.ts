@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireFeature } from "@/lib/auth/guards";
 import { encrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
+import { fetchSummaryData, TWAuthError } from "@/lib/triple-whale/client";
 
 export async function GET() {
   const { session, response } = await requireFeature("stores");
@@ -17,6 +18,8 @@ export async function GET() {
         customName: true,
         encryptionKeyId: true,
         lastSyncedAt: true,
+        syncFromDate: true,
+        syncIntervalMinutes: true,
         syncError: true,
       },
       orderBy: { createdAt: "asc" },
@@ -39,6 +42,8 @@ export async function GET() {
       customName: c.customName,
       apiKeyMasked: `••••••••${c.encryptionKeyId.slice(-4)}`,
       lastSyncedAt: c.lastSyncedAt,
+      syncFromDate: c.syncFromDate,
+      syncIntervalMinutes: c.syncIntervalMinutes,
       syncError: c.syncError,
     })),
     shopifyStores: shopifyStores.map((s) => ({
@@ -54,6 +59,8 @@ const createSchema = z.object({
   shopDomain: z.string().min(3).max(100),
   customName: z.string().min(1).max(20),
   apiKey: z.string().min(10),
+  syncFromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  syncIntervalMinutes: z.number().int().min(30).default(30),
 });
 
 export async function POST(req: Request) {
@@ -65,7 +72,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { shopDomain, customName, apiKey } = parsed.data;
+  const { shopDomain, customName, apiKey, syncFromDate, syncIntervalMinutes } = parsed.data;
   const { encrypted, keyId } = encrypt(apiKey);
 
   const existing = await prisma.tripleWhaleCredential.findFirst({
@@ -75,6 +82,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Shop domain already configured" }, { status: 409 });
   }
 
+  try {
+    await fetchSummaryData({
+      apiKey,
+      shopDomain,
+      startDate: syncFromDate,
+      endDate: syncFromDate,
+    });
+  } catch (error) {
+    if (error instanceof TWAuthError) {
+      return NextResponse.json({ error: "Invalid Triple Whale API key" }, { status: 400 });
+    }
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Triple Whale validation failed" }, { status: 502 });
+  }
+
   const credential = await prisma.tripleWhaleCredential.create({
     data: {
       tenantId: session.tenantId,
@@ -82,6 +103,8 @@ export async function POST(req: Request) {
       customName,
       apiKeyEncrypted: encrypted,
       encryptionKeyId: keyId,
+      syncFromDate: new Date(`${syncFromDate}T00:00:00.000Z`),
+      syncIntervalMinutes,
     },
   });
 

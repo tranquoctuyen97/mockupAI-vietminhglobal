@@ -18,6 +18,16 @@ const globalForMailboxWorkers = globalThis as unknown as {
   gmailLabelOperationsWorker?: Worker<GmailLabelOperationJobPayload>;
 };
 
+export const MAILBOX_SYNC_WORKER_CONCURRENCY = Number(
+  process.env.MAILBOX_SYNC_WORKER_CONCURRENCY ?? 1,
+);
+export const MAILBOX_SYNC_WORKER_LOCK_DURATION_MS = Number(
+  process.env.MAILBOX_SYNC_WORKER_LOCK_DURATION_MS ?? 900_000,
+);
+export const GMAIL_LABEL_OPERATIONS_WORKER_CONCURRENCY = Number(
+  process.env.GMAIL_LABEL_OPERATIONS_WORKER_CONCURRENCY ?? 2,
+);
+
 export async function startMailboxSyncWorker() {
   if (!globalForMailboxWorkers.mailboxSyncWorker) {
     globalForMailboxWorkers.mailboxSyncWorker = new Worker<MailboxSyncJobPayload>(
@@ -28,7 +38,12 @@ export async function startMailboxSyncWorker() {
         }
         return serializeSyncMailboxResult(await syncMailbox(job.data.mailboxId));
       },
-      { connection: redisConnection, concurrency: 2 },
+      {
+        connection: redisConnection,
+        concurrency: MAILBOX_SYNC_WORKER_CONCURRENCY,
+        lockDuration: MAILBOX_SYNC_WORKER_LOCK_DURATION_MS,
+        maxStalledCount: 1,
+      },
     );
   }
   await scheduleMailboxSyncDispatcher();
@@ -42,7 +57,7 @@ export function startGmailLabelOperationsWorker() {
   globalForMailboxWorkers.gmailLabelOperationsWorker = new Worker<GmailLabelOperationJobPayload>(
     GMAIL_LABEL_OPERATIONS_QUEUE_NAME,
     (job: Job<GmailLabelOperationJobPayload>) => processGmailLabelOperation(job.data.operationId),
-    { connection: redisConnection, concurrency: 4 },
+    { connection: redisConnection, concurrency: GMAIL_LABEL_OPERATIONS_WORKER_CONCURRENCY },
   );
   return globalForMailboxWorkers.gmailLabelOperationsWorker;
 }

@@ -57,6 +57,11 @@ function isInboxLabel(name: string): boolean {
   return normalized === "inbox" || normalized === "\\inbox";
 }
 
+function isSpamLabel(name: string): boolean {
+  const normalized = normalizeLabelName(name);
+  return normalized === "spam" || normalized === "\\spam" || normalized === "[gmail]/spam";
+}
+
 function assertMutableLabel(name: string): void {
   if (!name.trim() || name.startsWith("\\") || PROTECTED_NAMES.has(normalizeLabelName(name))) {
     throw new Error("gmail_system_label_read_only");
@@ -296,6 +301,48 @@ export function createGmailAdapter(
         }
         if (inboxUids.length > 0) {
           await connection.messageFlagsRemove(inboxUids, ["\\Inbox"], { uid: true, useLabels: true });
+        }
+      } finally {
+        lock.release();
+      }
+    }),
+
+    moveInboxMessagesToSpam: (uids: number[]) => withClient(async (connection) => {
+      const deduped = [...new Set(uids.filter((uid) => Number.isInteger(uid) && uid > 0))];
+      if (deduped.length === 0) return;
+      const lock = await connection.getMailboxLock("INBOX");
+      try {
+        await connection.messageFlagsAdd(deduped, ["\\Spam"], { uid: true, useLabels: true });
+        await connection.messageFlagsRemove(deduped, ["\\Inbox"], { uid: true, useLabels: true });
+      } finally {
+        lock.release();
+      }
+    }),
+
+    moveThreadToTrash: (gmailThreadId: string) => withClient(async (connection) => {
+      if (!gmailThreadId) throw new Error("gmail_thread_id_required");
+      const allMail = (await connection.list()).find((mailbox) => mailbox.specialUse === "\\All")?.path ?? DEFAULT_ALL_MAIL;
+      const lock = await connection.getMailboxLock(allMail);
+      try {
+        const uids = await connection.search({ threadId: gmailThreadId }, { uid: true });
+        if (!uids || uids.length === 0) return;
+        const fetched = await connection.fetchAll(uids, FETCH_METADATA, { uid: true });
+        const threadUids = fetched.map((message) => Number(message.uid));
+        const inboxUids = fetched
+          .filter((message) => [...(message.labels ?? [])].some((label) => isInboxLabel(label)))
+          .map((message) => Number(message.uid));
+        const spamUids = fetched
+          .filter((message) => [...(message.labels ?? [])].some((label) => isSpamLabel(label)))
+          .map((message) => Number(message.uid));
+
+        if (threadUids.length > 0) {
+          await connection.messageFlagsAdd(threadUids, ["\\Trash"], { uid: true, useLabels: true });
+        }
+        if (inboxUids.length > 0) {
+          await connection.messageFlagsRemove(inboxUids, ["\\Inbox"], { uid: true, useLabels: true });
+        }
+        if (spamUids.length > 0) {
+          await connection.messageFlagsRemove(spamUids, ["\\Spam"], { uid: true, useLabels: true });
         }
       } finally {
         lock.release();

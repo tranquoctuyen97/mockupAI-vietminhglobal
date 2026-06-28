@@ -4,13 +4,16 @@ import { logAudit } from "@/lib/audit";
 import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { getDecryptedAppPassword } from "@/lib/mailboxes/credentials";
+import { normalizeMailboxConversationListRow } from "@/lib/mailboxes/conversation-list-snapshot";
 import { createLabelOperation, normalizeGmailLabelName } from "@/lib/mailboxes/labels";
 import { createGmailAdapter } from "@/lib/mailboxes/gmail-client";
 import { parseEmailIdentity } from "@/lib/mailboxes/identity";
 import { sendGmailThreadReply } from "@/lib/mailboxes/gmail-reply";
 import { buildGmailReplyContext } from "@/lib/mailboxes/reply-context";
+import { buildMonthlyResponseSummary, mailboxResponseMetrics } from "@/lib/mailboxes/response-metrics";
 import {
   createLabelSchema,
+  internalNoteSchema,
   renameLabelSchema,
   replaceConversationLabelsSchema,
   replySchema,
@@ -21,14 +24,13 @@ import {
   getTicket,
   getTicketAttachmentDetails,
   getTicketTransactions,
-  listTicketsByIds,
-  searchTickets,
   updateTicketStatus,
 } from "@/lib/rt/client";
 import { provisionMailbox } from "@/lib/rt/provisioning";
 import { normalizeRtTicket } from "@/lib/rt/normalizers";
 import { enrichThreadsForDisplay } from "@/lib/rt/thread-display";
 import type { AppStatus } from "@/lib/rt/types";
+import { getStorage } from "@/lib/storage/local-disk";
 
 function json(data: unknown, status = 200) {
   return NextResponse.json(data, { status });
@@ -94,6 +96,58 @@ function pageSize(value: string | null): number {
   return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, 100) : 25;
 }
 
+function monthRange(value: string | null) {
+  const month = value && /^\d{4}-\d{2}$/.test(value) ? value : new Date().toISOString().slice(0, 7);
+  const from = new Date(`${month}-01T00:00:00.000Z`);
+  const to = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + 1, 1));
+  return { month, from, to };
+}
+
+function serializeOverdueResponseMetric(metric: {
+  responseStartedAt: Date;
+  latestAdminReplyAt: Date | null;
+  latestAdminReplyActorUserId?: string | null;
+  responseDurationMs: bigint | null;
+  conversation?: {
+    rtTicketId: number;
+    subject: string | null;
+    senderName: string | null;
+    senderEmail: string | null;
+  } | null;
+}) {
+  return {
+    id: metric.conversation?.rtTicketId ?? null,
+    subject: metric.conversation?.subject ?? null,
+    fromName: metric.conversation?.senderName ?? null,
+    fromEmail: metric.conversation?.senderEmail ?? null,
+    responseStartedAt: metric.responseStartedAt.toISOString(),
+    latestAdminReplyAt: metric.latestAdminReplyAt?.toISOString() ?? null,
+    latestAdminReplyActorUserId: metric.latestAdminReplyActorUserId ?? null,
+    responseDurationMs: metric.responseDurationMs?.toString() ?? null,
+  };
+}
+
+function safeAttachmentFilename(value: string) {
+  return value.replace(/[^\w.\- ()]/g, "_").slice(0, 180) || "attachment";
+}
+
+function composerAttachmentStoragePath(input: {
+  tenantId: string;
+  mailboxId: string;
+  conversationId: string;
+  attachmentId: string;
+  filename: string;
+}) {
+  return [
+    "mailboxes",
+    input.tenantId,
+    input.mailboxId,
+    input.conversationId,
+    "composer-attachments",
+    `${input.attachmentId}-${safeAttachmentFilename(input.filename)}`,
+  ].join("/");
+}
+
 function mailboxConversationWhere(input: {
   mailboxId: string;
   status?: AppStatus;
@@ -112,44 +166,6 @@ function mailboxConversationWhere(input: {
         }
       : {}),
   };
-}
-
-async function loadConversationSenderSnapshots(mailboxId: string, ticketIds: number[]) {
-  if (ticketIds.length === 0) {
-    return new Map<number, {
-      senderName: string | null;
-      senderEmail: string | null;
-      isUnread: boolean;
-      lastActivityAt: Date | null;
-      gmailThreadId: string;
-    }>();
-  }
-  const conversations = await prisma.mailboxConversation.findMany({
-    where: {
-      mailboxId,
-      rtTicketId: { in: ticketIds },
-    },
-    select: {
-      rtTicketId: true,
-      senderName: true,
-      senderEmail: true,
-      isUnread: true,
-      lastActivityAt: true,
-      gmailThreadId: true,
-    },
-  });
-  return new Map(
-    conversations.map((conversation) => [
-      conversation.rtTicketId,
-      {
-        senderName: conversation.senderName,
-        senderEmail: conversation.senderEmail,
-        isUnread: conversation.isUnread,
-        lastActivityAt: conversation.lastActivityAt,
-        gmailThreadId: conversation.gmailThreadId,
-      },
-    ]),
-  );
 }
 
 async function handler(
@@ -174,6 +190,12 @@ async function handler(
   }
   if (method === "GET" && proxyPath === "/labels") {
     return handleListLabels(request, session.tenantId);
+  }
+  if (method === "GET" && proxyPath === "/response-metrics/summary") {
+    return handleResponseMetricSummary(request, session.tenantId);
+  }
+  if (method === "GET" && proxyPath === "/response-metrics/overdue") {
+    return handleOverdueResponseMetrics(request, session.tenantId);
   }
   if (method === "POST" && proxyPath === "/labels") {
     return handleCreateLabel(request, session.tenantId, session.id);
@@ -210,9 +232,29 @@ async function handler(
     return handleReportConversationSpam(request, session.tenantId, session.id, Number(spamMatch[1]));
   }
 
+  const deleteMatch = proxyPath.match(/^\/conversations\/(\d+)\/delete$/);
+  if (method === "POST" && deleteMatch) {
+    return handleDeleteConversation(request, session.tenantId, session.id, Number(deleteMatch[1]));
+  }
+
+  const skipSenderMatch = proxyPath.match(/^\/conversations\/(\d+)\/skip-sender$/);
+  if (method === "POST" && skipSenderMatch) {
+    return handleSkipSender(request, session.tenantId, session.id, Number(skipSenderMatch[1]));
+  }
+
   const replyMatch = proxyPath.match(/^\/conversations\/(\d+)\/threads$/);
   if (method === "POST" && replyMatch) {
     return handleReply(request, session.tenantId, session.id, Number(replyMatch[1]));
+  }
+
+  const internalNoteMatch = proxyPath.match(/^\/conversations\/(\d+)\/internal-notes$/);
+  if (method === "POST" && internalNoteMatch) {
+    return handleCreateInternalNote(request, session.tenantId, session.id, Number(internalNoteMatch[1]));
+  }
+
+  const attachmentMatch = proxyPath.match(/^\/conversations\/(\d+)\/attachments$/);
+  if (method === "POST" && attachmentMatch) {
+    return handleUploadComposerAttachment(request, session.tenantId, session.id, Number(attachmentMatch[1]));
   }
 
   const labelsMatch = proxyPath.match(/^\/conversations\/(\d+)\/labels$/);
@@ -290,6 +332,39 @@ async function handleListLabels(request: NextRequest, tenantId: string) {
     })),
     statusCounts: statusCountMap,
   });
+}
+
+async function handleResponseMetricSummary(request: NextRequest, tenantId: string) {
+  const storeId = request.nextUrl.searchParams.get("storeId") ?? undefined;
+  const mailboxId = request.nextUrl.searchParams.get("mailboxId") ?? undefined;
+  const { month, from, to } = monthRange(request.nextUrl.searchParams.get("month"));
+  if (storeId && !await requireStoreAccess(tenantId, storeId)) {
+    return errorJson("Forbidden — store not found", 403);
+  }
+  if (storeId && mailboxId && !await requireMailbox(tenantId, storeId, mailboxId)) {
+    return errorJson("Forbidden — mailbox not found or inactive", 403);
+  }
+  const metrics = await mailboxResponseMetrics.listForSummary({ tenantId, storeId, mailboxId, from, to });
+  return json({ month, summary: buildMonthlyResponseSummary(metrics) });
+}
+
+async function handleOverdueResponseMetrics(request: NextRequest, tenantId: string) {
+  const storeId = request.nextUrl.searchParams.get("storeId") ?? undefined;
+  const mailboxId = request.nextUrl.searchParams.get("mailboxId") ?? undefined;
+  if (storeId && !await requireStoreAccess(tenantId, storeId)) {
+    return errorJson("Forbidden — store not found", 403);
+  }
+  if (storeId && mailboxId && !await requireMailbox(tenantId, storeId, mailboxId)) {
+    return errorJson("Forbidden — mailbox not found or inactive", 403);
+  }
+  const metrics = await mailboxResponseMetrics.listOverdue({
+    tenantId,
+    storeId,
+    mailboxId,
+    now: new Date(),
+    thresholdMs: 24 * 60 * 60 * 1000,
+  });
+  return json({ conversations: metrics.map((metric) => serializeOverdueResponseMetric(metric)) });
 }
 
 async function handleCreateLabel(request: NextRequest, tenantId: string, actorUserId: string) {
@@ -454,109 +529,48 @@ async function handleListConversations(request: NextRequest, tenantId: string) {
   const selectedLabel = labelId ? mailbox.labels.find((label) => label.id === labelId) : undefined;
   if (labelId && !selectedLabel) return errorJson("Label not found", 404);
 
-  if (selectedLabel) {
-    const currentPage = pageNumber(url.searchParams.get("page"));
-    const currentPageSize = pageSize(url.searchParams.get("pageSize"));
-    const where = {
-      mailboxId: mailbox.id,
-      ...(effectiveStatus ? { status: effectiveStatus } : {}),
-      labels: {
-        some: {
-          labelId: selectedLabel.id,
-        },
-      },
-    };
-    const [totalElements, conversationRows] = await Promise.all([
-      prisma.mailboxConversation.count({ where }),
-      prisma.mailboxConversation.findMany({
-        where,
-        select: {
-          rtTicketId: true,
-          lastActivityAt: true,
-        },
-        orderBy: [
-          { lastActivityAt: "desc" },
-          { updatedAt: "desc" },
-        ],
-        skip: (currentPage - 1) * currentPageSize,
-        take: currentPageSize,
-      }),
-    ]);
-
-    const normalizedLabels = mailbox.labels.map((label) => ({
-      id: label.id,
-      name: label.name,
-      state: label.state,
-    }));
-    const ticketResults = await listTicketsByIds({
-      queueId: mailbox.rtQueueId,
-      ticketIds: conversationRows.map((conversation) => conversation.rtTicketId),
-      mailboxId: mailbox.id,
-      labels: normalizedLabels,
-    });
-    if (!ticketResults.ok || !ticketResults.data) {
-      return errorJson("Mailbox upstream unavailable", 502);
-    }
-
-    const conversations = ticketResults.data;
-    const senderSnapshots = await loadConversationSenderSnapshots(
-      mailbox.id,
-      conversations.map((conversation) => conversation.id),
-    );
-    return json({
-      conversations: conversations.map((conversation) => {
-        const snapshot = senderSnapshots.get(conversation.id);
-        return {
-          ...conversation,
-          fromName: snapshot?.senderName ?? conversation.fromName,
-          fromEmail: snapshot?.senderEmail ?? conversation.fromEmail,
-          updatedAt: snapshot?.lastActivityAt?.toISOString() ?? conversation.updatedAt,
-          unread: snapshot?.isUnread ?? false,
-        };
-      }),
-      page: {
-        size: currentPageSize,
-        number: currentPage,
-        totalElements,
-        totalPages: Math.max(1, Math.ceil(totalElements / currentPageSize)),
-      },
-    });
-  }
-
-  const result = await searchTickets({
-    queueId: mailbox.rtQueueId,
+  const currentPage = pageNumber(url.searchParams.get("page"));
+  const currentPageSize = pageSize(url.searchParams.get("pageSize"));
+  const where = mailboxConversationWhere({
     mailboxId: mailbox.id,
     status: effectiveStatus,
-    labels: mailbox.labels.map((label) => ({
-      id: label.id,
-      name: label.name,
-      state: label.state,
-    })),
-    page: pageNumber(url.searchParams.get("page")),
-    pageSize: pageSize(url.searchParams.get("pageSize")),
+    labelId: selectedLabel?.id ?? null,
   });
-
-  if (!result.ok || !result.data) return errorJson("Mailbox upstream unavailable", 502);
-  const senderSnapshots = await loadConversationSenderSnapshots(
-    mailbox.id,
-    result.data.items.map((conversation) => conversation.id),
-  );
-  return json({
-    conversations: result.data.items.map((conversation) => {
-      const snapshot = senderSnapshots.get(conversation.id);
-      return {
-        ...conversation,
-        fromName: snapshot?.senderName ?? conversation.fromName,
-        fromEmail: snapshot?.senderEmail ?? conversation.fromEmail,
-        updatedAt: snapshot?.lastActivityAt?.toISOString() ?? conversation.updatedAt,
-        unread: snapshot?.isUnread ?? false,
-      };
+  const [totalElements, conversationRows] = await Promise.all([
+    prisma.mailboxConversation.count({ where }),
+    prisma.mailboxConversation.findMany({
+      where,
+      include: {
+        labels: { include: { label: true } },
+        responseMetric: {
+          select: {
+            responseStartedAt: true,
+            latestAdminReplyAt: true,
+            responseDurationMs: true,
+          },
+        },
+        internalNotes: {
+          orderBy: { createdAt: "desc" },
+          select: { id: true, body: true, createdAt: true },
+        },
+      },
+      orderBy: [
+        { lastActivityAt: "desc" },
+        { rtLastUpdatedAt: "desc" },
+        { updatedAt: "desc" },
+      ],
+      skip: (currentPage - 1) * currentPageSize,
+      take: currentPageSize,
     }),
+  ]);
+
+  return json({
+    conversations: conversationRows.map(normalizeMailboxConversationListRow),
     page: {
-      size: result.data.pageSize,
-      number: result.data.page,
-      totalElements: result.data.total,
-      totalPages: result.data.pages,
+      size: currentPageSize,
+      number: currentPage,
+      totalElements,
+      totalPages: Math.max(1, Math.ceil(totalElements / currentPageSize)),
     },
   });
 }
@@ -600,6 +614,31 @@ async function handleGetConversation(
     customerEmail: conversation.senderEmail,
     fallbackSubject: ticketResult.data.Subject ?? null,
   });
+  const internalNotes = await prisma.mailboxInternalNote.findMany({
+    where: { mailboxId: mailbox.id, conversationId: conversation.id },
+    orderBy: { createdAt: "asc" },
+    include: { actor: { select: { email: true } } },
+  });
+  const internalThreads = internalNotes.map((note) => ({
+    id: `note-${note.id}`,
+    conversationId: ticketId,
+    subject: "Internal note",
+    body: note.body,
+    contentType: "text/plain",
+    from: note.actor.email,
+    to: mailbox.email,
+    cc: "",
+    type: "comment",
+    sender: note.actor.email,
+    internal: true,
+    hidden: false,
+    displayType: "internal" as const,
+    attachments: [],
+    createdAt: note.createdAt.toISOString(),
+  }));
+  const mergedThreads = [...displayThreads, ...internalThreads].sort(
+    (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+  );
 
   const firstExternalThread =
     displayThreads.find((thread) => !thread.hidden && (thread.from || thread.sender))
@@ -636,8 +675,129 @@ async function handleGetConversation(
       updatedAt: conversation.lastActivityAt?.toISOString() ?? conversation.updatedAt.toISOString(),
     },
     gmailThreadId: conversation.gmailThreadId,
-    threads: displayThreads,
+    threads: mergedThreads,
   });
+}
+
+async function handleCreateInternalNote(
+  request: NextRequest,
+  tenantId: string,
+  actorUserId: string,
+  ticketId: number,
+) {
+  const storeId = extractStoreId(request.nextUrl.searchParams);
+  if (storeId instanceof NextResponse) return storeId;
+  const mailboxId = extractMailboxId(request.nextUrl.searchParams);
+  if (mailboxId instanceof NextResponse) return mailboxId;
+  const mailbox = await requireProvisionedMailbox(tenantId, storeId, mailboxId);
+  if (!mailbox?.rtQueueId) return errorJson("Forbidden — mailbox not found or not provisioned", 403);
+
+  const parsed = internalNoteSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) {
+    return json({ error: "Validation failed", details: parsed.error.flatten() }, 400);
+  }
+
+  const conversation = await prisma.mailboxConversation.findFirst({
+    where: { mailboxId: mailbox.id, rtTicketId: ticketId },
+  });
+  if (!conversation) return errorJson("Conversation not found", 404);
+
+  const note = await prisma.mailboxInternalNote.create({
+    data: {
+      mailboxId: mailbox.id,
+      conversationId: conversation.id,
+      actorUserId,
+      body: parsed.data.text,
+    },
+    include: { actor: { select: { email: true } } },
+  });
+
+  await logAudit({
+    actorUserId,
+    tenantId,
+    action: "mailbox.internal_note",
+    resourceType: "rt_ticket",
+    resourceId: String(ticketId),
+    metadata: { mailboxId: mailbox.id, storeId },
+  });
+
+  return json({
+    note: {
+      id: `note-${note.id}`,
+      conversationId: ticketId,
+      subject: "Internal note",
+      body: note.body,
+      contentType: "text/plain",
+      from: note.actor.email,
+      to: mailbox.email,
+      cc: "",
+      type: "comment",
+      sender: note.actor.email,
+      internal: true,
+      hidden: false,
+      displayType: "internal",
+      attachments: [],
+      createdAt: note.createdAt.toISOString(),
+    },
+  }, 201);
+}
+
+async function handleUploadComposerAttachment(
+  request: NextRequest,
+  tenantId: string,
+  actorUserId: string,
+  ticketId: number,
+) {
+  const storeId = extractStoreId(request.nextUrl.searchParams);
+  if (storeId instanceof NextResponse) return storeId;
+  const mailboxId = extractMailboxId(request.nextUrl.searchParams);
+  if (mailboxId instanceof NextResponse) return mailboxId;
+  const mailbox = await requireProvisionedMailbox(tenantId, storeId, mailboxId);
+  if (!mailbox?.rtQueueId) return errorJson("Forbidden — mailbox not found or not provisioned", 403);
+
+  const conversation = await prisma.mailboxConversation.findFirst({
+    where: { mailboxId: mailbox.id, rtTicketId: ticketId },
+  });
+  if (!conversation) return errorJson("Conversation not found", 404);
+
+  const form = await request.formData().catch(() => null);
+  const file = form?.get("file");
+  if (!(file instanceof File)) return errorJson("file is required", 422);
+  if (file.size <= 0) return errorJson("file is empty", 422);
+  if (file.size > 15 * 1024 * 1024) return errorJson("Attachment must be 15MB or smaller", 413);
+
+  const attachment = await prisma.mailboxComposerAttachment.create({
+    data: {
+      mailboxId: mailbox.id,
+      conversationId: conversation.id,
+      uploadedById: actorUserId,
+      filename: safeAttachmentFilename(file.name || "attachment"),
+      contentType: file.type || "application/octet-stream",
+      byteSize: file.size,
+      storagePath: "pending",
+    },
+  });
+  const storagePath = composerAttachmentStoragePath({
+    tenantId,
+    mailboxId: mailbox.id,
+    conversationId: conversation.id,
+    attachmentId: attachment.id,
+    filename: attachment.filename,
+  });
+  await getStorage().putBuffer(storagePath, Buffer.from(await file.arrayBuffer()), attachment.contentType);
+  const saved = await prisma.mailboxComposerAttachment.update({
+    where: { id: attachment.id },
+    data: { storagePath },
+  });
+
+  return json({
+    attachment: {
+      id: saved.id,
+      filename: saved.filename,
+      contentType: saved.contentType,
+      byteSize: saved.byteSize,
+    },
+  }, 201);
 }
 
 async function handleReply(
@@ -682,6 +842,8 @@ async function handleReply(
     ticketId,
     threads: threads.data.items,
     inboundMessageLinks,
+    fallbackCustomerEmail: conversation.senderEmail,
+    fallbackSubject: conversation.subject,
   });
   if (!replyContext) {
     return errorJson("Conversation is missing Gmail reply headers", 409);
@@ -692,12 +854,34 @@ async function handleReply(
     appPassword: await getDecryptedAppPassword(mailbox.id),
   };
   const gmail = createGmailAdapter(credentials);
+  const composerAttachments = parsed.data.attachmentIds?.length
+    ? await prisma.mailboxComposerAttachment.findMany({
+        where: {
+          id: { in: parsed.data.attachmentIds },
+          mailboxId: mailbox.id,
+          conversationId: conversation.id,
+          uploadedById: actorUserId,
+          state: "READY",
+        },
+      })
+    : [];
+  if ((parsed.data.attachmentIds?.length ?? 0) !== composerAttachments.length) {
+    return errorJson("One or more attachments are not available", 422);
+  }
+  const attachmentPayload = await Promise.all(
+    composerAttachments.map(async (attachment) => ({
+      filename: attachment.filename,
+      contentType: attachment.contentType,
+      content: await getStorage().getBuffer(attachment.storagePath),
+    })),
+  );
   const sent = await sendGmailThreadReply({
     credentials,
     to: replyContext.to,
     fromName: mailbox.email,
     subject: replyContext.subject,
     text: parsed.data.text,
+    attachments: attachmentPayload.length ? attachmentPayload : undefined,
     gmailThreadId: conversation.gmailThreadId,
     latestExternalMessageId: replyContext.latestExternalMessageId,
     references: replyContext.references,
@@ -715,7 +899,24 @@ async function handleReply(
       uidValidity: sent.uidValidity,
       rtTicketId: ticketId,
       direction: "OUTBOUND",
+      gmailInternalDate: sent.internalDate,
     },
+  });
+  if (composerAttachments.length > 0) {
+    await prisma.mailboxComposerAttachment.updateMany({
+      where: { id: { in: composerAttachments.map((attachment) => attachment.id) } },
+      data: {
+        state: "SENT",
+        gmailMessageId: sent.gmailMessageId,
+      },
+    });
+  }
+
+  const repliedAt = sent.internalDate;
+  await mailboxResponseMetrics.recordAdminReply({
+    conversationId: conversation.id,
+    actorUserId,
+    repliedAt,
   });
 
   await comment(ticketId, {
@@ -727,6 +928,15 @@ async function handleReply(
       parsed.data.text,
     ].join("\n"),
     contentType: "text/plain",
+  });
+
+  await prisma.mailboxConversation.update({
+    where: { id: conversation.id },
+    data: {
+      articleCount: { increment: 1 },
+      rtLastUpdatedAt: repliedAt,
+      lastActivityAt: repliedAt,
+    },
   });
 
   await logAudit({
@@ -886,6 +1096,155 @@ async function handleReportConversationSpam(
   return json({ ok: true });
 }
 
+async function handleDeleteConversation(
+  request: NextRequest,
+  tenantId: string,
+  actorUserId: string,
+  ticketId: number,
+) {
+  const storeId = extractStoreId(request.nextUrl.searchParams);
+  if (storeId instanceof NextResponse) return storeId;
+  const mailboxId = extractMailboxId(request.nextUrl.searchParams);
+  if (mailboxId instanceof NextResponse) return mailboxId;
+  const mailbox = await requireProvisionedMailbox(tenantId, storeId, mailboxId);
+  if (!mailbox?.rtQueueId) return errorJson("Forbidden — mailbox not found or not provisioned", 403);
+
+  const conversation = await prisma.mailboxConversation.findFirst({
+    where: { mailboxId: mailbox.id, rtTicketId: ticketId },
+    select: { id: true, gmailThreadId: true, isUnread: true },
+  });
+  if (!conversation?.gmailThreadId) return errorJson("Conversation not found", 404);
+
+  const appPassword = await getDecryptedAppPassword(mailbox.id);
+  await createGmailAdapter({
+    email: mailbox.email,
+    appPassword,
+  }).moveThreadToTrash(conversation.gmailThreadId);
+
+  await prisma.$transaction(async (tx) => {
+    const sourceLabels = await tx.gmailLabel.findMany({
+      where: {
+        mailboxId: mailbox.id,
+        OR: [
+          { type: "INBOX" },
+          { name: { in: ["SPAM", "\\Spam", "[Gmail]/Spam"] } },
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (sourceLabels.length > 0) {
+      await tx.conversationLabel.deleteMany({
+        where: {
+          conversationId: conversation.id,
+          labelId: { in: sourceLabels.map((label) => label.id) },
+        },
+      });
+    }
+
+    await tx.mailboxConversation.update({
+      where: { id: conversation.id },
+      data: { isUnread: false },
+    });
+  });
+
+  await logAudit({
+    actorUserId,
+    tenantId,
+    action: "mailbox.delete",
+    resourceType: "rt_ticket",
+    resourceId: String(ticketId),
+    metadata: {
+      mailboxId: mailbox.id,
+      storeId,
+      gmailThreadId: conversation.gmailThreadId,
+      action: "move_to_trash",
+    },
+  });
+
+  return json({ ok: true });
+}
+
+async function handleSkipSender(
+  request: NextRequest,
+  tenantId: string,
+  actorUserId: string,
+  ticketId: number,
+) {
+  const storeId = extractStoreId(request.nextUrl.searchParams);
+  if (storeId instanceof NextResponse) return storeId;
+  const mailboxId = extractMailboxId(request.nextUrl.searchParams);
+  if (mailboxId instanceof NextResponse) return mailboxId;
+  const mailbox = await requireProvisionedMailbox(tenantId, storeId, mailboxId);
+  if (!mailbox?.rtQueueId) return errorJson("Forbidden — mailbox not found or not provisioned", 403);
+
+  const conversation = await prisma.mailboxConversation.findFirst({
+    where: { mailboxId: mailbox.id, rtTicketId: ticketId },
+    select: { id: true, gmailThreadId: true, senderEmail: true },
+  });
+  if (!conversation?.gmailThreadId) return errorJson("Conversation not found", 404);
+  const senderEmail = conversation.senderEmail?.trim().toLowerCase();
+  if (!senderEmail || !senderEmail.includes("@")) return errorJson("Conversation sender email is missing", 422);
+  if (senderEmail === mailbox.email.trim().toLowerCase()) return errorJson("Cannot skip the mailbox sender", 422);
+
+  const appPassword = await getDecryptedAppPassword(mailbox.id);
+  await createGmailAdapter({
+    email: mailbox.email,
+    appPassword,
+  }).reportThreadSpam(conversation.gmailThreadId);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.mailboxSkippedSender.upsert({
+      where: {
+        mailboxId_senderEmail: {
+          mailboxId: mailbox.id,
+          senderEmail,
+        },
+      },
+      create: {
+        mailboxId: mailbox.id,
+        senderEmail,
+        createdById: actorUserId,
+      },
+      update: {},
+    });
+
+    const inboxLabels = await tx.gmailLabel.findMany({
+      where: { mailboxId: mailbox.id, type: "INBOX" },
+      select: { id: true },
+    });
+
+    if (inboxLabels.length > 0) {
+      await tx.conversationLabel.deleteMany({
+        where: {
+          conversationId: conversation.id,
+          labelId: { in: inboxLabels.map((label) => label.id) },
+        },
+      });
+    }
+
+    await tx.mailboxConversation.update({
+      where: { id: conversation.id },
+      data: { isUnread: false },
+    });
+  });
+
+  await logAudit({
+    actorUserId,
+    tenantId,
+    action: "mailbox.skip_sender",
+    resourceType: "rt_ticket",
+    resourceId: String(ticketId),
+    metadata: {
+      mailboxId: mailbox.id,
+      storeId,
+      senderEmail,
+    },
+  });
+
+  return json({ ok: true, senderEmail });
+}
+
 async function handleStatusUpdate(
   request: NextRequest,
   tenantId: string,
@@ -914,7 +1273,11 @@ async function handleStatusUpdate(
 
   await prisma.mailboxConversation.update({
     where: { id: conversation.id },
-    data: { status: parsed.data.status },
+    data: {
+      status: parsed.data.status,
+      rtStatus: parsed.data.status,
+      rtLastUpdatedAt: new Date(),
+    },
   });
 
   await logAudit({

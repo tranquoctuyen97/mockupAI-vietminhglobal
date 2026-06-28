@@ -330,3 +330,268 @@ Triple Whale sync worker is ready and listening to queue.
 Mockup composite worker is ready and listening to queue.
 Printify mockup poll worker is ready and listening to queue.
 Mockup composite worker is ready and listening to queue.
+[TripleWhaleSync] Starting sync for credential cmpcsc1rd000197t0rs2j81ng
+[TripleWhaleSync] Synced credential cmpcsc1rd000197t0rs2j81ng
+[TripleWhaleSync] Starting sync for credential cmqxyv3bc00004bt0zfdpffuq
+[TripleWhaleSync] Auth error for credential cmqxyv3bc00004bt0zfdpffuq: Invalid API key
+[TripleWhaleSync] Starting sync for credential cmpcs9ocp000097t0sm644in4
+[TripleWhaleSync] Synced credential cmpcs9ocp000097t0sm644in4
+[TripleWhaleSync] Starting sync for credential undefined
+prisma:error 
+Invalid `prisma.tripleWhaleCredential.findUnique()` invocation:
+
+{
+  where: {
+    id: undefined,
+?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,
+?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   OR?: TripleWhaleCredentialWhereInput[],
+?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   tenantId?: StringFilter | String,
+?   shopDomain?: StringFilter | String,
+?   customName?: StringFilter | String,
+?   apiKeyEncrypted?: BytesFilter | Bytes,
+?   encryptionKeyId?: StringFilter | String,
+?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,
+?   syncError?: StringNullableFilter | String | Null,
+?   createdAt?: DateTimeFilter | DateTime,
+?   updatedAt?: DateTimeFilter | DateTime,
+?   tenant?: TenantScalarRelationFilter | TenantWhereInput,
+?   dailyStats?: TripleWhaleDailyStatListRelationFilter
+  },
+  include: {
+    tenant: true
+  }
+}
+
+Argument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?.
+prisma:error 
+Invalid `prisma.tripleWhaleCredential.update()` invocation:
+
+{
+  where: {
+    id: undefined,
+?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,
+?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   OR?: TripleWhaleCredentialWhereInput[],
+?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   tenantId?: StringFilter | String,
+?   shopDomain?: StringFilter | String,
+?   customName?: StringFilter | String,
+?   apiKeyEncrypted?: BytesFilter | Bytes,
+?   encryptionKeyId?: StringFilter | String,
+?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,
+?   syncError?: StringNullableFilter | String | Null,
+?   createdAt?: DateTimeFilter | DateTime,
+?   updatedAt?: DateTimeFilter | DateTime,
+?   tenant?: TenantScalarRelationFilter | TenantWhereInput,
+?   dailyStats?: TripleWhaleDailyStatListRelationFilter
+  },
+  data: {
+    syncError: "\nInvalid `prisma.tripleWhaleCredential.findUnique()` invocation:\n\n{\n  where: {\n    id: undefined,\n?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,\n?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],\n?   OR?: TripleWhaleCredentialWhereInput[],\n?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],\n?   tenantId?: StringFilter | String,\n?   shopDomain?: StringFilter | String,\n?   customName?: StringFilter | String,\n?   apiKeyEncrypted?: BytesFilter | Bytes,\n?   encryptionKeyId?: StringFilter | String,\n?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,\n?   syncError?: StringNullableFilter | String | Null,\n?   createdAt?: DateTimeFilter | DateTime,\n?   updatedAt?: DateTimeFilter | DateTime,\n?   tenant?: TenantScalarRelationFilter | TenantWhereInput,\n?   dailyStats?: TripleWhaleDailyStatListRelationFilter\n  },\n  include: {\n    tenant: true\n  }\n}\n\nArgument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?."
+  }
+}
+
+Argument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?.
+[TripleWhaleSync] Job failed for credential undefined: 
+Invalid `prisma.tripleWhaleCredential.update()` invocation:
+
+{
+  where: {
+    id: undefined,
+?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,
+?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   OR?: TripleWhaleCredentialWhereInput[],
+?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   tenantId?: StringFilter | String,
+?   shopDomain?: StringFilter | String,
+?   customName?: StringFilter | String,
+?   apiKeyEncrypted?: BytesFilter | Bytes,
+?   encryptionKeyId?: StringFilter | String,
+?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,
+?   syncError?: StringNullableFilter | String | Null,
+?   createdAt?: DateTimeFilter | DateTime,
+?   updatedAt?: DateTimeFilter | DateTime,
+?   tenant?: TenantScalarRelationFilter | TenantWhereInput,
+?   dailyStats?: TripleWhaleDailyStatListRelationFilter
+  },
+  data: {
+    syncError: "\nInvalid `prisma.tripleWhaleCredential.findUnique()` invocation:\n\n{\n  where: {\n    id: undefined,\n?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,\n?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],\n?   OR?: TripleWhaleCredentialWhereInput[],\n?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],\n?   tenantId?: StringFilter | String,\n?   shopDomain?: StringFilter | String,\n?   customName?: StringFilter | String,\n?   apiKeyEncrypted?: BytesFilter | Bytes,\n?   encryptionKeyId?: StringFilter | String,\n?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,\n?   syncError?: StringNullableFilter | String | Null,\n?   createdAt?: DateTimeFilter | DateTime,\n?   updatedAt?: DateTimeFilter | DateTime,\n?   tenant?: TenantScalarRelationFilter | TenantWhereInput,\n?   dailyStats?: TripleWhaleDailyStatListRelationFilter\n  },\n  include: {\n    tenant: true\n  }\n}\n\nArgument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?."
+  }
+}
+
+Argument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?.
+[TripleWhaleSync] Starting sync for credential undefined
+prisma:error 
+Invalid `prisma.tripleWhaleCredential.findUnique()` invocation:
+
+{
+  where: {
+    id: undefined,
+?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,
+?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   OR?: TripleWhaleCredentialWhereInput[],
+?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   tenantId?: StringFilter | String,
+?   shopDomain?: StringFilter | String,
+?   customName?: StringFilter | String,
+?   apiKeyEncrypted?: BytesFilter | Bytes,
+?   encryptionKeyId?: StringFilter | String,
+?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,
+?   syncError?: StringNullableFilter | String | Null,
+?   createdAt?: DateTimeFilter | DateTime,
+?   updatedAt?: DateTimeFilter | DateTime,
+?   tenant?: TenantScalarRelationFilter | TenantWhereInput,
+?   dailyStats?: TripleWhaleDailyStatListRelationFilter
+  },
+  include: {
+    tenant: true
+  }
+}
+
+Argument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?.
+prisma:error 
+Invalid `prisma.tripleWhaleCredential.update()` invocation:
+
+{
+  where: {
+    id: undefined,
+?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,
+?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   OR?: TripleWhaleCredentialWhereInput[],
+?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   tenantId?: StringFilter | String,
+?   shopDomain?: StringFilter | String,
+?   customName?: StringFilter | String,
+?   apiKeyEncrypted?: BytesFilter | Bytes,
+?   encryptionKeyId?: StringFilter | String,
+?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,
+?   syncError?: StringNullableFilter | String | Null,
+?   createdAt?: DateTimeFilter | DateTime,
+?   updatedAt?: DateTimeFilter | DateTime,
+?   tenant?: TenantScalarRelationFilter | TenantWhereInput,
+?   dailyStats?: TripleWhaleDailyStatListRelationFilter
+  },
+  data: {
+    syncError: "\nInvalid `prisma.tripleWhaleCredential.findUnique()` invocation:\n\n{\n  where: {\n    id: undefined,\n?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,\n?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],\n?   OR?: TripleWhaleCredentialWhereInput[],\n?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],\n?   tenantId?: StringFilter | String,\n?   shopDomain?: StringFilter | String,\n?   customName?: StringFilter | String,\n?   apiKeyEncrypted?: BytesFilter | Bytes,\n?   encryptionKeyId?: StringFilter | String,\n?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,\n?   syncError?: StringNullableFilter | String | Null,\n?   createdAt?: DateTimeFilter | DateTime,\n?   updatedAt?: DateTimeFilter | DateTime,\n?   tenant?: TenantScalarRelationFilter | TenantWhereInput,\n?   dailyStats?: TripleWhaleDailyStatListRelationFilter\n  },\n  include: {\n    tenant: true\n  }\n}\n\nArgument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?."
+  }
+}
+
+Argument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?.
+[TripleWhaleSync] Job failed for credential undefined: 
+Invalid `prisma.tripleWhaleCredential.update()` invocation:
+
+{
+  where: {
+    id: undefined,
+?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,
+?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   OR?: TripleWhaleCredentialWhereInput[],
+?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   tenantId?: StringFilter | String,
+?   shopDomain?: StringFilter | String,
+?   customName?: StringFilter | String,
+?   apiKeyEncrypted?: BytesFilter | Bytes,
+?   encryptionKeyId?: StringFilter | String,
+?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,
+?   syncError?: StringNullableFilter | String | Null,
+?   createdAt?: DateTimeFilter | DateTime,
+?   updatedAt?: DateTimeFilter | DateTime,
+?   tenant?: TenantScalarRelationFilter | TenantWhereInput,
+?   dailyStats?: TripleWhaleDailyStatListRelationFilter
+  },
+  data: {
+    syncError: "\nInvalid `prisma.tripleWhaleCredential.findUnique()` invocation:\n\n{\n  where: {\n    id: undefined,\n?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,\n?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],\n?   OR?: TripleWhaleCredentialWhereInput[],\n?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],\n?   tenantId?: StringFilter | String,\n?   shopDomain?: StringFilter | String,\n?   customName?: StringFilter | String,\n?   apiKeyEncrypted?: BytesFilter | Bytes,\n?   encryptionKeyId?: StringFilter | String,\n?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,\n?   syncError?: StringNullableFilter | String | Null,\n?   createdAt?: DateTimeFilter | DateTime,\n?   updatedAt?: DateTimeFilter | DateTime,\n?   tenant?: TenantScalarRelationFilter | TenantWhereInput,\n?   dailyStats?: TripleWhaleDailyStatListRelationFilter\n  },\n  include: {\n    tenant: true\n  }\n}\n\nArgument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?."
+  }
+}
+
+Argument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?.
+[TripleWhaleSync] Starting sync for credential undefined
+prisma:error 
+Invalid `prisma.tripleWhaleCredential.findUnique()` invocation:
+
+{
+  where: {
+    id: undefined,
+?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,
+?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   OR?: TripleWhaleCredentialWhereInput[],
+?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   tenantId?: StringFilter | String,
+?   shopDomain?: StringFilter | String,
+?   customName?: StringFilter | String,
+?   apiKeyEncrypted?: BytesFilter | Bytes,
+?   encryptionKeyId?: StringFilter | String,
+?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,
+?   syncError?: StringNullableFilter | String | Null,
+?   createdAt?: DateTimeFilter | DateTime,
+?   updatedAt?: DateTimeFilter | DateTime,
+?   tenant?: TenantScalarRelationFilter | TenantWhereInput,
+?   dailyStats?: TripleWhaleDailyStatListRelationFilter
+  },
+  include: {
+    tenant: true
+  }
+}
+
+Argument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?.
+prisma:error 
+Invalid `prisma.tripleWhaleCredential.update()` invocation:
+
+{
+  where: {
+    id: undefined,
+?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,
+?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   OR?: TripleWhaleCredentialWhereInput[],
+?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   tenantId?: StringFilter | String,
+?   shopDomain?: StringFilter | String,
+?   customName?: StringFilter | String,
+?   apiKeyEncrypted?: BytesFilter | Bytes,
+?   encryptionKeyId?: StringFilter | String,
+?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,
+?   syncError?: StringNullableFilter | String | Null,
+?   createdAt?: DateTimeFilter | DateTime,
+?   updatedAt?: DateTimeFilter | DateTime,
+?   tenant?: TenantScalarRelationFilter | TenantWhereInput,
+?   dailyStats?: TripleWhaleDailyStatListRelationFilter
+  },
+  data: {
+    syncError: "\nInvalid `prisma.tripleWhaleCredential.findUnique()` invocation:\n\n{\n  where: {\n    id: undefined,\n?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,\n?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],\n?   OR?: TripleWhaleCredentialWhereInput[],\n?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],\n?   tenantId?: StringFilter | String,\n?   shopDomain?: StringFilter | String,\n?   customName?: StringFilter | String,\n?   apiKeyEncrypted?: BytesFilter | Bytes,\n?   encryptionKeyId?: StringFilter | String,\n?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,\n?   syncError?: StringNullableFilter | String | Null,\n?   createdAt?: DateTimeFilter | DateTime,\n?   updatedAt?: DateTimeFilter | DateTime,\n?   tenant?: TenantScalarRelationFilter | TenantWhereInput,\n?   dailyStats?: TripleWhaleDailyStatListRelationFilter\n  },\n  include: {\n    tenant: true\n  }\n}\n\nArgument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?."
+  }
+}
+
+Argument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?.
+[TripleWhaleSync] Job failed for credential undefined: 
+Invalid `prisma.tripleWhaleCredential.update()` invocation:
+
+{
+  where: {
+    id: undefined,
+?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,
+?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   OR?: TripleWhaleCredentialWhereInput[],
+?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],
+?   tenantId?: StringFilter | String,
+?   shopDomain?: StringFilter | String,
+?   customName?: StringFilter | String,
+?   apiKeyEncrypted?: BytesFilter | Bytes,
+?   encryptionKeyId?: StringFilter | String,
+?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,
+?   syncError?: StringNullableFilter | String | Null,
+?   createdAt?: DateTimeFilter | DateTime,
+?   updatedAt?: DateTimeFilter | DateTime,
+?   tenant?: TenantScalarRelationFilter | TenantWhereInput,
+?   dailyStats?: TripleWhaleDailyStatListRelationFilter
+  },
+  data: {
+    syncError: "\nInvalid `prisma.tripleWhaleCredential.findUnique()` invocation:\n\n{\n  where: {\n    id: undefined,\n?   tenantId_shopDomain?: TripleWhaleCredentialTenantIdShopDomainCompoundUniqueInput,\n?   AND?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],\n?   OR?: TripleWhaleCredentialWhereInput[],\n?   NOT?: TripleWhaleCredentialWhereInput | TripleWhaleCredentialWhereInput[],\n?   tenantId?: StringFilter | String,\n?   shopDomain?: StringFilter | String,\n?   customName?: StringFilter | String,\n?   apiKeyEncrypted?: BytesFilter | Bytes,\n?   encryptionKeyId?: StringFilter | String,\n?   lastSyncedAt?: DateTimeNullableFilter | DateTime | Null,\n?   syncError?: StringNullableFilter | String | Null,\n?   createdAt?: DateTimeFilter | DateTime,\n?   updatedAt?: DateTimeFilter | DateTime,\n?   tenant?: TenantScalarRelationFilter | TenantWhereInput,\n?   dailyStats?: TripleWhaleDailyStatListRelationFilter\n  },\n  include: {\n    tenant: true\n  }\n}\n\nArgument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?."
+  }
+}
+
+Argument `where` of type TripleWhaleCredentialWhereUniqueInput needs at least one of `id` or `tenantId_shopDomain` arguments. Available options are marked with ?.
+[TripleWhaleSync] Starting sync for credential cmpcsc1rd000197t0rs2j81ng
+[TripleWhaleSync] Synced credential cmpcsc1rd000197t0rs2j81ng
+[MockupWorker] Successfully processed custom composite image cmqy15zng00076zt0kld7owp0
+Job 109 completed successfully

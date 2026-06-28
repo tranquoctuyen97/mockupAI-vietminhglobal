@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
-import { getTripleWhaleSyncQueue } from "@/lib/queue/queue";
+import { enqueueTripleWhaleSync } from "@/lib/triple-whale/queue";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ storeId: string }> }) {
   const { session, response } = await requireFeature("stores");
@@ -13,11 +13,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ storeI
   });
   if (!credential) return NextResponse.json({ error: "Credential not found" }, { status: 404 });
 
-  await getTripleWhaleSyncQueue().add(
-    "sync-store",
-    { credentialId, tenantId: session.tenantId },
-    { jobId: `tw-sync-${credentialId}-${Date.now()}` },
-  );
+  await enqueueTripleWhaleSync(credentialId, session.tenantId);
 
   return NextResponse.json({ success: true, queued: true });
 }

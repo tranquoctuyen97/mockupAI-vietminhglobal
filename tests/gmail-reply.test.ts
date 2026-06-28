@@ -41,6 +41,7 @@ describe("Gmail thread reply sender", () => {
       messageId: "<mockupai-reply-fixed@example.test>",
       inReplyTo: "<customer-last@example.test>",
       references: "<customer-first@example.test> <customer-last@example.test>",
+      attachments: undefined,
     }));
     expect(lookupByMessageId).toHaveBeenCalledWith("<mockupai-reply-fixed@example.test>");
     expect(result).toEqual({
@@ -106,5 +107,36 @@ describe("Gmail thread reply sender", () => {
     })).resolves.toMatchObject({ gmailThreadId: "thread-1" });
 
     expect(lookupByMessageId).toHaveBeenCalledTimes(3);
+  });
+
+  it("passes uploaded attachments through to Gmail SMTP", async () => {
+    const sendMail = vi.fn().mockResolvedValue({ accepted: ["customer@example.test"] });
+    const createTransport = vi.fn().mockReturnValue({ sendMail, close: vi.fn() });
+
+    await sendGmailThreadReply({
+      credentials: { email: "support@example.test", appPassword: "secret" },
+      to: "customer@example.test",
+      subject: "Subject",
+      text: "Body",
+      gmailThreadId: "thread-1",
+      latestExternalMessageId: "<customer@example.test>",
+      references: [],
+      attachments: [{
+        filename: "invoice.pdf",
+        contentType: "application/pdf",
+        content: Buffer.from("pdf"),
+      }],
+      lookupByMessageId: vi.fn().mockResolvedValue(sentMetadata),
+      createTransport,
+      generateMessageId: () => "<mockupai-reply-fixed@example.test>",
+    });
+
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({
+      attachments: [{
+        filename: "invoice.pdf",
+        contentType: "application/pdf",
+        content: Buffer.from("pdf"),
+      }],
+    }));
   });
 });

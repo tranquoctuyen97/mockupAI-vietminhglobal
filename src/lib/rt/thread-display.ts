@@ -1,7 +1,7 @@
 import { normalizeContentType } from "@/lib/mailboxes/email-body-renderer";
 import type { NormalizedThread, RtAttachmentDetail } from "./types";
 
-const APP_REPLY_MARKER = "App-sent Gmail reply recorded.";
+const APP_REPLY_MARKER = "App-sent Gmail reply recorded";
 
 function resourceId(value: { id?: string | number } | string | number | undefined): number | null {
   const raw = typeof value === "object" && value ? value.id : value;
@@ -35,8 +35,13 @@ export function decodeRtAttachmentContent(value: string | null | undefined): str
 }
 
 function parseRecordedAppReply(body: string): { body: string } | null {
-  if (!body.startsWith(APP_REPLY_MARKER)) return null;
-  const lines = body.split(/\r?\n/);
+  const normalizedBody = body
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .trimStart();
+  if (!normalizedBody.startsWith(APP_REPLY_MARKER)) return null;
+  const lines = normalizedBody.split(/\r?\n/);
   const blankIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "");
   if (blankIndex < 0) return null;
   const replyBody = lines.slice(blankIndex + 1).join("\n").trim();

@@ -118,7 +118,7 @@ export function buildEmailFrameDocument(html: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <base target="_blank">
   <style>
-    html, body { margin: 0; padding: 0; background: #ffffff; color: #111827; width: 100%; max-width: 100%; overflow-x: hidden; }
+    html, body { margin: 0; padding: 0; background: #ffffff; color: #111827; width: 100%; max-width: 100%; overflow-x: hidden; overflow-y: visible; }
     body { font: 14px/1.65 Arial, Helvetica, sans-serif; overflow-wrap: anywhere; word-break: break-word; }
     .mail-root {
       width: 100%;

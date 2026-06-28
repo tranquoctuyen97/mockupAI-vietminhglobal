@@ -16,7 +16,7 @@ describe("mailbox label UI source contract", () => {
     expect(source).toContain("conversationCount");
     expect(source).toContain('label.state.startsWith("PENDING")');
     expect(source).toContain('qs.set("labelId", selectedLabelId)');
-    expect(source).toContain("labelIds: conversationLabelIds");
+    expect(source).toContain("labelIds: targetLabelIds");
     expect(source).toContain('"Save labels"');
   });
 
@@ -27,7 +27,7 @@ describe("mailbox label UI source contract", () => {
   });
 
   it("uses a popup action and label menu and lets the detail panel consume remaining width", () => {
-    expect(source).toContain('gridTemplateColumns: "220px minmax(360px, 38vw) minmax(560px, 1fr)"');
+    expect(source).toContain('gridTemplateColumns: "220px minmax(300px, 0.92fr) minmax(0, 1.18fr)"');
     expect(source).toContain("const [labelMenuOpen, setLabelMenuOpen] = useState(false)");
     expect(source).toContain("const visibleLabelChips = conversationLabels.slice(0, 2)");
     expect(source).toContain("Mark as unread");
@@ -35,5 +35,16 @@ describe("mailbox label UI source contract", () => {
     expect(source).toContain("labelMenuTitle");
     expect(source).toContain("Search labels");
     expect(source).toContain('zIndex: 30');
+  });
+
+  it("supports Gmail-like row label assignment from the conversation list", () => {
+    expect(source).toContain("openLabelMenuConversationId");
+    expect(source).toContain("onContextMenu={(event) =>");
+    expect(source).toContain("openLabelMenu");
+    expect(source).toContain("rowLabelMenu");
+    expect(source).toContain("Label as");
+    expect(source).toContain("draftLabelIds");
+    expect(source).toContain("onSaveLabels(draftLabelIds)");
+    expect(source).toContain("paddingRight: 36");
   });
 });

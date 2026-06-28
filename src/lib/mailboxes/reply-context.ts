@@ -39,6 +39,8 @@ export function buildGmailReplyContext(input: {
   ticketId: number;
   threads: NormalizedThread[];
   inboundMessageLinks: ReplyMessageLink[];
+  fallbackCustomerEmail?: string | null;
+  fallbackSubject?: string | null;
 }): GmailReplyContext | null {
   const mailboxEmail = input.mailboxEmail.trim().toLowerCase();
   const orderedThreads = [...input.threads].sort((left, right) => {
@@ -54,7 +56,8 @@ export function buildGmailReplyContext(input: {
     const from = normalizedAddress(thread.from);
     return Boolean(from) && from !== mailboxEmail;
   });
-  const to = normalizedAddress(customerThread?.from);
+  const to = normalizedAddress(customerThread?.from) || normalizedAddress(input.fallbackCustomerEmail);
+  if (to === mailboxEmail) return null;
   if (!to) return null;
 
   const inboundMessageIds = uniqueMessageIds(
@@ -67,7 +70,7 @@ export function buildGmailReplyContext(input: {
 
   return {
     to,
-    subject: customerThread?.subject || `Ticket #${input.ticketId}`,
+    subject: customerThread?.subject || input.fallbackSubject?.trim() || `Ticket #${input.ticketId}`,
     latestExternalMessageId,
     references: inboundMessageIds.slice(0, -1),
   };

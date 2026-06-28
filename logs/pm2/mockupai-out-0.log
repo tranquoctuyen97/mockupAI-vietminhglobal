@@ -1053,3 +1053,369 @@ The column `mailbox_conversations.is_unread` does not exist in the current datab
 - Network:       http://192.168.10.98:3001
 ✓ Ready in 102ms
 [Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 106ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 132ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 153ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The table `public.mailbox_response_metrics` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The table `public.mailbox_response_metrics` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The table `public.mailbox_response_metrics` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The table `public.mailbox_response_metrics` does not exist in the current database.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 105ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 162ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 147ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxResponseMetric.findMany()` invocation:
+
+
+The column `t0.latest_admin_reply_actor_user_id` does not exist in the current database.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 169ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 149ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 107ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 104ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 139ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 100ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 107ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 137ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 137ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 104ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 128ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 107ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 109ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 109ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 106ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 98ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 106ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 103ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 137ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 109ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 114ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 103ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 111ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 106ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 107ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 109ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 111ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 110ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 111ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 109ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 117ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 110ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 104ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 132ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 203ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 151ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 116ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 136ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 203ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 177ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 149ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 202ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 141ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 113ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 135ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+[generation.ts] mockupJobId: cmqy15zmo00066zt01m1jd7lk, createdImages count: 1
+[generation.ts] mockupJobId: cmqy15zmo00066zt01m1jd7lk, pendingImages count: 1
+[generation.ts] Enqueueing image: cmqy15zng00076zt0kld7owp0, sourceUrl: mockup://library/cmqn8xx5d000ampt0w0i2nyxb/cmpf8kv9u0002u9t0vjjr4uar
+[generation.ts] mockupJobId: cmqy15zqc00086zt05z3wl76z, createdImages count: 1
+[generation.ts] mockupJobId: cmqy15zqc00086zt05z3wl76z, pendingImages count: 1
+[generation.ts] Enqueueing image: cmqy15zqm00096zt05veiyovt, sourceUrl: mockup://library/cmqn8xr0x0008mpt0x3vfhntt/cmpmr86xy0008k3t0trss52ax
+[Shopify] Enabled tracking and set stock to 999 for 15 item(s)
+[Printify] Product created: 6a4152a51958bb0f40078e01. Polling for generated mockups...
+[Printify] Mockup IDs collected after 1 attempts: 6 images found.
+[Printify] Performing PUT update for visible_mockups on product 6a4152a51958bb0f40078e01...
+[Printify] PUT update succeeded for product 6a4152a51958bb0f40078e01. Mockups selected count: 6

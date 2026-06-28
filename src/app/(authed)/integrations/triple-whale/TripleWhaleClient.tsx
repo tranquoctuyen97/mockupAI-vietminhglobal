@@ -2,7 +2,7 @@
 
 import {
   AlertCircle, ArrowLeft, Check, Clock, Edit2,
-  Eye, EyeOff, Loader2, Plus, RefreshCw, Trash2, X,
+  Calendar, Eye, EyeOff, Loader2, Plus, RefreshCw, Trash2, X,
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useId, useState } from "react";
@@ -16,6 +16,8 @@ interface Credential {
   customName: string;
   apiKeyMasked: string;
   lastSyncedAt: string | null;
+  syncFromDate: string;
+  syncIntervalMinutes: number;
   syncError: string | null;
 }
 
@@ -39,6 +41,124 @@ const TIMEZONES = [
   { value: "UTC",                 label: "UTC" },
   { value: "Asia/Ho_Chi_Minh",    label: "Asia/Ho_Chi_Minh (ICT)" },
 ];
+
+function getDefaultSyncFromDate() {
+  return new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function parseDateValue(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return new Date();
+  return new Date(year, month - 1, day);
+}
+
+function dateToValue(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateLabel(value: string) {
+  const date = parseDateValue(value);
+  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+}
+
+function buildCalendarDays(monthDate: Date) {
+  const first = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+  const start = new Date(first);
+  start.setDate(first.getDate() - first.getDay());
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date;
+  });
+}
+
+function DatePickerField({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [monthDate, setMonthDate] = useState(() => parseDateValue(value));
+  const selectedValue = value;
+  const days = buildCalendarDays(monthDate);
+
+  function moveMonth(delta: number) {
+    setMonthDate(new Date(monthDate.getFullYear(), monthDate.getMonth() + delta, 1));
+  }
+
+  function selectDate(date: Date) {
+    onChange(dateToValue(date));
+    setMonthDate(date);
+    setOpen(false);
+  }
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button
+        id={id}
+        className="input"
+        onClick={() => setOpen(!open)}
+        type="button"
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", textAlign: "left" }}
+      >
+        <span>{formatDateLabel(value)}</span>
+        <Calendar size={16} color="var(--text-muted)" />
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            zIndex: 5,
+            bottom: "calc(100% + 6px)",
+            left: 0,
+            width: 280,
+            padding: 12,
+            border: "1px solid var(--border-default)",
+            borderRadius: 14,
+            background: "var(--bg-primary)",
+            boxShadow: "0 16px 40px rgba(15,23,42,0.18)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => moveMonth(-1)} type="button">Prev</button>
+            <div style={{ fontSize: 13, fontWeight: 800 }}>
+              {monthDate.toLocaleString(undefined, { month: "long", year: "numeric" })}
+            </div>
+            <button className="btn btn-ghost btn-sm" onClick={() => moveMonth(1)} type="button">Next</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+            {["S", "M", "T", "W", "T", "F", "S"].map((day, index) => (
+              <div key={`${day}-${index}`} style={{ textAlign: "center", fontSize: 11, color: "var(--text-muted)", fontWeight: 700, padding: "4px 0" }}>{day}</div>
+            ))}
+            {days.map((day) => {
+              const dayValue = dateToValue(day);
+              const selected = dayValue === selectedValue;
+              const muted = day.getMonth() !== monthDate.getMonth();
+              return (
+                <button
+                  key={dayValue}
+                  onClick={() => selectDate(day)}
+                  type="button"
+                  style={{
+                    height: 32,
+                    border: selected ? "1px solid var(--color-wise-green)" : "1px solid transparent",
+                    borderRadius: 8,
+                    background: selected ? "rgba(159,232,112,0.3)" : "transparent",
+                    color: muted ? "var(--text-muted)" : "var(--text-primary)",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    fontWeight: selected ? 800 : 600,
+                  }}
+                >
+                  {day.getDate()}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Status badge ──────────────────────────────────────────────────────────────
 
@@ -75,11 +195,15 @@ function AddModal({ shopifyStores, onClose, onSaved }: {
   const [customDomain, setCustomDomain] = useState("");
   const [customName, setCustomName] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [syncFromDate, setSyncFromDate] = useState(getDefaultSyncFromDate);
+  const [syncIntervalMinutes, setSyncIntervalMinutes] = useState("30");
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const domainId = useId();
   const nameId = useId();
   const keyId = useId();
+  const fromDateId = useId();
+  const intervalId = useId();
 
   const shopDomain = mode === "shopify"
     ? shopifyStores.find((s) => s.id === selectedStoreId)?.shopifyDomain ?? ""
@@ -89,12 +213,21 @@ function AddModal({ shopifyStores, onClose, onSaved }: {
     if (!shopDomain.trim()) { toast.error("Shop domain required"); return; }
     if (!customName.trim()) { toast.error("Custom name required"); return; }
     if (!apiKey.trim()) { toast.error("API key required"); return; }
+    if (!syncFromDate) { toast.error("From date required"); return; }
+    const syncIntervalValue = Number(syncIntervalMinutes);
+    if (!Number.isInteger(syncIntervalValue) || syncIntervalValue < 30) return;
     setSaving(true);
     try {
       const res = await fetch("/api/integrations/triple-whale", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shopDomain: shopDomain.trim(), customName: customName.trim(), apiKey: apiKey.trim() }),
+        body: JSON.stringify({
+          shopDomain: shopDomain.trim(),
+          customName: customName.trim(),
+          apiKey: apiKey.trim(),
+          syncFromDate,
+          syncIntervalMinutes: syncIntervalValue,
+        }),
       });
       const json = await res.json();
       if (!res.ok) { toast.error(json.error ?? "Failed to save"); return; }
@@ -168,6 +301,28 @@ function AddModal({ shopifyStores, onClose, onSaved }: {
             <label htmlFor={nameId} style={{ display: "block", fontSize: 12, fontWeight: 700, marginBottom: 6, color: "var(--text-secondary)" }}>Custom Name</label>
             <input id={nameId} className="input" value={customName} onChange={(e) => setCustomName(e.target.value)} placeholder="e.g. HTS, TM, YM" maxLength={20} />
             <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Short alias shown in charts</p>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 140px", gap: 12 }}>
+            <div>
+              <label htmlFor={fromDateId} style={{ display: "block", fontSize: 12, fontWeight: 700, marginBottom: 6, color: "var(--text-secondary)" }}>From date</label>
+              <DatePickerField id={fromDateId} value={syncFromDate} onChange={setSyncFromDate} />
+              <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>First sync starts here</p>
+            </div>
+            <div>
+              <label htmlFor={intervalId} style={{ display: "block", fontSize: 12, fontWeight: 700, marginBottom: 6, color: "var(--text-secondary)" }}>Sync every</label>
+              <input
+                id={intervalId}
+                className="input"
+                type="number"
+                min={30}
+                value={syncIntervalMinutes}
+                onChange={(e) => setSyncIntervalMinutes(e.target.value)}
+              />
+              <p style={{ fontSize: 11, color: Number(syncIntervalMinutes) >= 30 ? "var(--text-muted)" : "var(--color-danger)", marginTop: 4 }}>
+                {Number(syncIntervalMinutes) >= 30 ? "Minutes, min 30" : "Enter 30 minutes or more"}
+              </p>
+            </div>
           </div>
 
           {/* API key */}
@@ -312,6 +467,14 @@ export default function TripleWhaleClient() {
     } finally { setSyncingId(null); }
   }
 
+  async function deleteOne(cred: Credential) {
+    if (!confirm(`Remove Triple Whale shop ${cred.shopDomain}? This deletes synced stats and pending sync jobs.`)) return;
+    const r = await fetch(`/api/integrations/triple-whale/${cred.id}`, { method: "DELETE" });
+    if (!r.ok) { toast.error((await r.json()).error ?? "Failed to delete"); return; }
+    toast.success("Triple Whale shop removed");
+    await load();
+  }
+
   async function saveTimezone(timezone: string) {
     const r = await fetch("/api/integrations/triple-whale/settings", {
       method: "PATCH",
@@ -392,6 +555,7 @@ export default function TripleWhaleClient() {
                         <button onClick={() => syncOne(cred.id)} disabled={syncingId === cred.id} className="btn btn-ghost btn-sm" title="Sync now" type="button">
                           {syncingId === cred.id ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
                         </button>
+                        <button onClick={() => deleteOne(cred)} className="btn btn-ghost btn-sm" title="Delete" type="button"><Trash2 size={13} /></button>
                       </div>
                     </td>
                   </tr>

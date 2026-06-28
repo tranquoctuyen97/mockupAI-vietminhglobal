@@ -135,4 +135,43 @@ describe("Gmail IMAP adapter", () => {
     expect(client.messageFlagsAdd).toHaveBeenCalledWith([1], ["\\Spam"], { uid: true, useLabels: true });
     expect(client.messageFlagsRemove).toHaveBeenCalledWith([1], ["\\Inbox"], { uid: true, useLabels: true });
   });
+
+  it("moves scanned Inbox UIDs to Spam without marking them read", async () => {
+    const client = mockClient();
+    const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, () => client as never);
+
+    await adapter.moveInboxMessagesToSpam([1]);
+
+    expect(client.getMailboxLock).toHaveBeenCalledWith("INBOX");
+    expect(client.messageFlagsAdd).toHaveBeenCalledWith([1], ["\\Spam"], { uid: true, useLabels: true });
+    expect(client.messageFlagsRemove).toHaveBeenCalledWith([1], ["\\Inbox"], { uid: true, useLabels: true });
+    expect(client.messageFlagsAdd).not.toHaveBeenCalledWith(expect.anything(), ["\\Seen"], expect.anything());
+  });
+
+  it("moves a known Gmail thread to Trash without changing read state", async () => {
+    const client = mockClient({
+      fetchAll: vi.fn().mockResolvedValue([{
+        uid: 1,
+        emailId: "msg-1",
+        threadId: "thread-1",
+        internalDate: new Date("2026-06-01"),
+        envelope: {
+          subject: "Customer needs help",
+          from: [{ name: "Customer", address: "customer@example.test" }],
+        },
+        flags: new Set<string>(["\\Seen"]),
+        labels: new Set(["\\Inbox", "\\Spam", "Support/Test"]),
+        headers: Buffer.from("Message-ID: <one@example.com>\r\n"),
+      }]),
+    });
+    const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, () => client as never);
+
+    await adapter.moveThreadToTrash("thread-1");
+
+    expect(client.getMailboxLock).toHaveBeenCalledWith("[Gmail]/All Mail");
+    expect(client.messageFlagsAdd).toHaveBeenCalledWith([1], ["\\Trash"], { uid: true, useLabels: true });
+    expect(client.messageFlagsRemove).toHaveBeenCalledWith([1], ["\\Inbox"], { uid: true, useLabels: true });
+    expect(client.messageFlagsRemove).toHaveBeenCalledWith([1], ["\\Spam"], { uid: true, useLabels: true });
+    expect(client.messageFlagsAdd).not.toHaveBeenCalledWith(expect.anything(), ["\\Seen"], expect.anything());
+  });
 });

@@ -8,7 +8,7 @@ import {
 } from "../src/lib/mailboxes/queue";
 
 describe("mailbox queue contracts", () => {
-  it("creates a fresh mailbox sync job while keeping per-operation label jobs deduped", async () => {
+  it("dedupes mailbox sync jobs by mailbox while keeping per-operation label jobs deduped", async () => {
     const syncQueue = { add: vi.fn() };
     const labelQueue = { add: vi.fn() };
 
@@ -18,9 +18,8 @@ describe("mailbox queue contracts", () => {
 
     const firstSyncOptions = syncQueue.add.mock.calls[0]?.[2];
     const secondSyncOptions = syncQueue.add.mock.calls[1]?.[2];
-    expect(firstSyncOptions.jobId).toMatch(/^sync-mailbox-1-/);
-    expect(secondSyncOptions.jobId).toMatch(/^sync-mailbox-1-/);
-    expect(secondSyncOptions.jobId).not.toBe(firstSyncOptions.jobId);
+    expect(firstSyncOptions.jobId).toBe("sync-mailbox-1");
+    expect(secondSyncOptions.jobId).toBe("sync-mailbox-1");
     expect(syncQueue.add).toHaveBeenNthCalledWith(
       1,
       "sync-mailbox",
@@ -28,6 +27,8 @@ describe("mailbox queue contracts", () => {
       expect.objectContaining({
         attempts: 5,
         backoff: { type: "exponential", delay: 30_000 },
+        removeOnComplete: true,
+        removeOnFail: true,
       }),
     );
     expect(labelQueue.add).toHaveBeenCalledWith(

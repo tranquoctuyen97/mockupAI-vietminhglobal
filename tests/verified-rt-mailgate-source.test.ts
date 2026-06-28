@@ -18,4 +18,13 @@ describe("verified RT mailgate persistence source", () => {
     expect(source).toContain("searchTickets({ queueId, pageSize: 100 })");
     expect(source).toContain("transaction.type === \"create\"");
   });
+
+  it("persists list snapshot fields when linking RT tickets to Gmail threads", () => {
+    const source = readFileSync("scripts/verified-rt-mailgate.ts", "utf8");
+
+    expect(source).toContain("subject:");
+    expect(source).toContain("articleCount:");
+    expect(source).toContain("rtLastUpdatedAt:");
+    expect(source).toContain("lastActivityAt:");
+  });
 });

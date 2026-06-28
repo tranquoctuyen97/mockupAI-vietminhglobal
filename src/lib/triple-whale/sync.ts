@@ -3,8 +3,6 @@ import { decrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
 import { fetchSummaryData } from "./client";
 
-const BACKFILL_DAYS = 90;
-
 export async function syncStore(credentialId: string): Promise<void> {
   const credential = await prisma.tripleWhaleCredential.findUnique({
     where: { id: credentialId },
@@ -17,11 +15,7 @@ export async function syncStore(credentialId: string): Promise<void> {
   const today = formatInTimeZone(now, timezone, "yyyy-MM-dd");
   const startDate = credential.lastSyncedAt
     ? formatInTimeZone(credential.lastSyncedAt, timezone, "yyyy-MM-dd")
-    : formatInTimeZone(
-        new Date(now.getTime() - BACKFILL_DAYS * 24 * 60 * 60 * 1000),
-        timezone,
-        "yyyy-MM-dd",
-      );
+    : formatInTimeZone(credential.syncFromDate, timezone, "yyyy-MM-dd");
 
   if (startDate > today) return;
 

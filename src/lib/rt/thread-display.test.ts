@@ -100,4 +100,31 @@ describe("thread display enrichment", () => {
     expect(enriched[1].body).toBe("Thanks for the update.");
     expect(enriched[1].subject).toBe("Original subject");
   });
+
+  it("converts older recorded app replies that do not include the exact marker punctuation", () => {
+    const enriched = enrichThreadsForDisplay({
+      threads: [{
+        id: 301,
+        conversationId: 26,
+        subject: undefined,
+        body: " App-sent Gmail reply recorded\nGmail-Message-ID: <abc@example.com><br><br>Older reply body",
+        contentType: "text/html",
+        from: "",
+        to: "",
+        cc: "",
+        type: "comment",
+        sender: "RT_System",
+        internal: true,
+        attachments: [],
+        createdAt: "2026-06-27T16:36:00.000Z",
+      }],
+      attachments: [],
+      mailboxEmail: "anhiri66@gmail.com",
+      customerEmail: "support@openai.com",
+    });
+
+    expect(enriched[0].hidden).toBe(false);
+    expect(enriched[0].displayType).toBe("app_reply");
+    expect(enriched[0].body).toBe("Older reply body");
+  });
 });
