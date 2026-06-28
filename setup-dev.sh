@@ -298,6 +298,8 @@ ensure_env_value "$RT_ENV_FILE" "RT_POSTGRES_PASSWORD" "$DB_PASSWORD" false
 ensure_env_value "$RT_ENV_FILE" "DATABASE_URL" "$APP_DATABASE_URL" false
 ensure_env_value "$RT_ENV_FILE" "REDIS_URL" "$APP_REDIS_URL" false
 ensure_env_value "$RT_ENV_FILE" "MASTER_ENCRYPTION_KEY" "$APP_MASTER_KEY" false
+APP_MASTER_KEY_ID="$(read_env_value "$APP_ENV_FILE" "MASTER_ENCRYPTION_KEY_ID" || echo "v1")"
+ensure_env_value "$RT_ENV_FILE" "MASTER_ENCRYPTION_KEY_ID" "$APP_MASTER_KEY_ID" false
 ensure_env_value "$RT_ENV_FILE" "RT_URL" "http://rt:9000" false
 ensure_env_value "$RT_ENV_FILE" "MAILBOX_RUNTIME_DIR" "/tmp/mockupai-mailboxes" false
 RT_ROOT_PASSWORD_VALUE="$(read_env_value "$RT_ENV_FILE" "RT_ROOT_PASSWORD" || true)"
