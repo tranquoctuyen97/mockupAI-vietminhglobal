@@ -202,7 +202,10 @@ ensure_getmail() {
   mkdir -p "${HOME}/.local/bin"
 
   if [[ -x "${user_bin}/getmail" ]]; then
-    ln -sf "${user_bin}/getmail" "${HOME}/.local/bin/getmail"
+    # Skip symlink if the source and destination are the same path
+    if [[ "$(readlink -f "${user_bin}/getmail" 2>/dev/null || echo "${user_bin}/getmail")" != "$(readlink -f "${HOME}/.local/bin/getmail" 2>/dev/null || echo "${HOME}/.local/bin/getmail")" ]]; then
+      ln -sf "${user_bin}/getmail" "${HOME}/.local/bin/getmail"
+    fi
   fi
 
   export PATH="${HOME}/.local/bin:${user_bin}:${PATH}"
