@@ -60,7 +60,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?required}
       REDIS_URL: ${REDIS_URL:?required}
       RT_URL: ${RT_URL:-http://rt:9000}
-      RT_API_TOKEN: ${RT_API_TOKEN:?required}
+      RT_API_TOKEN: ${RT_API_TOKEN:-}
       MASTER_ENCRYPTION_KEY_ID: ${MASTER_ENCRYPTION_KEY_ID:?required}
       MASTER_ENCRYPTION_KEY: ${MASTER_ENCRYPTION_KEY:?required}
       MAILBOX_RUNTIME_DIR: /run/mockupai-mailboxes
