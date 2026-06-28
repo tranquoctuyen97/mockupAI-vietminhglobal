@@ -154,6 +154,7 @@ export default function AuthedShell({
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const isMailboxRoute = pathname.startsWith("/mailboxes");
 
   const isSuperAdmin = userRole === "SUPER_ADMIN";
   const isAdminOrAbove = userRole === "ADMIN" || isSuperAdmin;
@@ -376,7 +377,7 @@ export default function AuthedShell({
         </header>
 
         {/* Page content */}
-        <div className="p-6 lg:p-8 max-w-7xl">
+        <div className={isMailboxRoute ? "p-6 lg:p-8 w-full max-w-none min-w-0" : "p-6 lg:p-8 max-w-7xl"}>
           <TokenExpiredBanner />
           <AuthedUserProvider role={userRole}>{children}</AuthedUserProvider>
         </div>

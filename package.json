@@ -2,6 +2,10 @@
   "name": "mockupai",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": "^20.19 || ^22.12 || >=24.0"
+  },
   "scripts": {
     "postinstall": "prisma generate",
     "dev": "next dev --turbopack",
@@ -12,8 +16,13 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:rt-gmail": "bash scripts/migrate-rt-gmail-mailboxes.sh",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
+    "mailbox:matrix:preflight": "tsx scripts/verify-rt-gmail-live-matrix.ts preflight",
+    "mailbox:matrix:checklist": "tsx scripts/verify-rt-gmail-live-matrix.ts checklist",
+    "mailbox:matrix:template": "tsx scripts/verify-rt-gmail-live-matrix.ts template",
     "worker": "npx tsx start-worker.ts"
   },
   "prisma": {
@@ -65,5 +74,10 @@
     "tsx": "^4.21.0",
     "typescript": "^5",
     "vitest": "^4.1.7"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "@prisma/dev@0.24.3": "patches/@prisma__dev@0.24.3.patch"
+    }
   }
 }

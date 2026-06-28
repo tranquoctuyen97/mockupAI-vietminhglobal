@@ -62,3 +62,271 @@ Triple Whale sync worker is ready and listening to queue.
 Mockup composite worker is ready and listening to queue.
 Mockup composite worker is ready and listening to queue.
 Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Error: connect ETIMEDOUT
+    at Socket.<anonymous> (/Users/tuyen.tq/Documents/freelancer/vietminhglobal/app/node_modules/.pnpm/ioredis@5.10.1/node_modules/ioredis/built/Redis.js:171:41)
+    at Object.onceWrapper (node:events:633:28)
+    at Socket.emit (node:events:519:28)
+    at Socket._onTimeout (node:net:604:8)
+    at listOnTimeout (node:internal/timers:585:17)
+    at process.processTimers (node:internal/timers:521:7) {
+  errorno: 'ETIMEDOUT',
+  code: 'ETIMEDOUT',
+  syscall: 'connect'
+}
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Error: connect ETIMEDOUT
+    at Socket.<anonymous> (/Users/tuyen.tq/Documents/freelancer/vietminhglobal/app/node_modules/.pnpm/ioredis@5.10.1/node_modules/ioredis/built/Redis.js:171:41)
+    at Object.onceWrapper (node:events:633:28)
+    at Socket.emit (node:events:519:28)
+    at Socket._onTimeout (node:net:604:8)
+    at listOnTimeout (node:internal/timers:585:17)
+    at process.processTimers (node:internal/timers:521:7) {
+  errorno: 'ETIMEDOUT',
+  code: 'ETIMEDOUT',
+  syscall: 'connect'
+}
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.

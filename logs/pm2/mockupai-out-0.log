@@ -1,0 +1,1055 @@
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 187ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 98ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 97ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 98ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 100ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 97ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 106ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 85ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 112ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 88ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 88ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 89ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 118ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 96ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 99ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 88ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 127ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 159ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 158ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+[MailboxProxy] auto-provision mailboxId=cmqv51y4t0002r8t0kbnu4t55 email=anhiri66@gmail.com storeId=cmogmwkrv0006axt0ktw5e3eq reason=missing_rt_queue
+[MailboxProvision] start mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com queueId=none
+[MailboxProvision] degraded mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com errorCode=rt_upstream_400
+[MailboxProxy] auto-provision mailboxId=cmqv51y4t0002r8t0kbnu4t55 email=anhiri66@gmail.com storeId=cmogmwkrv0006axt0ktw5e3eq reason=missing_rt_queue
+[MailboxProvision] start mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com queueId=none
+[MailboxProvision] degraded mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com errorCode=rt_upstream_400
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 148ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 113ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.76:3001
+✓ Ready in 153ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 110ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 101ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 106ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 135ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 117ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 104ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 104ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 104ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 106ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 110ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 136ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 148ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 98ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 99ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 137ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 157ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 126ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 105ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 105ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 112ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 159ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 114ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 134ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 133ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 117ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 122ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 120ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 104ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 120ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 132ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 131ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 107ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 176ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 203ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 171ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 160ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 139ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 102ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 112ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 115ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 129ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 115ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 115ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 126ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 124ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 120ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 114ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 115ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 111ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 102ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 101ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 98ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 109ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://0.0.0.0:3001
+✓ Ready in 0ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://0.0.0.0:3001
+✓ Ready in 0ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 133ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 116ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 137ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 156ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 125ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 107ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 114ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 130ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 127ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 103ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 191ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 121ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 240ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 166ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 104ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 133ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 153ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 136ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 174ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 180ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 173ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 137ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 145ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 130ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 150ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 152ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 172ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 146ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 169ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 156ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 114ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 128ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 126ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 133ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 209ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 134ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 139ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 129ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 119ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 117ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 136ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 142ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 120ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 160ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 188ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 172ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 154ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 103ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 150ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 116ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 176ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 106ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 158ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 152ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+prisma:error 
+Invalid `prisma.mailboxConversation.count()` invocation:
+
+
+The column `mailbox_conversations.is_unread` does not exist in the current database.
+prisma:error 
+Invalid `prisma.mailboxConversation.count()` invocation:
+
+
+The column `mailbox_conversations.is_unread` does not exist in the current database.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 163ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 148ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 152ms
+[MockupWorker] Ensuring workers are started via instrumentation.
+[Instrumentation] BullMQ workers started.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 176ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 156ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 278ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 154ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 145ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 141ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 156ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 188ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 169ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 127ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 144ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 146ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 149ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 134ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 129ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 124ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 136ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 155ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 109ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 194ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 143ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 146ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 145ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 183ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 150ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 131ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 134ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 142ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 123ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 117ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 119ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 148ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 129ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 134ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 143ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 157ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 163ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 150ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 138ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 125ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 125ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 121ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 133ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 121ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 123ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 106ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 133ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 127ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 144ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 144ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 150ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 130ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 164ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 141ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 117ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 168ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 128ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 133ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 131ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 156ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 153ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 131ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 130ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 128ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 122ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 133ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 128ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 121ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 107ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 107ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 113ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 117ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 117ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 137ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 167ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 141ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 124ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 137ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 127ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 118ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 126ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 115ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 102ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 121ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 135ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 119ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 170ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 126ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 103ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 124ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 158ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 141ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 148ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 164ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 146ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 118ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 124ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 138ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 129ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 136ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 138ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 111ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 144ms
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 141ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.
+▲ Next.js 16.2.4
+- Local:         http://localhost:3001
+- Network:       http://192.168.10.98:3001
+✓ Ready in 102ms
+[Instrumentation] STANDALONE_WORKER=1 — skipping embedded workers.

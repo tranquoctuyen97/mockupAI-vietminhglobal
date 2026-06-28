@@ -1,6 +1,6 @@
 "use client";
 
-import { Settings, Power, MailOpen } from "lucide-react";
+import { Settings, Power, MailOpen, Trash2 } from "lucide-react";
 import type { MailboxRow } from "./page";
 
 interface Props {
@@ -8,10 +8,11 @@ interface Props {
   storeName: string | null;
   onEdit: (m: MailboxRow) => void;
   onToggleStatus: (m: MailboxRow) => void;
+  onDelete: (m: MailboxRow) => void;
   onCreate?: () => void;
 }
 
-export function MailboxList({ mailboxes, storeName, onEdit, onToggleStatus, onCreate }: Props) {
+export function MailboxList({ mailboxes, storeName, onEdit, onToggleStatus, onDelete, onCreate }: Props) {
   if (mailboxes.length === 0) {
     return (
       <div style={{ textAlign: "center", padding: "4rem 2rem", opacity: 0.8 }}>
@@ -45,6 +46,7 @@ export function MailboxList({ mailboxes, storeName, onEdit, onToggleStatus, onCr
             <th style={{ padding: "0.75rem" }}>Email</th>
             <th style={{ padding: "0.75rem" }}>Provider</th>
             <th style={{ padding: "0.75rem" }}>Trạng thái</th>
+            <th style={{ padding: "0.75rem" }}>Sync</th>
             <th style={{ padding: "0.75rem" }}>Actions</th>
           </tr>
         </thead>
@@ -56,10 +58,10 @@ export function MailboxList({ mailboxes, storeName, onEdit, onToggleStatus, onCr
               <td style={{ padding: "0.75rem" }}>
                 <span style={{
                   padding: "2px 8px", borderRadius: 12, fontSize: "0.75rem", fontWeight: 600,
-                  background: m.provider === "gmail" ? "#fef3c7" : "#e0e7ff",
-                  color: m.provider === "gmail" ? "#92400e" : "#3730a3",
+                  background: "#fef3c7",
+                  color: "#92400e",
                 }}>
-                  {m.provider === "gmail" ? "Gmail" : "Custom"}
+                  Gmail
                 </span>
               </td>
               <td style={{ padding: "0.75rem" }}>
@@ -72,12 +74,29 @@ export function MailboxList({ mailboxes, storeName, onEdit, onToggleStatus, onCr
                 </span>
               </td>
               <td style={{ padding: "0.75rem" }}>
+                <span style={{
+                  padding: "2px 8px", borderRadius: 12, fontSize: "0.75rem", fontWeight: 600,
+                  background: m.syncStatus === "ACTIVE" ? "#d1fae5" : m.syncStatus === "DEGRADED" ? "#fee2e2" : "#e0e7ff",
+                  color: m.syncStatus === "ACTIVE" ? "#065f46" : m.syncStatus === "DEGRADED" ? "#991b1b" : "#3730a3",
+                }}>
+                  {m.syncStatus}
+                </span>
+                {m.lastSyncErrorCode && (
+                  <div style={{ marginTop: 4, fontSize: "0.7rem", color: "#991b1b" }}>
+                    {m.lastSyncErrorCode}
+                  </div>
+                )}
+              </td>
+              <td style={{ padding: "0.75rem" }}>
                 <div style={{ display: "flex", gap: "0.5rem" }}>
                   <button onClick={() => onEdit(m)} title="Edit" aria-label={`Chỉnh sửa ${m.name}`} style={btnStyle}>
                     <Settings size={14} />
                   </button>
                   <button onClick={() => onToggleStatus(m)} title={m.isActive ? "Disable" : "Enable"} aria-label={m.isActive ? `Tắt ${m.name}` : `Bật ${m.name}`} style={btnStyle}>
                     <Power size={14} style={{ color: m.isActive ? "#dc2626" : "#16a34a" }} />
+                  </button>
+                  <button onClick={() => onDelete(m)} title="Delete" aria-label={`Xoá ${m.name}`} style={{ ...btnStyle, color: "#dc2626" }}>
+                    <Trash2 size={14} />
                   </button>
                 </div>
               </td>

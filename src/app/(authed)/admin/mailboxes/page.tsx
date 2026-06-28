@@ -30,8 +30,10 @@ export interface MailboxRow {
   name: string;
   email: string;
   provider: string;
-  zammadGroupId: number;
-  zammadChannelId: number | null;
+  rtQueueId: number | null;
+  syncStatus: "PROVISIONING" | "ACTIVE" | "DEGRADED" | "DISABLED";
+  lastSyncAt: string | null;
+  lastSyncErrorCode: string | null;
   isActive: boolean;
   storeId: string;
   createdAt: string;
@@ -108,6 +110,29 @@ export default function AdminMailboxesPage() {
   useEffect(() => {
     fetchMailboxes();
   }, [fetchMailboxes]);
+
+  const handleDelete = async (mailbox: MailboxRow) => {
+    if (
+      !window.confirm(
+        `Bạn có chắc muốn XOÁ mailbox '${mailbox.name}' (${mailbox.email})?\n\nHành động này không thể hoàn tác. Toàn bộ dữ liệu mailbox sẽ bị xoá khỏi database.`,
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/admin/mailboxes/${mailbox.id}`, { method: "DELETE" });
+      if (res.ok) {
+        toast.success(`Đã xoá mailbox '${mailbox.name}'`);
+        fetchMailboxes();
+      } else {
+        const err = await res.json();
+        toast.error(err.error || "Lỗi xoá mailbox");
+      }
+    } catch {
+      toast.error("Lỗi kết nối");
+    }
+  };
 
   const handleToggleStatus = async (mailbox: MailboxRow) => {
     if (mailbox.isActive) {
@@ -215,6 +240,7 @@ export default function AdminMailboxesPage() {
           storeName={storeName}
           onEdit={setEditMailbox}
           onToggleStatus={handleToggleStatus}
+          onDelete={handleDelete}
           onCreate={() => setShowCreate(true)}
         />
       )}

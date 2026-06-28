@@ -38,7 +38,7 @@ export function EmailBodyRenderer({
 
     const resize = () => {
       const nextHeight = frame.contentDocument?.documentElement.scrollHeight ?? 320;
-      setFrameHeight(Math.max(220, Math.min(nextHeight, 1400)));
+      setFrameHeight(Math.max(220, Math.min(nextHeight, 6000)));
     };
 
     const timer = window.setTimeout(resize, 80);
@@ -94,4 +94,5 @@ const emailFrame: CSSProperties = {
   minHeight: 220,
   border: 0,
   background: "#fff",
+  overflow: "hidden",
 };

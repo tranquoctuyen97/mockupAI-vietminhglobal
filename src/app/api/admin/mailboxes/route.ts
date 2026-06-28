@@ -1,110 +1,39 @@
-/**
- * Admin Mailbox Management — List + Create
- *
- * GET  /api/admin/mailboxes?storeId=... — List mailboxes for a store
- * POST /api/admin/mailboxes — Create mailbox (group + channel + local record)
- *
- * Access: requireMailboxAdmin() — SUPER_ADMIN or ADMIN only
- * Audit: all operations logged without credentials
- *
- * Store-scoped: mailboxes belong to stores. storeId is required.
- */
-
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getRequestInfo, logAudit } from "@/lib/audit";
 import { requireMailboxAdmin } from "@/lib/auth/mailbox-admin-guard";
+import { encrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
-import {
-  createMailboxSchema,
-  MAILBOX_HISTORY_WINDOW_MONTHS,
-  toZammadInboundSsl,
-  toZammadOutboundSsl,
-} from "@/lib/zammad/admin-validation";
-import {
-  applyMailboxHistoryWindow,
-  assignAdminToGroup,
-  createGroup,
-  deleteEmailChannel,
-  deleteGroup,
-  disableEmailChannel,
-  ensureSystemAddressSenderFormat,
-  findChannelByGroupId,
-  probeEmailSettings,
-  testEmailInbound,
-  testEmailOutbound,
-  updateEmailChannelInbound,
-  updateGroup,
-  verifyEmailChannel,
-} from "@/lib/zammad/client";
-import type { ZammadInboundConfig, ZammadOutboundConfig } from "@/lib/zammad/types";
+import { createGmailAdapter } from "@/lib/mailboxes/gmail-client";
+import { verifyGmailSmtp } from "@/lib/mailboxes/gmail-smtp";
+import { createMailboxSchema } from "@/lib/mailboxes/validation";
+import { provisionMailbox } from "@/lib/rt/provisioning";
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+const INITIAL_SYNC_WINDOW_MONTHS = 6;
 
 async function validateStore(storeId: string, tenantId: string) {
   return prisma.store.findFirst({
-    where: {
-      id: storeId,
-      tenantId,
-      status: "ACTIVE",
-      deletedAt: null,
-    },
+    where: { id: storeId, tenantId, status: "ACTIVE", deletedAt: null },
     select: { id: true, name: true },
   });
 }
 
-async function rollbackCreatedZammadResources(channelId: number | null, groupId: number | null) {
-  if (channelId) {
-    await disableEmailChannel(channelId).catch((e) => {
-      console.error(
-        `[MAILBOX] CRITICAL: Failed to disable channel ${channelId} during rollback:`,
-        e,
-      );
-    });
-    await deleteEmailChannel(channelId).catch((e) => {
-      console.error(
-        `[MAILBOX] CRITICAL: Failed to delete channel ${channelId} during rollback. Manual cleanup required.`,
-        e,
-      );
-    });
-  }
-
-  if (groupId) {
-    const deleteResult = await deleteGroup(groupId).catch((e) => {
-      console.error(
-        `[MAILBOX] CRITICAL: Failed to delete group ${groupId} during rollback. Manual cleanup required.`,
-        e,
-      );
-      return null;
-    });
-    if (!deleteResult?.ok) {
-      await updateGroup(groupId, {
-        name: `archived-mailbox-${groupId}-${Date.now()}`,
-        active: false,
-      }).catch((e) => {
-        console.error(
-          `[MAILBOX] CRITICAL: Failed to archive group ${groupId} during rollback. Manual cleanup required.`,
-          e,
-        );
-      });
-    }
-  }
+function cleanAppPassword(value: string): string {
+  return value.replace(/\s/g, "");
 }
 
-function mailboxDisplayName(name: string | undefined, email: string): string {
-  return name?.trim() || email;
+function initialSyncAfter(): Date {
+  const date = new Date();
+  date.setMonth(date.getMonth() - INITIAL_SYNC_WINDOW_MONTHS);
+  return date;
 }
-
-// ─── GET /api/admin/mailboxes?storeId=... ──────────────────────────────────────
 
 export async function GET(request: NextRequest) {
   const guard = await requireMailboxAdmin();
   if (guard.response) return guard.response;
   const { session } = guard;
 
-  const { searchParams } = request.nextUrl;
-  const storeId = searchParams.get("storeId");
-
+  const storeId = request.nextUrl.searchParams.get("storeId");
   if (!storeId) {
     return NextResponse.json({ error: "storeId is required" }, { status: 422 });
   }
@@ -115,18 +44,17 @@ export async function GET(request: NextRequest) {
   }
 
   const mailboxes = await prisma.mailbox.findMany({
-    where: {
-      tenantId: session.tenantId,
-      storeId,
-    },
+    where: { tenantId: session.tenantId, storeId },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
       name: true,
       email: true,
       provider: true,
-      zammadGroupId: true,
-      zammadChannelId: true,
+      rtQueueId: true,
+      syncStatus: true,
+      lastSyncAt: true,
+      lastSyncErrorCode: true,
       isActive: true,
       storeId: true,
       createdAt: true,
@@ -140,14 +68,11 @@ export async function GET(request: NextRequest) {
   });
 }
 
-// ─── POST /api/admin/mailboxes ──────────────────────────────────────────────
-
 export async function POST(request: NextRequest) {
   const guard = await requireMailboxAdmin();
   if (guard.response) return guard.response;
   const { session } = guard;
 
-  // 1. Validate input
   let body: unknown;
   try {
     body = await request.json();
@@ -164,275 +89,108 @@ export async function POST(request: NextRequest) {
   }
 
   const input = parsed.data;
-  const outboundIdentity = {
-    displayName: mailboxDisplayName(input.fromName ?? input.name, input.email),
-    email: input.email,
-  };
-
-  // 2. Validate store belongs to tenant
   const store = await validateStore(input.storeId, session.tenantId);
   if (!store) {
     return NextResponse.json({ error: "Store not found or not active" }, { status: 404 });
   }
 
-  let groupId: number | null = null;
-  let channelId: number | null = null;
+  const appPassword = cleanAppPassword(input.appPassword);
+  const credentials = { email: input.email, appPassword };
+
+  const smtp = await verifyGmailSmtp(credentials);
+  if (!smtp.ok) {
+    return NextResponse.json(
+      {
+        result: "failed",
+        error: smtp.error,
+        message_human:
+          smtp.error === "gmail_auth_failed"
+            ? "Gmail từ chối đăng nhập. Kiểm tra email và App Password."
+            : "Không thể kết nối Gmail SMTP. Vui lòng thử lại sau.",
+      },
+      { status: 422 },
+    );
+  }
 
   try {
-    // 3. Create Zammad group
-    const groupResult = await createGroup({ name: input.name });
-    if (!groupResult.ok || !groupResult.data) {
-      return NextResponse.json(
-        { error: "Failed to create mailbox group in email system" },
-        { status: 502 },
-      );
-    }
-    groupId = groupResult.data.id;
-
-    // 3b. Assign admin user to the new group so API token can access its tickets
-    const assignResult = await assignAdminToGroup(groupId);
-    if (!assignResult.ok) {
-      console.warn(
-        `[MAILBOX] Failed to assign admin to group ${groupId}. Tickets may not be visible via API.`,
-      );
-    }
-
-    // Build Zammad configs — Gmail uses probe, Custom uses manual input
-    let inbound: ZammadInboundConfig;
-    let outbound: ZammadOutboundConfig;
-
-    if (input.provider === "gmail" && input.appPassword) {
-      // Gmail: auto-detect settings via Zammad probe
-      const probeResult = await probeEmailSettings({
-        email: input.email,
-        password: input.appPassword.replace(/\s/g, ""),
-      });
-      if (!probeResult.ok || probeResult.data?.result !== "ok" || !probeResult.data?.setting) {
-        await deleteGroup(groupId).catch(() => {});
-        return NextResponse.json(
-          {
-            error: "Gmail auto-detect failed",
-            details:
-              probeResult.data?.message_human ??
-              probeResult.data?.message ??
-              "Could not connect to Gmail. Check email and App Password.",
-          },
-          { status: 422 },
-        );
-      }
-      if (!probeResult.data.setting.inbound || !probeResult.data.setting.outbound) {
-        await deleteGroup(groupId).catch(() => {});
-        return NextResponse.json(
-          {
-            error: "Gmail auto-detect failed",
-            details: "Could not detect both inbound and outbound Gmail settings.",
-          },
-          { status: 422 },
-        );
-      }
-      inbound = probeResult.data.setting.inbound;
-      outbound = probeResult.data.setting.outbound;
-    } else {
-      if (!input.inbound || !input.outbound) {
-        await deleteGroup(groupId).catch(() => {});
-        return NextResponse.json(
-          { error: "Custom provider requires inbound and outbound settings" },
-          { status: 400 },
-        );
-      }
-
-      // Custom: use manual input
-      inbound = {
-        adapter: "imap",
-        options: {
-          host: input.inbound.host,
-          port: String(input.inbound.port),
-          ssl: toZammadInboundSsl(input.inbound.encryption),
-          user: input.inbound.username,
-          password: input.inbound.password,
-          folder: input.inbound.folder ?? "inbox",
-        },
-      };
-
-      outbound = {
-        adapter: "smtp",
-        options: {
-          host: input.outbound.host,
-          port: input.outbound.port,
-          ssl: toZammadOutboundSsl(input.outbound.encryption),
-          user: input.outbound.username,
-          password: input.outbound.password,
-        },
-      };
-    }
-
-    // 4. Test inbound connection
-    const inboundTest = await testEmailInbound(inbound);
-    if (!inboundTest.ok || inboundTest.data?.result !== "ok") {
-      await deleteGroup(groupId).catch(() => {});
-      return NextResponse.json(
-        {
-          error: "Inbound connection test failed",
-          details: inboundTest.data?.message_human ?? inboundTest.data?.message,
-          source: "inbound",
-        },
-        { status: 422 },
-      );
-    }
-
-    // 5. Test outbound connection
-    const outboundTest = await testEmailOutbound({
-      ...outbound,
-      email: input.email,
-    });
-    if (!outboundTest.ok || outboundTest.data?.result !== "ok") {
-      await deleteGroup(groupId).catch(() => {});
-      return NextResponse.json(
-        {
-          error: "Outbound connection test failed",
-          details: outboundTest.data?.message_human ?? outboundTest.data?.message,
-          source: "outbound",
-        },
-        { status: 422 },
-      );
-    }
-
-    // 6. Verify + create channel (may block up to 30s)
-    const verifyResult = await verifyEmailChannel({
-      meta: {
-        realname: outboundIdentity.displayName,
-        email: outboundIdentity.email,
+    await createGmailAdapter(credentials).probe();
+  } catch {
+    return NextResponse.json(
+      {
+        result: "failed",
+        error: "gmail_imap_unavailable",
+        message_human: "Không thể kết nối Gmail IMAP. Kiểm tra IMAP và App Password.",
       },
-      group_id: groupId,
-      inbound,
-      outbound,
-    });
-
-    if (!verifyResult.ok || verifyResult.data?.result !== "ok") {
-      await deleteGroup(groupId).catch(() => {});
-      return NextResponse.json(
-        {
-          error: "Email verification failed",
-          details: verifyResult.data?.message_human ?? verifyResult.data?.message,
-          source: verifyResult.data?.source,
-        },
-        { status: 422 },
-      );
-    }
-
-    // 7. Extract channelId
-    const channel = await findChannelByGroupId(groupId, input.email);
-    channelId = channel?.id ?? null;
-    if (!channelId) {
-      console.error(
-        `[MAILBOX] Channel created but could not extract channelId for groupId=${groupId}`,
-      );
-      await deleteGroup(groupId).catch(() => {});
-      return NextResponse.json(
-        { error: "Failed to locate configured mailbox channel in email system" },
-        { status: 502 },
-      );
-    }
-
-    const senderFormatResult = await ensureSystemAddressSenderFormat();
-    if (!senderFormatResult.ok) {
-      console.error(
-        `[zammad] failed to set sender format to SystemAddressName for channel=${channelId}: ${senderFormatResult.error ?? "unknown error"}`,
-      );
-      await rollbackCreatedZammadResources(channelId, groupId);
-      return NextResponse.json(
-        {
-          error: "Failed to configure outbound mailbox identity",
-          details: senderFormatResult.error ?? "Failed to set Zammad sender format",
-        },
-        { status: 502 },
-      );
-    }
-    console.info("[zammad] sender format set to SystemAddressName");
-
-    // 7a. Ensure keep_on_server: true is set on the email channel
-    const keepOnServerResult = await updateEmailChannelInbound(
-      channelId,
-      { keep_on_server: true },
-      outboundIdentity,
+      { status: 422 },
     );
-    if (!keepOnServerResult.ok) {
-      console.error(
-        `[zammad] failed to enable keep_on_server for channel=${channelId}: ${keepOnServerResult.error ?? "unknown error"}`,
-      );
-      await rollbackCreatedZammadResources(channelId, groupId);
-      return NextResponse.json(
-        {
-          error: "Failed to configure safety settings for mailbox",
-          details: keepOnServerResult.error ?? "Failed to set keep_on_server=true",
-        },
-        { status: 502 },
-      );
-    }
-    console.info(`[zammad] keep_on_server enabled for channel=${channelId}`);
-
-    // 7b. Apply fixed 6-month history window policy.
-    // The history window is not yet implemented at the Zammad channel level;
-    // this is recorded as a known limitation.
-    if (channelId) {
-      const historyResult = await applyMailboxHistoryWindow(channelId);
-      if (!historyResult.ok) {
-        console.warn(
-          `[MAILBOX] History window not applied for channel ${channelId}: ${historyResult.error}`,
-        );
-      }
-    }
-
-    // 8. Save local Mailbox row — scoped to tenant and store
-    let mailbox: { id: string };
-    try {
-      mailbox = await prisma.mailbox.create({
-        data: {
-          tenantId: session.tenantId,
-          storeId: input.storeId,
-          name: input.name,
-          email: input.email,
-          provider: input.provider,
-          zammadGroupId: groupId,
-          zammadChannelId: channelId,
-          isActive: true,
-        },
-      });
-    } catch {
-      console.error("[MAILBOX] DB save failed, rolling back Zammad resources");
-      await rollbackCreatedZammadResources(channelId, groupId);
-      return NextResponse.json(
-        { error: "Failed to save mailbox. Zammad resources cleaned up." },
-        { status: 500 },
-      );
-    }
-
-    // 9. Audit log — no credentials
-    const reqInfo = getRequestInfo(request);
-    await logAudit({
-      actorUserId: session.id,
-      tenantId: session.tenantId,
-      action: "mailbox.create",
-      resourceType: "mailbox",
-      resourceId: mailbox.id,
-      metadata: {
-        storeId: input.storeId,
-        storeName: store.name,
-        name: input.name,
-        email: input.email,
-        provider: input.provider,
-        zammadGroupId: groupId,
-        zammadChannelId: channelId,
-        historyWindowMonths: MAILBOX_HISTORY_WINDOW_MONTHS,
-      },
-      ...reqInfo,
-    });
-
-    return NextResponse.json({ mailbox }, { status: 201 });
-  } catch (err) {
-    // Unexpected error — try to clean up
-    console.error("[MAILBOX] Unexpected error during create:", err);
-    await rollbackCreatedZammadResources(channelId, groupId);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
+
+  const encrypted = encrypt(appPassword);
+  const mailbox = await prisma.mailbox.create({
+    data: {
+      tenantId: session.tenantId,
+      storeId: input.storeId,
+      name: input.name,
+      email: input.email,
+      provider: "gmail",
+      appPasswordEncrypted: encrypted.encrypted,
+      encryptionKeyId: encrypted.keyId,
+      initialSyncAfter: initialSyncAfter(),
+      syncStatus: "PROVISIONING",
+      isActive: true,
+      syncCursor: { create: {} },
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      provider: true,
+      rtQueueId: true,
+      syncStatus: true,
+      lastSyncAt: true,
+      lastSyncErrorCode: true,
+      isActive: true,
+      storeId: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  const provisioned = await provisionMailbox(mailbox.id);
+  const finalMailbox = await prisma.mailbox.findUnique({
+    where: { id: mailbox.id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      provider: true,
+      rtQueueId: true,
+      syncStatus: true,
+      lastSyncAt: true,
+      lastSyncErrorCode: true,
+      isActive: true,
+      storeId: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  await logAudit({
+    actorUserId: session.id,
+    tenantId: session.tenantId,
+    action: "mailbox.create",
+    resourceType: "mailbox",
+    resourceId: mailbox.id,
+    metadata: {
+      storeId: input.storeId,
+      name: input.name,
+      email: input.email,
+      provider: "gmail",
+      syncStatus: finalMailbox?.syncStatus ?? mailbox.syncStatus,
+      provisioned: provisioned.status,
+    },
+    ...getRequestInfo(request),
+  });
+
+  return NextResponse.json({ mailbox: finalMailbox ?? mailbox }, { status: 201 });
 }

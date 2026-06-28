@@ -4,13 +4,15 @@
 
 **Goal:** Replace the unused Zammad mailbox stack with RT 6.0.3, getmail6 6.20.0, Gmail Inbox-only synchronization, and full conversation-level Gmail label CRUD without changing Gmail Unread state.
 
-**Architecture:** Keep the Next.js app as the only user interface and store/tenant authorization boundary. A BullMQ mailbox worker uses ImapFlow for Gmail metadata and label operations, invokes getmail6 for raw Inbox delivery through a verified `rt-mailgate` wrapper, mirrors confirmed labels into an RT ticket custom field, and routes RT replies through per-mailbox msmtp accounts selected by envelope-from.
+**Architecture:** Keep the Next.js app as the only user interface and store/tenant authorization boundary. A BullMQ mailbox worker uses ImapFlow for Gmail metadata and label operations, invokes getmail6 for raw Inbox delivery through a verified `rt-mailgate` wrapper, mirrors confirmed labels into an RT ticket custom field, and sends app replies directly through the selected Gmail SMTP account with Gmail-thread-preserving headers before recording the correspondence back into RT.
 
 **Tech Stack:** Next.js 16 App Router, React 19, TypeScript, Prisma 7/PostgreSQL, BullMQ/Redis, ImapFlow 1.4.2, Nodemailer 9.0.1, Request Tracker 6.0.3 REST2 and `rt-mailgate`, getmail6 6.20.0, msmtp 1.8.x, Docker Compose, Vitest, disposable Gmail App Password test account.
 
 **Approved spec:** `docs/superpowers/specs/2026-06-24-rt-getmail-gmail-labels-design.md`
 
 **Commit policy:** Do not run `git add` or `git commit`. This repository's owner stages and commits changes manually. Each task ends with a verification checkpoint instead of a commit step.
+
+**Implementation status as of 2026-06-25:** Core implementation, migration script, clean-break removal, mandatory live Gates A/B/C/D, focused mailbox tests, Prisma validation, production build, and whitespace checks have current PASS evidence in `docs/reports/2026-06-24-rt-getmail-mailbox-verification.md` and `docs/reports/2026-06-24-rt-gmail-production-gates.md`. A credential-safe live matrix runner now exists at `scripts/verify-rt-gmail-live-matrix.ts` and is exposed through `npm run mailbox:matrix:preflight`, `npm run mailbox:matrix:checklist`, and `npm run mailbox:matrix:template`; the template command writes `docs/reports/2026-06-24-rt-gmail-live-matrix.md` for sanitized PASS/FAIL evidence. The goal is **not yet complete** because Task 16's full disposable Gmail acceptance/resilience matrix still needs a dedicated live run; the verification report maps each pending matrix item to existing source/unit evidence and the remaining live status.
 
 ---
 
@@ -38,6 +40,7 @@
 - `src/lib/mailboxes/credentials.ts` — encrypt, decrypt, mask, and materialize runtime Gmail credentials.
 - `src/lib/mailboxes/gmail-client.ts` — ImapFlow connection, Inbox metadata scan, known-thread lookup, and label CRUD.
 - `src/lib/mailboxes/gmail-smtp.ts` — Gmail SMTP/App Password verification without sending a message.
+- `src/lib/mailboxes/gmail-reply.ts` — app-owned Gmail SMTP reply sender that preserves `Message-ID`, `In-Reply-To`, `References`, and verifies Gmail Sent/thread identity before RT recording.
 - `src/lib/mailboxes/runtime-config.ts` — deterministic getmail6 and msmtp config rendering without embedded secrets.
 - `src/lib/mailboxes/sync.ts` — one-mailbox reconciliation transaction and UID cursor rules.
 - `src/lib/mailboxes/labels.ts` — durable label-operation execution and RT custom-field reconciliation.
@@ -487,6 +490,7 @@ getTicket(ticketId)
 getTicketTransactions(ticketId)
 getTicketAttachments(ticketId)
 correspond(ticketId, { content, contentType })
+comment(ticketId, { content, contentType })
 updateTicketStatus(ticketId, status)
 listQueues()
 createQueue({ name, description, correspondAddress })
@@ -498,6 +502,8 @@ setTicketGmailLabels(ticketId, names)
 ```
 
 Build TicketSQL with server-owned queue ID and resolved label name. Never concatenate raw client values. Encode query parameters with `URLSearchParams`.
+
+`correspond()` remains available for inbound/administrative RT behavior, but the app reply path must not rely on RT-generated outbound mail. `comment()` records an already-sent Gmail reply in RT without triggering requestor email. The comment body must include a safe metadata line `Gmail-Message-ID: <generated-id>` plus the reply body so later normalization can link the RT transaction to the outbound `GmailMessageLink`.
 
 - [ ] **Step 5: Replace validation semantics with Gmail-only strict schemas**
 
@@ -531,8 +537,10 @@ Expected: PASS with no token in captured logs.
 - Create: `src/lib/mailboxes/types.ts`
 - Create: `src/lib/mailboxes/gmail-client.ts`
 - Create: `src/lib/mailboxes/gmail-smtp.ts`
+- Create: `src/lib/mailboxes/gmail-reply.ts`
 - Create: `tests/gmail-client.test.ts`
 - Create: `tests/gmail-smtp.test.ts`
+- Create: `tests/gmail-reply.test.ts`
 - Create: `tests/gmail-label-contract.test.ts`
 
 - [ ] **Step 1: Write failing adapter tests around an injected ImapFlow factory**
@@ -590,12 +598,47 @@ Select Gmail All Mail only after receiving a stored Gmail thread ID. Search by t
 
 Create a Nodemailer transport for `smtp.gmail.com:587`, `secure: false`, STARTTLS required, and email/App Password auth. Call `transport.verify()` only; do not send a probe email. Map authentication failure to `gmail_auth_failed`, TLS/connectivity failure to `gmail_smtp_unavailable`, and never include the upstream SMTP transcript in logs or responses.
 
-- [ ] **Step 8: Run focused tests**
+- [ ] **Step 8: Write failing app-owned Gmail reply tests**
+
+Create `tests/gmail-reply.test.ts` with mocked Nodemailer and Gmail metadata lookup. Cover:
+
+```ts
+expect(sent.messageId).toMatch(/^<mockupai-reply-/);
+expect(sent.inReplyTo).toBe("<customer-last@example.test>");
+expect(sent.references).toContain("<customer-first@example.test>");
+expect(sent.references).toContain("<customer-last@example.test>");
+expect(sent.subject).toBe("Re: Original customer subject");
+expect(result.gmailThreadId).toBe("thread-1");
+```
+
+Also assert the function fails with `gmail_reply_thread_mismatch` when Gmail returns a different thread ID, fails with `gmail_reply_not_in_sent` when the read-back lacks `\\Sent`, and never logs or returns the App Password.
+
+- [ ] **Step 9: Implement app-owned Gmail reply sender**
+
+Create `sendGmailThreadReply(input)` in `src/lib/mailboxes/gmail-reply.ts`:
+
+```ts
+export interface GmailReplyInput {
+  credentials: GmailCredentials;
+  to: string;
+  fromName?: string;
+  subject: string;
+  text: string;
+  gmailThreadId: string;
+  latestExternalMessageId: string;
+  references: string[];
+  lookupByMessageId(messageId: string): Promise<GmailMessageMetadata | null>;
+}
+```
+
+The function generates a new RFC Message-ID, sends through Nodemailer with `messageId`, `inReplyTo`, and `references`, then calls `lookupByMessageId()` for the generated ID. It returns only safe metadata: generated Message-ID, Gmail message ID, Gmail thread ID, UID, UIDVALIDITY, and internal date. It throws `gmail_reply_thread_mismatch` unless the read-back thread equals `input.gmailThreadId`, and throws `gmail_reply_not_in_sent` unless read-back labels include `\\Sent`.
+
+- [ ] **Step 10: Run focused tests**
 
 Run:
 
 ```bash
-npx vitest run tests/gmail-client.test.ts tests/gmail-smtp.test.ts tests/gmail-label-contract.test.ts
+npx vitest run tests/gmail-client.test.ts tests/gmail-smtp.test.ts tests/gmail-reply.test.ts tests/gmail-label-contract.test.ts
 ```
 
 Expected: PASS; mocked messages remain Unread through every mutation.
@@ -682,12 +725,13 @@ The wrapper must:
 3. load the pre-indexed `GmailMessageLink` and mailbox queue;
 4. spawn `/opt/rt/bin/rt-mailgate --debug --queue ${mailbox.rtQueueId.toString()} --action correspond --url ${process.env.RT_URL}` without a shell;
 5. pass the original buffer to child stdin;
-6. require exit code 0 and an RT response beginning with `ok`, explicitly rejecting `not ok` even though upstream `rt-mailgate` exits zero for that response;
-7. extract the RT ticket/transaction identity from the success response and verify it with REST2;
-8. persist `MailboxConversation` and `GmailMessageLink` linkage transactionally; and
-9. exit `75` for retryable failures and `1` for malformed permanent input.
+6. before delivery, search REST2 attachments by the exact normalized RFC Message-ID and, when found, verify its transaction/ticket and persist the existing identity without invoking mailgate;
+7. require exit code 0 and an exact `ok` line in combined stdout/stderr while explicitly rejecting any `not ok` line (RT 6.0.3 emits both outcomes on stderr and exits zero for permission denial);
+8. after delivery, poll REST2 `/attachments` by exact Message-ID, follow `TransactionId` through `/transaction/:id`, and verify that the resulting ticket belongs to the mailbox queue;
+9. persist `MailboxConversation` and `GmailMessageLink` linkage transactionally; and
+10. exit `75` for retryable failures and `1` for malformed permanent input.
 
-The test suite must simulate `ok`, `not ok - Permission Denied`, timeout, REST2 mismatch, duplicate retry, and DB failure.
+The test suite must simulate stderr `ok`, stderr `not ok - Permission Denied`, timeout, REST2 mismatch, crash-after-RT duplicate retry, and DB failure.
 
 - [ ] **Step 6: Build the mailbox worker runtime used by the live gates**
 
@@ -783,15 +827,15 @@ Expected: PASS for all five operations and final label absence.
 
 - [ ] **Step 3: Gate B — verified mailgate identity**
 
-Pipe one unique RFC822 message through `scripts/verified-rt-mailgate.ts`, then query REST2 and confirm one ticket, one inbound transaction, exact Message-ID, and persisted app mapping. Repeat the same input.
+Pipe one unique RFC822 message through `scripts/verified-rt-mailgate.ts`, then query REST2 attachments and transaction detail to confirm one ticket, one inbound transaction, exact Message-ID, and persisted app mapping. Repeat the same input, including one simulated retry before app persistence.
 
 Expected: first delivery creates one ticket; retry creates no second ticket and returns the same mapping.
 
 - [ ] **Step 4: Gate C — Gmail SMTP Sent and threading**
 
-Reply through RT using the selected Gmail mailbox. Check Gmail Sent by exact Message-ID and verify the reply's Gmail thread ID equals the inbound thread ID. Send a customer reply and verify RT adds it to the same ticket.
+Reply through the app-owned Gmail SMTP sender using the selected Gmail mailbox. Generate the outbound Message-ID in the app, set `In-Reply-To` to the latest known external Gmail Message-ID, set `References` to the known Gmail reference chain, and preserve the original subject with a `Re:` prefix. Check Gmail Sent by exact generated Message-ID and verify the reply's Gmail thread ID equals the inbound thread ID. Then record the accepted reply in RT with `comment(ticketId, { content, contentType })`, including the safe `Gmail-Message-ID` metadata line, and verify RT does not send a duplicate outbound email. Send a customer reply using the app-sent Message-ID as `In-Reply-To`, deliver it through the verified wrapper, and verify RT adds it to the same ticket.
 
-Expected: one Gmail thread and one RT ticket across inbound, agent reply, and customer reply.
+Expected: one Gmail thread and one RT ticket across inbound, app-sent agent reply, and customer reply; Gmail Sent contains the agent reply; RT stores exactly one internal app-reply comment and one inbound customer reply transaction; RT does not create a second outbound email for the app reply.
 
 - [ ] **Step 5: Gate D — permission denial must fail delivery**
 
@@ -983,7 +1027,7 @@ Never expose RT queue IDs.
 
 - [ ] **Step 4: Implement RT conversation handlers**
 
-Resolve mailbox first, then call REST2 with its queue ID. Detail verifies returned ticket queue; reply uses `/ticket/:id/correspond`; status maps through the normalized contract; errors map 401/403/404/409/422/5xx to the current localized API behavior.
+Resolve mailbox first, then call REST2 with its queue ID. Detail verifies returned ticket queue. Reply uses the app-owned Gmail reply sender: load the conversation's stored Gmail thread metadata, send through Gmail SMTP, verify Gmail Sent and matching thread ID, persist the outbound `GmailMessageLink`, then call RT REST2 `/ticket/:id/comment` with a `Gmail-Message-ID` metadata line to record the already-sent reply without triggering RT outbound mail. Status maps through the normalized contract; errors map 401/403/404/409/422/5xx to the current localized API behavior.
 
 - [ ] **Step 5: Implement label handlers and filter**
 
@@ -1407,7 +1451,7 @@ Do not stage or commit. Present the changed-file summary, verification evidence,
 | Label operations isolated by Gmail mailbox | Tasks 2, 8, 10 | Tasks 8, 10, 16 |
 | Conversation label filtering/inheritance | Tasks 3, 8, 10, 12 | Tasks 8, 10, 12, 16 |
 | Retain archived imported conversations | Tasks 2, 4, 8 | Tasks 6, 8, 16 |
-| Gmail Sent and same-thread replies | Tasks 3, 5, 10, 14 | Tasks 6, 16 |
+| Gmail Sent and same-thread replies | Tasks 3, 4, 5, 10, 14 | Tasks 6, 16 |
 | No credential/token leakage | Tasks 3, 4, 5, 9, 14 | Tasks 3, 5, 9, 14, 16 |
 | Safe retry/recovery | Tasks 5, 7, 8, 13 | Tasks 5, 7, 8, 16 |
 | Complete active Zammad removal | Tasks 1, 2, 15 | Tasks 1, 15, 16 |

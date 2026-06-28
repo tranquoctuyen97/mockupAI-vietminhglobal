@@ -115,15 +115,30 @@ export function buildEmailFrameDocument(html: string): string {
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <base target="_blank">
   <style>
-    html, body { margin: 0; padding: 0; background: #fff; color: #111827; }
-    body { font: 14px/1.55 Arial, Helvetica, sans-serif; overflow-wrap: anywhere; }
-    img { max-width: 100%; height: auto; }
-    table { max-width: 100%; }
+    html, body { margin: 0; padding: 0; background: #ffffff; color: #111827; width: 100%; max-width: 100%; overflow-x: hidden; }
+    body { font: 14px/1.65 Arial, Helvetica, sans-serif; overflow-wrap: anywhere; word-break: break-word; }
+    .mail-root {
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      background: #fff;
+      padding: 18px 20px 24px;
+      box-sizing: border-box;
+      overflow-x: hidden;
+    }
+    img { max-width: 100% !important; height: auto !important; }
+    table { max-width: 100% !important; table-layout: auto !important; }
+    td, th, div, p, span, pre, blockquote { max-width: 100% !important; overflow-wrap: anywhere; word-break: break-word; }
+    [style*="width"] { max-width: 100% !important; box-sizing: border-box; }
+    body, body * { max-width: 100%; box-sizing: border-box; }
+    pre { white-space: pre-wrap !important; }
+    body * { box-sizing: border-box; }
     a { color: #0b57d0; }
   </style>
 </head>
-<body>${html}</body>
+<body><div class="mail-root">${html}</div></body>
 </html>`;
 }

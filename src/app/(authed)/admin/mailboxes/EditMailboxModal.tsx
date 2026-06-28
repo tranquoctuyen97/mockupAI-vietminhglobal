@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { Loader2, X } from "lucide-react";
 import { toast } from "sonner";
-import { X, Loader2 } from "lucide-react";
 import type { MailboxRow } from "./page";
 
 interface Props {
@@ -13,40 +13,33 @@ interface Props {
 
 export function EditMailboxModal({ mailbox, onClose, onUpdated }: Props) {
   const [name, setName] = useState(mailbox.name);
-  const [email, setEmail] = useState(mailbox.email);
+  const [appPassword, setAppPassword] = useState("");
   const [saving, setSaving] = useState(false);
-
-  // Connection fields - blank means keep existing
-  const [inHost, setInHost] = useState("");
-  const [inPort, setInPort] = useState(993);
-  const [inEnc, setInEnc] = useState<"ssl"|"starttls"|"none">("ssl");
-  const [inUser, setInUser] = useState("");
-  const [inPass, setInPass] = useState("");
-  const [outHost, setOutHost] = useState("");
-  const [outPort, setOutPort] = useState(587);
-  const [outEnc, setOutEnc] = useState<"ssl"|"starttls"|"none">("starttls");
-  const [outUser, setOutUser] = useState("");
-  const [outPass, setOutPass] = useState("");
-  const [changeConnection, setChangeConnection] = useState(false);
 
   const doSave = async () => {
     setSaving(true);
     try {
       const payload: Record<string, unknown> = {};
       if (name !== mailbox.name) payload.name = name;
-      if (email !== mailbox.email) payload.email = email;
-      if (changeConnection) {
-        if (inHost) payload.inbound = { host: inHost, port: inPort, encryption: inEnc, username: inUser, ...(inPass ? { password: inPass } : {}) };
-        if (outHost) payload.outbound = { host: outHost, port: outPort, encryption: outEnc, username: outUser, ...(outPass ? { password: outPass } : {}) };
-      }
+      if (appPassword.trim()) payload.appPassword = appPassword;
+
       const res = await fetch(`/api/admin/mailboxes/${mailbox.id}`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (res.ok) { toast.success("Cập nhật thành công"); onUpdated(); }
-      else { const err = await res.json(); toast.error(err.details || err.error || "Lỗi cập nhật"); }
-    } catch { toast.error("Lỗi kết nối"); }
-    finally { setSaving(false); }
+      if (res.ok) {
+        toast.success("Cập nhật thành công");
+        onUpdated();
+      } else {
+        const err = await res.json();
+        toast.error(err.message_human || err.details || err.error || "Lỗi cập nhật");
+      }
+    } catch {
+      toast.error("Lỗi kết nối");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -54,43 +47,33 @@ export function EditMailboxModal({ mailbox, onClose, onUpdated }: Props) {
       <div style={modalStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
           <h2 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 700 }}>Sửa Mailbox</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={20} /></button>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}>
+            <X size={20} />
+          </button>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-          <label style={labelStyle}>Tên<input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} /></label>
-          <label style={labelStyle}>Email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" style={inputStyle} /></label>
-
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.85rem", cursor: "pointer" }}>
-            <input type="checkbox" checked={changeConnection} onChange={(e) => setChangeConnection(e.target.checked)} />
-            Thay đổi cài đặt kết nối
+          <label style={labelStyle}>
+            Tên
+            <input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
           </label>
-
-          {changeConnection && (
-            <>
-              <p style={{ fontSize: "0.8rem", color: "#6b7280", margin: 0 }}>
-                Để trống mật khẩu nếu không muốn đổi.
-              </p>
-              <fieldset style={fieldsetStyle}>
-                <legend style={{ fontWeight: 600 }}>Inbound (IMAP)</legend>
-                <div style={gridStyle}>
-                  <label style={labelStyle}>Host<input value={inHost} onChange={(e) => setInHost(e.target.value)} style={inputStyle} /></label>
-                  <label style={labelStyle}>Port<input type="number" value={inPort} onChange={(e) => setInPort(Number(e.target.value))} style={inputStyle} /></label>
-                </div>
-                <label style={labelStyle}>Username<input value={inUser} onChange={(e) => setInUser(e.target.value)} style={inputStyle} /></label>
-                <label style={labelStyle}>Password<input type="password" value={inPass} onChange={(e) => setInPass(e.target.value)} placeholder="Để trống = giữ nguyên" style={inputStyle} /></label>
-              </fieldset>
-              <fieldset style={fieldsetStyle}>
-                <legend style={{ fontWeight: 600 }}>Outbound (SMTP)</legend>
-                <div style={gridStyle}>
-                  <label style={labelStyle}>Host<input value={outHost} onChange={(e) => setOutHost(e.target.value)} style={inputStyle} /></label>
-                  <label style={labelStyle}>Port<input type="number" value={outPort} onChange={(e) => setOutPort(Number(e.target.value))} style={inputStyle} /></label>
-                </div>
-                <label style={labelStyle}>Username<input value={outUser} onChange={(e) => setOutUser(e.target.value)} style={inputStyle} /></label>
-                <label style={labelStyle}>Password<input type="password" value={outPass} onChange={(e) => setOutPass(e.target.value)} placeholder="Để trống = giữ nguyên" style={inputStyle} /></label>
-              </fieldset>
-            </>
-          )}
+          <label style={labelStyle}>
+            Email
+            <input value={mailbox.email} type="email" disabled style={{ ...inputStyle, background: "#f3f4f6", color: "#6b7280" }} />
+          </label>
+          <label style={labelStyle}>
+            App Password mới
+            <input
+              type="password"
+              value={appPassword}
+              onChange={(e) => setAppPassword(e.target.value)}
+              placeholder="Để trống nếu không đổi"
+              style={inputStyle}
+            />
+          </label>
+          <p style={{ fontSize: "0.8rem", color: "#6b7280", margin: 0 }}>
+            Nếu nhập App Password mới, hệ thống sẽ kiểm tra Gmail SMTP + IMAP trước khi lưu.
+          </p>
 
           <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
             <button onClick={onClose} style={secondaryBtnStyle}>Hủy</button>
@@ -108,7 +91,5 @@ const overlayStyle: React.CSSProperties = { position: "fixed", inset: 0, backgro
 const modalStyle: React.CSSProperties = { background: "var(--bg-primary, #fff)", borderRadius: 12, padding: "1.5rem", width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto" };
 const labelStyle: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 4, fontSize: "0.8rem", fontWeight: 500 };
 const inputStyle: React.CSSProperties = { padding: "0.5rem", border: "1px solid var(--border-color, #d1d5db)", borderRadius: 6, fontSize: "0.875rem" };
-const gridStyle: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" };
-const fieldsetStyle: React.CSSProperties = { border: "1px solid var(--border-color, #d1d5db)", borderRadius: 8, padding: "1rem", display: "flex", flexDirection: "column", gap: "0.75rem" };
 const primaryBtnStyle: React.CSSProperties = { padding: "0.625rem 1.25rem", background: "var(--color-primary, #4f46e5)", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 };
 const secondaryBtnStyle: React.CSSProperties = { padding: "0.625rem 1.25rem", background: "transparent", border: "1px solid var(--border-color, #d1d5db)", borderRadius: 8, fontWeight: 600, cursor: "pointer" };

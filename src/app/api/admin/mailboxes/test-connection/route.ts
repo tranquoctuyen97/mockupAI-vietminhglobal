@@ -1,56 +1,25 @@
-/**
- * Admin Mailbox — Test connection (inbound/outbound) + Probe
- *
- * POST /api/admin/mailboxes/test-connection
- *
- * Modes:
- * 1. Probe mode: { probe: true, email, password } → auto-detect IMAP/SMTP
- * 2. Manual mode: { inbound?, outbound? } → test specific connections
- *
- * Passwords are never logged. Zammad masks them in responses.
- */
 import { NextResponse } from "next/server";
 import { requireMailboxAdmin } from "@/lib/auth/mailbox-admin-guard";
-import { testConnectionSchema, toZammadInboundSsl, toZammadOutboundSsl } from "@/lib/zammad/admin-validation";
-import { testEmailInbound, testEmailOutbound, probeEmailSettings } from "@/lib/zammad/client";
-import type { ZammadInboundConfig, ZammadOutboundConfig, ZammadConnectionTestResult } from "@/lib/zammad/types";
+import { createGmailAdapter } from "@/lib/mailboxes/gmail-client";
+import { verifyGmailSmtp } from "@/lib/mailboxes/gmail-smtp";
+import { testMailboxConnectionSchema } from "@/lib/mailboxes/validation";
+
+function cleanAppPassword(value: string): string {
+  return value.replace(/\s/g, "");
+}
 
 export async function POST(request: Request) {
   const guard = await requireMailboxAdmin();
   if (guard.response) return guard.response;
 
-  let body: Record<string, unknown>;
+  let body: unknown;
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  // ── Probe mode: auto-detect from email + password ─────────────────────
-  if (body.probe === true) {
-    const email = typeof body.email === "string" ? body.email.trim() : "";
-    const password = typeof body.password === "string" ? body.password : "";
-    if (!email || !password) {
-      return NextResponse.json({ error: "Email and password required for probe" }, { status: 400 });
-    }
-    const res = await probeEmailSettings({ email, password });
-    if (res.ok && res.data) {
-      return NextResponse.json(res.data);
-    }
-    // Return error details for debugging
-    return NextResponse.json({
-      result: "failed",
-      message: res.error === "timeout"
-        ? "Kết nối tới email server quá lâu. Vui lòng thử lại."
-        : res.error === "network_error"
-          ? "Không thể kết nối tới hệ thống email. Vui lòng thử lại sau."
-          : res.data?.message || res.data?.message_human || "Probe failed",
-      message_human: res.data?.message_human,
-    });
-  }
-
-  // ── Manual mode: test specific inbound/outbound ───────────────────────
-  const parsed = testConnectionSchema.safeParse(body);
+  const parsed = testMailboxConnectionSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
@@ -58,41 +27,42 @@ export async function POST(request: Request) {
     );
   }
 
-  const results: { inbound?: ZammadConnectionTestResult; outbound?: ZammadConnectionTestResult } = {};
+  const credentials = {
+    email: parsed.data.email,
+    appPassword: cleanAppPassword(parsed.data.password),
+  };
 
-  // Test inbound
-  if (parsed.data.inbound) {
-    const inbound: ZammadInboundConfig = {
-      adapter: "imap",
-      options: {
-        host: parsed.data.inbound.host,
-        port: String(parsed.data.inbound.port),
-        ssl: toZammadInboundSsl(parsed.data.inbound.encryption),
-        user: parsed.data.inbound.username,
-        password: parsed.data.inbound.password,
-        folder: parsed.data.inbound.folder ?? "inbox",
-      },
-    };
-    const res = await testEmailInbound(inbound);
-    results.inbound = res.data ?? { result: "failed", message: "Connection failed" };
+  const smtp = await verifyGmailSmtp(credentials);
+  if (!smtp.ok) {
+    return NextResponse.json({
+      result: "failed",
+      message:
+        smtp.error === "gmail_auth_failed"
+          ? "Gmail authentication failed"
+          : "Gmail SMTP unavailable",
+      message_human:
+        smtp.error === "gmail_auth_failed"
+          ? "Gmail từ chối đăng nhập. Kiểm tra email và App Password."
+          : "Không thể kết nối Gmail SMTP. Vui lòng thử lại sau.",
+    });
   }
 
-  // Test outbound
-  if (parsed.data.outbound) {
-    const outbound: ZammadOutboundConfig & { email: string } = {
-      adapter: "smtp",
-      options: {
-        host: parsed.data.outbound.host,
-        port: parsed.data.outbound.port,
-        ssl: toZammadOutboundSsl(parsed.data.outbound.encryption),
-        user: parsed.data.outbound.username,
-        password: parsed.data.outbound.password,
-      },
-      email: parsed.data.outbound.email,
-    };
-    const res = await testEmailOutbound(outbound);
-    results.outbound = res.data ?? { result: "failed", message: "Connection failed" };
+  try {
+    await createGmailAdapter(credentials).probe();
+  } catch {
+    return NextResponse.json({
+      result: "failed",
+      message: "Gmail IMAP unavailable",
+      message_human: "Không thể kết nối Gmail IMAP. Kiểm tra IMAP và App Password.",
+    });
   }
 
-  return NextResponse.json(results);
+  return NextResponse.json({
+    result: "ok",
+    message: "Gmail connection verified",
+    setting: {
+      inbound: { host: "imap.gmail.com", port: 993, encryption: "ssl" },
+      outbound: { host: "smtp.gmail.com", port: 587, encryption: "starttls" },
+    },
+  });
 }

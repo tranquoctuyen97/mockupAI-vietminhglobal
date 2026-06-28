@@ -1,0 +1,51 @@
+name: mockupai-rt-gmail-gates
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: gate-postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - rt-gate-postgres:/var/lib/postgresql/data
+
+  rt:
+    image: firefart/requesttracker@sha256:61542e700818c1422ee476750fa33dfd5470a407329f2586df6fd00a6b8d67a8
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RT_ROOT_PASSWORD: ${RT_GATE_ROOT_PASSWORD:?required}
+    entrypoint: ["/bin/sh", "/gate/entrypoint.sh"]
+    ports:
+      - "127.0.0.1:18082:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "perl -MIO::Socket::INET -e 'exit(IO::Socket::INET->new(PeerAddr => \"127.0.0.1\", PeerPort => 9000, Timeout => 2) ? 0 : 1)'"]
+      interval: 3s
+      timeout: 3s
+      start_period: 20s
+      retries: 40
+    volumes:
+      - ./gate/RT_SiteConfig.pm:/opt/rt/etc/RT_SiteConfig.pm:ro
+      - ./gate/entrypoint.sh:/gate/entrypoint.sh:ro
+      - ${RT_GATE_MSMTP_CONFIG:-./gate/empty-msmtprc}:/etc/msmtprc:ro
+      - rt-gate-var:/opt/rt/var
+    secrets:
+      - source: rt-gate-gmail-app-password
+        target: gmail_app_password
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+
+volumes:
+  rt-gate-postgres:
+  rt-gate-var:
+
+secrets:
+  rt-gate-gmail-app-password:
+    file: ${RT_GATE_GMAIL_SECRET:-./gate/empty-secret}

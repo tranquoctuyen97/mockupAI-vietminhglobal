@@ -1,17 +1,9 @@
-/**
- * Admin Mailbox — Enable/Disable
- *
- * POST /api/admin/mailboxes/:id/status
- *
- * No DELETE route — disable-only.
- * Store-scoped: verifies mailbox belongs to session tenant.
- */
 import { NextResponse } from "next/server";
+import { logAudit, getRequestInfo } from "@/lib/audit";
 import { requireMailboxAdmin } from "@/lib/auth/mailbox-admin-guard";
 import { prisma } from "@/lib/db";
-import { logAudit, getRequestInfo } from "@/lib/audit";
-import { statusSchema } from "@/lib/zammad/admin-validation";
-import { enableEmailChannel, disableEmailChannel } from "@/lib/zammad/client";
+import { toggleMailboxStatusSchema } from "@/lib/mailboxes/validation";
+import { disableProvisionedMailbox, provisionMailbox } from "@/lib/rt/provisioning";
 
 export async function POST(
   request: Request,
@@ -23,10 +15,7 @@ export async function POST(
 
   const { id } = await params;
   const mailbox = await prisma.mailbox.findFirst({
-    where: {
-      id,
-      tenantId: session.tenantId,
-    },
+    where: { id, tenantId: session.tenantId },
   });
   if (!mailbox) {
     return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
@@ -39,7 +28,7 @@ export async function POST(
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const parsed = statusSchema.safeParse(body);
+  const parsed = toggleMailboxStatusSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
@@ -48,36 +37,69 @@ export async function POST(
   }
 
   const { active } = parsed.data;
-
-  // Enable/disable Zammad channel
-  if (mailbox.zammadChannelId) {
-    if (active) {
-      const result = await enableEmailChannel(mailbox.zammadChannelId);
-      if (!result.ok) {
-        return NextResponse.json(
-          { error: "Failed to enable channel in email system" },
-          { status: 502 },
-        );
-      }
-    } else {
-      const result = await disableEmailChannel(mailbox.zammadChannelId);
-      if (!result.ok) {
-        return NextResponse.json(
-          { error: "Failed to disable channel in email system" },
-          { status: 502 },
-        );
-      }
-    }
-  }
-
-  // Update local record
-  const updated = await prisma.mailbox.update({
+  let updated = await prisma.mailbox.update({
     where: { id },
-    data: { isActive: active },
+    data: {
+      isActive: active,
+      syncStatus: active ? "PROVISIONING" : "DISABLED",
+      lastSyncErrorCode: null,
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      provider: true,
+      rtQueueId: true,
+      syncStatus: true,
+      lastSyncAt: true,
+      lastSyncErrorCode: true,
+      isActive: true,
+      storeId: true,
+      createdAt: true,
+      updatedAt: true,
+    },
   });
 
-  // Audit
-  const reqInfo = getRequestInfo(request);
+  if (active) {
+    await provisionMailbox(mailbox.id);
+    updated = await prisma.mailbox.findUnique({
+      where: { id: mailbox.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        provider: true,
+        rtQueueId: true,
+        syncStatus: true,
+        lastSyncAt: true,
+        lastSyncErrorCode: true,
+        isActive: true,
+        storeId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    }) ?? updated;
+  } else {
+    await disableProvisionedMailbox(mailbox.id);
+    updated = await prisma.mailbox.findUnique({
+      where: { id: mailbox.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        provider: true,
+        rtQueueId: true,
+        syncStatus: true,
+        lastSyncAt: true,
+        lastSyncErrorCode: true,
+        isActive: true,
+        storeId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    }) ?? updated;
+  }
+
   await logAudit({
     actorUserId: session.id,
     tenantId: session.tenantId,
@@ -88,8 +110,9 @@ export async function POST(
       storeId: mailbox.storeId,
       name: mailbox.name,
       email: mailbox.email,
+      syncStatus: updated.syncStatus,
     },
-    ...reqInfo,
+    ...getRequestInfo(request),
   });
 
   return NextResponse.json({ mailbox: updated });

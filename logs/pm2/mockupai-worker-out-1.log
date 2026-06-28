@@ -1,0 +1,482 @@
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ override existing { override: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ enable debugging { debug: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+[MailboxSync] auto-provision mailboxId=cmqv51y4t0002r8t0kbnu4t55 email=anhiri66@gmail.com reason=missing_rt_queue
+[MailboxProvision] start mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com queueId=none
+[MailboxProvision] degraded mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com errorCode=rt_upstream_400
+[MailboxSync] auto-provision mailboxId=cmqv51y4t0002r8t0kbnu4t55 email=anhiri66@gmail.com reason=missing_rt_queue
+[MailboxProvision] start mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com queueId=none
+[MailboxProvision] degraded mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com errorCode=rt_upstream_400
+[MailboxSync] auto-provision mailboxId=cmqv51y4t0002r8t0kbnu4t55 email=anhiri66@gmail.com reason=missing_rt_queue
+[MailboxProvision] start mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com queueId=none
+[MailboxProvision] degraded mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com errorCode=rt_upstream_400
+[MailboxSync] auto-provision mailboxId=cmqv51y4t0002r8t0kbnu4t55 email=anhiri66@gmail.com reason=missing_rt_queue
+[MailboxProvision] start mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com queueId=none
+[MailboxProvision] degraded mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com errorCode=rt_upstream_400
+[MailboxSync] auto-provision mailboxId=cmqv51y4t0002r8t0kbnu4t55 email=anhiri66@gmail.com reason=missing_rt_queue
+[MailboxProvision] start mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com queueId=none
+[MailboxProvision] degraded mailboxId=cmqv51y4t0002r8t0kbnu4t55 name=anhiri66@gmail.com email=anhiri66@gmail.com errorCode=rt_upstream_400
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mailbox sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mailbox sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mailbox sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ override existing { override: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ enable debugging { debug: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ enable debugging { debug: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ enable debugging { debug: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Mailbox sync worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Triple Whale sync worker is ready and listening to queue.
+Printify mockup poll worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Gmail label operations worker is ready and listening to queue.
+Mockup composite worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+prisma:error 
+Invalid `prisma.mailboxConversation.update()` invocation:
+
+
+The column `mailbox_conversations.is_unread` does not exist in the current database.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ enable debugging { debug: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ override existing { override: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ override existing { override: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ enable debugging { debug: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+Shutting down workers...
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ enable debugging { debug: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
+Shutting down workers...
+
+> mockupai@0.1.0 worker
+> npx tsx start-worker.ts
+
+◇ injected env (22) from .env // tip: ⌘ suppress logs { quiet: true }
+Starting BullMQ workers...
+Gmail label operations worker is ready and listening to queue.
