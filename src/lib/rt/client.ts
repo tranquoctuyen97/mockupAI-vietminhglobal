@@ -214,10 +214,26 @@ export const updateTicketStatus = (ticketId: number, status: AppStatus) =>
   rtRequest<RtTicket>({ method: "PUT", path: `/REST/2.0/ticket/${ticketId}`, body: { Status: APP_TO_RT_STATUS[status] } });
 
 export const listQueues = () => rtRequest<RtCollection<RtQueue>>({ method: "GET", path: "/REST/2.0/queues/all" });
+export async function findQueueByName(name: string): Promise<RtResponse<RtQueue | null>> {
+  const response = await rtRequest<RtCollection<RtQueue>>({
+    method: "GET",
+    path: "/REST/2.0/queues/all",
+    queryParams: new URLSearchParams({
+      fields: "id,Name,Description,CorrespondAddress,Disabled",
+      find_disabled_rows: "1",
+    }),
+  });
+  if (!response.ok || !response.data) return { ...response, data: null };
+  return {
+    ok: true,
+    status: response.status,
+    data: response.data.items.find((queue) => queue.Name === name) ?? null,
+  };
+}
 export const createQueue = (input: { name: string; description: string; correspondAddress: string }) =>
   rtRequest<RtQueue>({ method: "POST", path: "/REST/2.0/queue", body: { Name: input.name, Description: input.description, CorrespondAddress: input.correspondAddress } });
-export const updateQueue = (queueId: number, input: Partial<{ name: string; description: string; correspondAddress: string }>) =>
-  rtRequest<RtQueue>({ method: "PUT", path: `/REST/2.0/queue/${queueId}`, body: { ...(input.name && { Name: input.name }), ...(input.description && { Description: input.description }), ...(input.correspondAddress && { CorrespondAddress: input.correspondAddress }) } });
+export const updateQueue = (queueId: number, input: Partial<{ name: string; description: string; correspondAddress: string; disabled: boolean }>) =>
+  rtRequest<RtQueue>({ method: "PUT", path: `/REST/2.0/queue/${queueId}`, body: { ...(input.name && { Name: input.name }), ...(input.description && { Description: input.description }), ...(input.correspondAddress && { CorrespondAddress: input.correspondAddress }), ...(input.disabled !== undefined && { Disabled: input.disabled ? 1 : 0 }) } });
 export const disableQueue = (queueId: number) => rtRequest<RtQueue>({ method: "PUT", path: `/REST/2.0/queue/${queueId}`, body: { Disabled: 1 } });
 
 export async function findOrCreateGmailLabelsCustomField(): Promise<RtResponse<RtCustomField>> {
@@ -250,7 +266,7 @@ export const grantQueueRights = async (
       path: `/REST/2.0/queue/${queueId}/rights`,
       body: { ...principalBody, Right: right },
     });
-    if (!result.ok) return result;
+    if (!result.ok && result.status !== 409) return result;
   }
   return { ok: true, status: 200, data: null } as RtResponse<Record<string, unknown>>;
 };

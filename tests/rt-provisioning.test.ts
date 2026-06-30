@@ -33,6 +33,12 @@ describe("RT mailbox provisioning", () => {
       description: "Store A / Support",
       correspondAddress: "support@example.test",
     });
+    expect(d.updateQueue).toHaveBeenCalledWith(7, {
+      name: "vmg-mailbox-mailbox_1",
+      description: "Store A / Support",
+      correspondAddress: "support@example.test",
+      disabled: false,
+    });
     expect(d.ensureLabelsCustomField).toHaveBeenCalledWith(7);
     expect(d.grantRights).toHaveBeenCalledWith(7);
     expect(d.materialize).toHaveBeenCalled();

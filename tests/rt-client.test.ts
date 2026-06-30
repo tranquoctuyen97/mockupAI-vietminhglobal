@@ -178,6 +178,62 @@ describe("RT REST2 client", () => {
     );
   });
 
+  it("treats already-granted queue rights as success", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({
+      message: "mailbox-service already has the right CreateTicket on RT::Queue 7",
+    }, 409)));
+    const { grantQueueRights } = await import("../src/lib/rt/client");
+
+    await expect(grantQueueRights(7, { type: "User", name: "mailbox-service" }, ["CreateTicket"])).resolves.toMatchObject({
+      ok: true,
+    });
+  });
+
+  it("can find disabled queues and re-enable them", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        count: 2,
+        page: 1,
+        pages: 1,
+        per_page: 20,
+        total: 2,
+        items: [
+          { id: "1", Name: "General", Disabled: "0" },
+          { id: "5", Name: "vmg-mailbox-1", Disabled: "1" },
+        ],
+      }))
+      .mockResolvedValueOnce(jsonResponse({ id: "5" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { findQueueByName, updateQueue } = await import("../src/lib/rt/client");
+
+    await expect(findQueueByName("vmg-mailbox-1")).resolves.toMatchObject({
+      ok: true,
+      data: { id: "5", Disabled: "1" },
+    });
+    await updateQueue(5, {
+      name: "vmg-mailbox-1",
+      description: "Store / Support",
+      correspondAddress: "support@example.test",
+      disabled: false,
+    });
+
+    const url = new URL(fetchMock.mock.calls[0][0] as string);
+    expect(url.searchParams.get("find_disabled_rows")).toBe("1");
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "https://rt.example.test/REST/2.0/queue/5",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          Name: "vmg-mailbox-1",
+          Description: "Store / Support",
+          CorrespondAddress: "support@example.test",
+          Disabled: 0,
+        }),
+      }),
+    );
+  });
+
   it("rejects ambiguous attachment matches and wrong queues", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ count: 2, page: 1, pages: 1, per_page: 20, total: 2, items: [{ id: "1" }, { id: "2" }] }))

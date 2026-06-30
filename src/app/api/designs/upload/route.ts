@@ -9,65 +9,12 @@ import { prisma } from "@/lib/db";
 import { getStorage } from "@/lib/storage/local-disk";
 import { probeAndPreview } from "@/lib/images/probe";
 import { logAudit } from "@/lib/audit";
-import formidable from "formidable";
-import { readFile, unlink } from "node:fs/promises";
-import { IncomingMessage } from "node:http";
-import { Readable } from "node:stream";
 
 export const runtime = "nodejs";
-
-// Disable Next.js body parser — formidable handles multipart
 export const dynamic = "force-dynamic";
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB — khớp giới hạn Printify
 const ALLOWED_TYPES = ["image/png", "image/jpeg"];
-
-/**
- * Convert Web Request to Node IncomingMessage for formidable
- */
-async function requestToIncoming(request: Request): Promise<IncomingMessage> {
-  const body = request.body;
-  const headers: Record<string, string> = {};
-  request.headers.forEach((value, key) => {
-    headers[key.toLowerCase()] = value;
-  });
-
-  const readable = new Readable({
-    read() {
-      // no-op — data được pump từ bên ngoài
-    },
-  });
-
-  // Pump data từ Web ReadableStream sang Node Readable (tạo reader 1 lần)
-  if (body) {
-    const reader = body.getReader();
-    (async () => {
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            readable.push(null);
-            break;
-          }
-          readable.push(Buffer.from(value));
-        }
-      } catch {
-        readable.push(null);
-      }
-    })();
-  } else {
-    readable.push(null);
-  }
-
-  // Attach headers to the readable stream (formidable needs them)
-  Object.assign(readable, {
-    headers,
-    method: request.method,
-    url: "",
-  });
-
-  return readable as unknown as IncomingMessage;
-}
 
 export async function POST(request: Request) {
   const session = await validateSession();
@@ -76,39 +23,32 @@ export async function POST(request: Request) {
   }
 
   try {
-    // Parse multipart form
-    const incoming = await requestToIncoming(request);
+    const formData = await request.formData();
+    const file = formData.get("file");
 
-    const form = formidable({
-      maxFileSize: MAX_FILE_SIZE,
-      maxFiles: 1,
-      filter: ({ mimetype }) => {
-        return !!mimetype && ALLOWED_TYPES.includes(mimetype);
-      },
-    });
-
-    const [fields, files] = await form.parse(incoming);
-
-    const fileArray = files.file;
-    if (!fileArray || fileArray.length === 0) {
+    if (!(file instanceof File)) {
       return NextResponse.json(
         { error: "Vui lòng chọn file ảnh (PNG hoặc JPG)" },
         { status: 400 },
       );
     }
 
-    const file = fileArray[0];
-
-    if (!file.mimetype || !ALLOWED_TYPES.includes(file.mimetype)) {
+    if (!ALLOWED_TYPES.includes(file.type)) {
       return NextResponse.json(
         { error: "Chỉ chấp nhận PNG hoặc JPG" },
         { status: 400 },
       );
     }
 
-    const storeId = fields.storeId?.[0]?.trim();
+    if (file.size > MAX_FILE_SIZE) {
+      return NextResponse.json(
+        { error: "File quá lớn (tối đa 100MB)" },
+        { status: 413 },
+      );
+    }
+
+    const storeId = stringField(formData, "storeId");
     if (!storeId) {
-      await unlink(file.filepath).catch(() => {});
       return NextResponse.json(
         { error: "Vui lòng chọn store trước khi upload" },
         { status: 400 },
@@ -121,15 +61,13 @@ export async function POST(request: Request) {
     });
 
     if (!store) {
-      await unlink(file.filepath).catch(() => {});
       return NextResponse.json(
         { error: "Store không hợp lệ hoặc không thuộc tenant hiện tại" },
         { status: 400 },
       );
     }
 
-    // Read file buffer for probing
-    const buffer = await readFile(file.filepath);
+    const buffer = Buffer.from(await file.arrayBuffer());
 
     // Probe metadata + generate preview
     const probeResult = await probeAndPreview(buffer);
@@ -145,11 +83,8 @@ export async function POST(request: Request) {
     await storage.putBuffer(originalKey, buffer);
     await storage.putBuffer(previewKey, probeResult.previewBuffer);
 
-    // Clean up temp file
-    await unlink(file.filepath).catch(() => {});
-
     // Extract name from fields or filename
-    const name = (fields.name?.[0] || file.originalFilename || "Untitled")
+    const name = (stringField(formData, "name") || file.name || "Untitled")
       .replace(/\.[^.]+$/, ""); // Remove extension from name
 
     // Save to database
@@ -159,7 +94,7 @@ export async function POST(request: Request) {
         storeId: store.id,
         ownerUserId: session.id,
         name,
-        originalFilename: file.originalFilename || "unknown",
+        originalFilename: file.name || "unknown",
         storagePath: originalKey,
         previewPath: previewKey,
         width: probeResult.width,
@@ -201,22 +136,14 @@ export async function POST(request: Request) {
   } catch (error: unknown) {
     console.error("[Upload] Error:", error);
 
-    const errorCode =
-      error && typeof error === "object" && "code" in error
-        ? (error as { code: number }).code
-        : null;
-
-    // 1009 = biggerThanTotalMaxFileSize, 1012 = malformedMultipart (stream bị cắt)
-    if (errorCode === 1009 || errorCode === 1012) {
-      return NextResponse.json(
-        { error: "File quá lớn (tối đa 100MB)" },
-        { status: 413 },
-      );
-    }
-
     return NextResponse.json(
       { error: "Upload thất bại. Vui lòng thử lại." },
       { status: 500 },
     );
   }
+}
+
+function stringField(formData: FormData, key: string): string {
+  const value = formData.get(key);
+  return typeof value === "string" ? value.trim() : "";
 }

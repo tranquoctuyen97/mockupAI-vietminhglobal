@@ -3,7 +3,6 @@ import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import type { StorageProvider } from "./types";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || "./uploads";
 
@@ -11,7 +10,7 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR || "./uploads";
  * Local disk storage provider
  * Stores files under UPLOAD_DIR with subdirectories
  */
-export class LocalDiskStorage implements StorageProvider {
+export class LocalDiskStorage {
   private baseDir: string;
 
   constructor(baseDir?: string) {

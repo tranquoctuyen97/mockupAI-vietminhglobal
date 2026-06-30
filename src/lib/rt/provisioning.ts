@@ -8,6 +8,7 @@ import {
   attachCustomFieldToQueue,
   createQueue,
   disableQueue,
+  findQueueByName,
   findOrCreateGmailLabelsCustomField,
   grantQueueRights,
   updateQueue,
@@ -27,7 +28,8 @@ const REQUIRED_QUEUE_RIGHTS = [
 export interface ProvisionMailboxDeps {
   load(mailboxId: string): Promise<ProvisionMailboxRecord | null>;
   createQueue(input: { name: string; description: string; correspondAddress: string }): Promise<{ ok: boolean; id?: number; error?: string }>;
-  updateQueue(queueId: number, input: { name: string; description: string; correspondAddress: string }): Promise<{ ok: boolean; error?: string }>;
+  updateQueue(queueId: number, input: { name: string; description: string; correspondAddress: string; disabled?: boolean }): Promise<{ ok: boolean; error?: string }>;
+  findQueueByName?(name: string): Promise<{ ok: boolean; id?: number | string | { id?: number | string } | null; error?: string }>;
   disableQueue(queueId: number): Promise<void>;
   ensureLabelsCustomField(queueId: number): Promise<{ ok: boolean; error?: string }>;
   grantRights(queueId: number): Promise<{ ok: boolean; error?: string }>;
@@ -44,6 +46,12 @@ export interface ProvisionMailboxRecord {
   rtQueueId: number | null;
   store: { name: string };
   syncCursor: { lastCommittedUid: bigint } | null;
+}
+
+async function findExistingQueueId(queueName: string, deps: ProvisionMailboxDeps): Promise<number | null> {
+  if (!deps.findQueueByName) return null;
+  const found = await deps.findQueueByName(queueName);
+  return found.ok ? numericId(found.id) : null;
 }
 
 export async function provisionMailbox(
@@ -65,6 +73,7 @@ export async function provisionMailbox(
         name: queueName,
         description,
         correspondAddress: mailbox.email,
+        disabled: false,
       });
       if (!updated.ok) throw new Error(updated.error ?? "rt_queue_update_failed");
     } else {
@@ -73,8 +82,18 @@ export async function provisionMailbox(
         description,
         correspondAddress: mailbox.email,
       });
-      if (!created.ok || !created.id) throw new Error(created.error ?? "rt_queue_create_failed");
-      queueId = created.id;
+      queueId = created.ok ? created.id ?? null : null;
+      if (!queueId && created.error === "rt_upstream_400") {
+        queueId = await findExistingQueueId(queueName, deps);
+      }
+      if (!queueId) throw new Error(created.error ?? "rt_queue_create_failed");
+      const updated = await deps.updateQueue(queueId, {
+        name: queueName,
+        description,
+        correspondAddress: mailbox.email,
+        disabled: false,
+      });
+      if (!updated.ok) throw new Error(updated.error ?? "rt_queue_update_failed");
     }
 
     const customField = await deps.ensureLabelsCustomField(queueId);
@@ -155,6 +174,11 @@ export const prismaProvisionMailboxDeps: ProvisionMailboxDeps = {
   updateQueue: async (queueId, input) => {
     const result = await updateQueue(queueId, input);
     return { ok: result.ok, error: result.error };
+  },
+
+  findQueueByName: async (name) => {
+    const result = await findQueueByName(name);
+    return { ok: result.ok, id: result.data?.id ?? null, error: result.error };
   },
 
   disableQueue: async (queueId) => {
