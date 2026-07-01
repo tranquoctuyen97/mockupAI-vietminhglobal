@@ -11,6 +11,7 @@ const WORKSPACE_FEATURES = [
   { key: "listings", label: "Listings" },
   { key: "auto_fulfill", label: "Auto Fulfill" },
   { key: "mockup_library", label: "Mockup Library" },
+  { key: "ai_hub", label: "AI Hub" },
 ] as const;
 
 const ADMIN_FEATURES = [
@@ -20,7 +21,14 @@ const ADMIN_FEATURES = [
   { key: "inkhub_config", label: "InkHub Config" },
 ] as const;
 
-const OPERATOR_DEFAULTS = ["designs", "wizard", "listings", "auto_fulfill", "mockup_library"];
+const OPERATOR_DEFAULTS = [
+  "designs",
+  "wizard",
+  "listings",
+  "auto_fulfill",
+  "mockup_library",
+  "ai_hub",
+];
 
 interface Props {
   initialAdminFeatures: string[];

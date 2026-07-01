@@ -93,6 +93,9 @@ export async function loadMockupGenerationContext(draftId: string, tenantId: str
           colors: {
             include: { color: true },
           },
+          mockupItems: {
+            include: { mockup: true },
+          },
         },
       },
       store: {
@@ -136,6 +139,9 @@ export async function prepareMockupGeneration(
       include: {
         colors: {
           include: { color: true },
+        },
+        mockupItems: {
+          include: { mockup: true },
         },
       },
     });

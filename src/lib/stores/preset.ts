@@ -22,7 +22,7 @@ const TOTAL_PRESET_ITEMS = 5;
 export async function computePresetStatus(storeId: string): Promise<PresetStatus> {
   const template = await prisma.storeMockupTemplate.findFirst({
     where: { storeId, isDefault: true },
-    include: { colors: true },
+    include: { colors: true, mockupItems: { include: { mockup: true } } },
   });
 
   const { missing } = getTemplateReadiness(template);
@@ -43,6 +43,7 @@ export const MISSING_TO_TAB: Record<PresetMissing, string> = {
   variants: "blueprint",
   colors: "colors",
   placement: "placement",
+  mockups: "mockups",
 };
 
 /**
@@ -54,8 +55,10 @@ export function getPresetStatusSync(store: {
     printifyPrintProviderId?: number | null;
     enabledVariantIds?: number[];
     defaultPlacement?: unknown;
+    defaultMockupSource?: string | null;
     isDefault?: boolean;
     colors?: unknown[];
+    mockupItems?: unknown[];
   }> | null;
 }): PresetStatus {
   const template = store.templates?.find((t) => t.isDefault) ?? null;

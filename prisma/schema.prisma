@@ -27,6 +27,7 @@ model Tenant {
   mockupLibraryItems MockupLibraryItem[]
   mailboxes          Mailbox[]
   responseMetrics    MailboxResponseMetric[]
+  aiHubWorkspaces    AiHubWorkspace[]
 
   @@map("tenants")
 }
@@ -50,6 +51,7 @@ model User {
   mailboxInternalNotes       MailboxInternalNote[] @relation("MailboxInternalNoteActor")
   mailboxComposerAttachments MailboxComposerAttachment[] @relation("MailboxComposerAttachmentUploadedBy")
   mailboxSkippedSenders      MailboxSkippedSender[] @relation("MailboxSkippedSenderCreatedBy")
+  aiHubMemberWorkspaces      AiHubMemberWorkspace[]
 
   @@index([tenantId])
   @@index([email, status])
@@ -80,6 +82,37 @@ model TenantRolePermission {
   @@unique([tenantId, role, feature])
   @@index([tenantId, role])
   @@map("tenant_role_permissions")
+}
+
+model AiHubWorkspace {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  name      String
+  path      String
+  type      String
+  provider  String   @default("codex")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant  Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  members AiHubMemberWorkspace[]
+
+  @@unique([tenantId, provider, path])
+  @@index([tenantId, provider, type])
+  @@map("ai_hub_workspaces")
+}
+
+model AiHubMemberWorkspace {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  workspaceId String   @map("workspace_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace AiHubWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+  @@map("ai_hub_member_workspaces")
 }
 
 model InkhubCredential {

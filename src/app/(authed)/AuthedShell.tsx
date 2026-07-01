@@ -57,6 +57,12 @@ const NAV_ITEMS: NavItemConfig[] = [
     icon: <Mail size={18} />,
     feature: "mailboxes",
   },
+  {
+    label: "AI Hub",
+    href: "/ai-hub",
+    icon: <Bot size={18} />,
+    feature: "ai_hub",
+  },
 ];
 
 const ADMIN_ITEMS: NavItemConfig[] = [
@@ -73,6 +79,13 @@ const ADMIN_ITEMS: NavItemConfig[] = [
     icon: <Bot size={18} />,
     adminOnly: true,
     feature: "ai_settings",
+  },
+  {
+    label: "AI Hub Admin",
+    href: "/admin/ai-hub",
+    icon: <Bot size={18} />,
+    adminOnly: true,
+    feature: "ai_hub",
   },
   { label: "Permissions", href: "/admin/acl", icon: <Shield size={18} />, superAdminOnly: true },
   {
@@ -155,6 +168,7 @@ export default function AuthedShell({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const isMailboxRoute = pathname.startsWith("/mailboxes");
+  const isAiHubRoute = pathname.startsWith("/ai-hub");
 
   const isSuperAdmin = userRole === "SUPER_ADMIN";
   const isAdminOrAbove = userRole === "ADMIN" || isSuperAdmin;
@@ -181,7 +195,7 @@ export default function AuthedShell({
     }
   }
 
-  if (pathname.startsWith("/auto-fulfill")) {
+  if (pathname.startsWith("/auto-fulfill") || isAiHubRoute) {
     return (
       <div
         className="flex h-screen overflow-hidden"

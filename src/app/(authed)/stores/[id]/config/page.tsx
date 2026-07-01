@@ -74,6 +74,13 @@ interface TemplateDetail {
       hex: string;
     };
   }>;
+  mockupItems?: Array<{
+    appliesToColorIds: unknown;
+    mockup: {
+      renderMode: string;
+      compositeRegionPx: unknown;
+    };
+  }>;
 }
 
 interface StoreDetail {
@@ -120,6 +127,10 @@ const inputStyle: React.CSSProperties = {
   color: "var(--text-primary)",
 };
 
+function templateColorKey(name: string) {
+  return `color:${name.trim().toLowerCase()}`;
+}
+
 const pricingThStyle: React.CSSProperties = {
   padding: "10px 12px",
   fontSize: "0.72rem",
@@ -141,7 +152,7 @@ function parseOptionalMoney(value: unknown): number | null {
 }
 
 type Tab = "printify" | "templates" | "overview";
-type TemplateMissing = "blueprint" | "provider" | "variants" | "colors" | "placement";
+type TemplateMissing = "blueprint" | "provider" | "variants" | "colors" | "placement" | "mockups";
 
 const TEMPLATE_MISSING_LABELS: Record<TemplateMissing, string> = {
   blueprint: "Blueprint",
@@ -149,6 +160,7 @@ const TEMPLATE_MISSING_LABELS: Record<TemplateMissing, string> = {
   variants: "Variants",
   colors: "Colors",
   placement: "Placement",
+  mockups: "Mockups",
 };
 
 function getTemplateMissing(template: TemplateDetail): TemplateMissing[] {
@@ -157,10 +169,59 @@ function getTemplateMissing(template: TemplateDetail): TemplateMissing[] {
   if (!template.printifyPrintProviderId) missing.push("provider");
   if (!template.enabledVariantIds?.length) missing.push("variants");
   if (!template.colors?.length) missing.push("colors");
-  if (getEnabledViews(normalizePlacementData(template.defaultPlacement, false)).length === 0) {
+
+  if (template.defaultMockupSource === "CUSTOM") {
+    if (!hasCustomTemplateMockupCoverage(template)) missing.push("mockups");
+  } else if (getEnabledViews(normalizePlacementData(template.defaultPlacement, false)).length === 0) {
     missing.push("placement");
   }
   return missing;
+}
+
+function hasCustomTemplateMockupCoverage(template: TemplateDetail): boolean {
+  const colorIds = new Set(template.colors.map((entry) => entry.color.id).filter(Boolean));
+  if (colorIds.size === 0) return false;
+
+  const coveredColorIds = new Set<string>();
+  for (const item of template.mockupItems ?? []) {
+    if (item.mockup.renderMode === "COMPOSITE" && !isValidCompositeRegion(item.mockup.compositeRegionPx)) continue;
+    const appliesToColorIds = Array.isArray(item.appliesToColorIds)
+      ? item.appliesToColorIds.filter((id): id is string => typeof id === "string")
+      : [];
+    if (appliesToColorIds.length === 0) {
+      for (const colorId of colorIds) coveredColorIds.add(colorId);
+    } else {
+      for (const colorId of appliesToColorIds) coveredColorIds.add(colorId);
+    }
+  }
+
+  for (const colorId of colorIds) {
+    if (!coveredColorIds.has(colorId)) return false;
+  }
+  return true;
+}
+
+function isValidCompositeRegion(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const region = value as Record<string, unknown>;
+  return (
+    typeof region.x === "number" &&
+    Number.isFinite(region.x) &&
+    typeof region.y === "number" &&
+    Number.isFinite(region.y) &&
+    typeof region.width === "number" &&
+    Number.isFinite(region.width) &&
+    region.width > 0 &&
+    typeof region.height === "number" &&
+    Number.isFinite(region.height) &&
+    region.height > 0 &&
+    typeof region.imageWidth === "number" &&
+    Number.isFinite(region.imageWidth) &&
+    region.imageWidth > 0 &&
+    typeof region.imageHeight === "number" &&
+    Number.isFinite(region.imageHeight) &&
+    region.imageHeight > 0
+  );
 }
 
 function formatTemplateMissingLabels(missing: TemplateMissing[]): string {
@@ -876,11 +937,13 @@ function TemplatesSection({
       }
 
       // Map color names to store color IDs (case-insensitive and trimmed)
+      const colorIdByPendingKey = new Map<string, string>();
       const colorIds = tempTemplateData.colors
         .map((tc) => {
           const found = allStoreColors.find(
             (c) => c.name.trim().toLowerCase() === tc.color.name.trim().toLowerCase()
           );
+          if (found?.id) colorIdByPendingKey.set(templateColorKey(tc.color.name), found.id);
           return found?.id;
         })
         .filter((id): id is string => !!id);
@@ -892,27 +955,16 @@ function TemplatesSection({
         tempTemplateData.defaultMockupSource === "CUSTOM" &&
         tempTemplateData.colors.length > 0
       ) {
-        const colorIds = tempTemplateData.colors
-          .map((tc) => {
+        const uncoveredNames = tempTemplateData.colors
+          .filter((tc) => {
+            const key = templateColorKey(tc.color.name);
             const found = allStoreColors.find(
               (c) => c.name.trim().toLowerCase() === tc.color.name.trim().toLowerCase(),
             );
-            return found?.id;
+            return found && !pendingAssignments.has(found.id) && !pendingAssignments.has(key);
           })
-          .filter((id): id is string => !!id);
-
-        const uncoveredColors = colorIds.filter(
-          (colorId) => !pendingAssignments.has(colorId),
-        );
-        if (uncoveredColors.length > 0) {
-          const uncoveredNames = tempTemplateData.colors
-            .filter((tc) => {
-              const found = allStoreColors.find(
-                (c) => c.name.trim().toLowerCase() === tc.color.name.trim().toLowerCase(),
-              );
-              return found && uncoveredColors.includes(found.id);
-            })
-            .map((tc) => tc.color.name);
+          .map((tc) => tc.color.name);
+        if (uncoveredNames.length > 0) {
           toast.error(
             `Chưa chọn mockup cho: ${uncoveredNames.join(", ")}. Chọn mockup ở tab Mockups hoặc thêm mockup cho tất cả màu.`,
           );
@@ -961,7 +1013,7 @@ function TemplatesSection({
 
         // After creating a CUSTOM template, attach mockups from pending assignments
         if (isNew && savedTemplateId && tempTemplateData.defaultMockupSource === "CUSTOM") {
-          await attachPendingMockupsAfterCreate(savedTemplateId);
+          await attachPendingMockupsAfterCreate(savedTemplateId, colorIdByPendingKey);
         }
 
         toast.success(isNew ? "Đã tạo template thành công!" : "Đã cập nhật template thành công!");
@@ -980,11 +1032,12 @@ function TemplatesSection({
   }
 
   // Attach pending mockup assignments after template creation
-  async function attachPendingMockupsAfterCreate(savedTemplateId: string) {
+  async function attachPendingMockupsAfterCreate(savedTemplateId: string, colorIdByPendingKey: Map<string, string>) {
     const attachUrl = `/api/stores/${store.id}/mockup-templates/${savedTemplateId}/mockups`;
     const pendingAssignmentsByMockupId = new Map<string, string[]>();
 
-    for (const [colorId, assignment] of pendingAssignments) {
+    for (const [pendingColorId, assignment] of pendingAssignments) {
+      const colorId = colorIdByPendingKey.get(pendingColorId) ?? pendingColorId;
       const colorIds = pendingAssignmentsByMockupId.get(assignment.mockupId) ?? [];
       colorIds.push(colorId);
       pendingAssignmentsByMockupId.set(assignment.mockupId, colorIds);
@@ -1472,9 +1525,9 @@ function TemplatesSection({
           storeId={store.id}
           templateId={tempTemplateData.id}
           colors={tempTemplateData.colors
-            .filter((entry) => entry.color?.id)
+            .filter((entry) => entry.color?.name)
             .map((entry) => ({
-              id: entry.color.id,
+              id: entry.color.id || templateColorKey(entry.color.name),
               name: entry.color.name,
               hex: entry.color.hex,
             }))}

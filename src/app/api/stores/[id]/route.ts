@@ -40,6 +40,9 @@ export async function GET(
             orderBy: { sortOrder: "asc" },
             include: { color: true },
           },
+          mockupItems: {
+            include: { mockup: true },
+          },
         },
       },
     },
