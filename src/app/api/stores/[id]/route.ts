@@ -78,6 +78,7 @@ export async function GET(
 
   const enrichedTemplates = store.templates.map((t) => ({
     ...t,
+    basePriceUsd: t.basePriceUsd ? Number(t.basePriceUsd) : null,
     colors: t.colors.map((tc) => ({
       ...tc,
       color: {
