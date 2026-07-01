@@ -28,6 +28,10 @@ fi
 pnpm run build
 cp -r public .next/standalone/
 cp -r .next/static .next/standalone/.next/
+if [ -d ".next/node_modules" ]; then
+  mkdir -p .next/standalone/node_modules
+  cp -a .next/node_modules/. .next/standalone/node_modules/
+fi
 AI_HUB_MANIFEST=".next/standalone/.next/server/app/(authed)/ai-hub/page_client-reference-manifest.js"
 if [ -f "$AI_HUB_MANIFEST" ] && ! grep -q '__RSC_MANIFEST\["/ai-hub"\]' "$AI_HUB_MANIFEST"; then
   printf '\nglobalThis.__RSC_MANIFEST["/ai-hub"] = globalThis.__RSC_MANIFEST["/(authed)/ai-hub/page"];\n' >> "$AI_HUB_MANIFEST"
