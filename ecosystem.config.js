@@ -5,7 +5,7 @@ const AI_HUB_CODEX_WEB_REF =
   process.env.AI_HUB_CODEX_WEB_REF ||
   "https://github.com/tranquoctuyen97/codex-web.git";
 const AI_HUB_CODEX_WEB_BRANCH = process.env.AI_HUB_CODEX_WEB_BRANCH || "mockupai-workspace-allowlist";
-const AI_HUB_CODEX_WEB_DIR = process.env.AI_HUB_CODEX_WEB_DIR || "/root/code/codex-web";
+const AI_HUB_CODEX_WEB_DIR = process.env.AI_HUB_CODEX_WEB_DIR || "/tmp/mockupai-codex-web";
 const AI_HUB_CODEX_WEB_PORT = process.env.AI_HUB_CODEX_WEB_PORT || "8214";
 const AI_HUB_GATEWAY_PORT = process.env.AI_HUB_GATEWAY_PORT || "8215";
 const CODEX_CLI_PATH = process.env.CODEX_CLI_PATH || "codex";

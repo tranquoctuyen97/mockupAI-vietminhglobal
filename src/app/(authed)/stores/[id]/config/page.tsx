@@ -395,24 +395,33 @@ function OverviewTab({
   onGoToTab,
 }: {
   store: StoreDetail;
-  onRefresh: () => void;
+  onRefresh: (options?: { silent?: boolean }) => void;
   onGoToTab: (tab: Tab) => void;
 }) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ shopify?: { ok: boolean; error?: string }; printify?: { ok: boolean; error?: string } } | null>(null);
+  const autoCheckedStoreIdRef = useRef<string | null>(null);
 
-  async function handleTest() {
+  const handleTest = useCallback(async (options?: { silent?: boolean }) => {
     setTesting(true);
-    setResult(null);
+    if (!options?.silent) setResult(null);
     try {
       const res = await fetch(`/api/stores/${store.id}/test-connection`, { method: "POST" });
       const r = await res.json();
       setResult(r);
-      if (r.status === "ACTIVE") toast.success("Tất cả kết nối hoạt động tốt!");
-      else toast.error("Có lỗi kết nối — xem chi tiết bên dưới");
-      onRefresh();
+      if (!options?.silent) {
+        if (r.status === "ACTIVE") toast.success("Tất cả kết nối hoạt động tốt!");
+        else toast.error("Có lỗi kết nối — xem chi tiết bên dưới");
+      }
+      onRefresh({ silent: true });
     } finally { setTesting(false); }
-  }
+  }, [onRefresh, store.id]);
+
+  useEffect(() => {
+    if (store.status !== "ACTIVE" || autoCheckedStoreIdRef.current === store.id) return;
+    autoCheckedStoreIdRef.current = store.id;
+    void handleTest({ silent: true });
+  }, [handleTest, store.id, store.status]);
 
   const statusLabel = store.status === "ACTIVE" ? "Hoạt động" : store.status === "TOKEN_EXPIRED" ? "Token hết hạn" : store.status;
 
@@ -427,9 +436,17 @@ function OverviewTab({
             <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>Shopify</span>
             <span style={{ fontSize: "0.8rem", opacity: 0.5 }}>{store.shopifyDomain}</span>
           </div>
-          <span className={`badge ${store.status === "ACTIVE" ? "badge-success" : "badge-warning"}`} style={{ fontSize: "0.72rem" }}>
-            {statusLabel}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className={`badge ${store.status === "ACTIVE" ? "badge-success" : "badge-warning"}`} style={{ fontSize: "0.72rem" }}>
+              {statusLabel}
+            </span>
+            {store.status === "TOKEN_EXPIRED" && (
+              <Link href={`/api/shopify/authorize?storeId=${store.id}`} className="btn btn-secondary" style={{ padding: "7px 12px", fontSize: "0.76rem" }}>
+                <RefreshCw size={13} />
+                Reconnect
+              </Link>
+            )}
+          </div>
         </div>
         {result?.shopify && !result.shopify.ok && (
           <div style={{ fontSize: "0.8rem", color: "#ef4444", marginTop: 8 }}>Lỗi: {result.shopify.error}</div>
@@ -456,7 +473,7 @@ function OverviewTab({
         )}
       </div>
 
-      <button onClick={handleTest} disabled={testing} className="btn btn-secondary" style={{ marginBottom: 24 }}>
+      <button onClick={() => handleTest()} disabled={testing} className="btn btn-secondary" style={{ marginBottom: 24 }}>
         {testing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Kiểm tra kết nối
       </button>
 

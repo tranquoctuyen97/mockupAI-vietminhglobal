@@ -35,7 +35,7 @@ import {
   ensureVariantCostCache,
   type ShopifyVariantPlanItem,
 } from "@/lib/printify/variant-catalog";
-import { ShopifyClient } from "@/lib/shopify/client";
+import { ShopifyAuthError, ShopifyClient } from "@/lib/shopify/client";
 import { sseChannels } from "@/lib/sse/channel";
 import { getStorage } from "@/lib/storage/local-disk";
 import { publishToPrintify } from "./printify";
@@ -399,6 +399,12 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
         },
         shopifyJob.id,
         "SHOPIFY",
+        async () => {
+          await prisma.store.update({
+            where: { id: store.id },
+            data: { status: "TOKEN_EXPIRED", lastHealthCheck: new Date() },
+          });
+        },
       );
     }
 
@@ -902,6 +908,7 @@ async function retryWithBackoff<T>(
   fn: () => Promise<T>,
   jobId: string,
   stage: string,
+  onAuthError?: () => Promise<void>,
 ): Promise<T | null> {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -925,6 +932,10 @@ async function retryWithBackoff<T>(
       const errorMsg = error instanceof Error ? error.message : "Unknown error";
       console.error(`[PublishWorker] ${stage} attempt ${attempt}/${MAX_RETRIES} failed:`, errorMsg);
 
+      if (isShopifyAuthError(error)) {
+        await onAuthError?.();
+      }
+
       await prisma.publishJob.update({
         where: { id: jobId },
         data: { lastError: errorMsg },
@@ -943,6 +954,14 @@ async function retryWithBackoff<T>(
     }
   }
   return null;
+}
+
+function isShopifyAuthError(error: unknown): boolean {
+  return (
+    error instanceof ShopifyAuthError ||
+    (error instanceof Error &&
+      (error.name === "ShopifyAuthError" || error.message.includes("Token expired or invalid")))
+  );
 }
 
 function sleep(ms: number): Promise<void> {

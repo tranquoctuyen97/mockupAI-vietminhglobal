@@ -288,14 +288,36 @@ export async function listStores(tenantId: string) {
  * Hard delete a store and all related data (credentials cascade via schema)
  */
 export async function deleteStore(storeId: string) {
-  // Unlink Printify shop before deleting (set FK to null)
-  await prisma.store.update({
-    where: { id: storeId },
-    data: { printifyShopId: null },
-  });
+  return prisma.$transaction(async (tx) => {
+    await tx.wizardDraftMockupLibraryPick.deleteMany({
+      where: {
+        templateMockupItem: {
+          OR: [
+            { template: { storeId } },
+            { mockup: { storeId } },
+          ],
+        },
+      },
+    });
 
-  return prisma.store.delete({
-    where: { id: storeId },
+    await tx.templateMockupItem.deleteMany({
+      where: {
+        OR: [
+          { template: { storeId } },
+          { mockup: { storeId } },
+        ],
+      },
+    });
+
+    // Unlink Printify shop before deleting (set FK to null)
+    await tx.store.update({
+      where: { id: storeId },
+      data: { printifyShopId: null },
+    });
+
+    return tx.store.delete({
+      where: { id: storeId },
+    });
   });
 }
 
