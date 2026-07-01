@@ -2,6 +2,10 @@
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-$(pwd)}"
+LOCK_FILE="${DEPLOY_LOCK_FILE:-/tmp/mockupai-deploy.lock}"
+
+exec 9>"$LOCK_FILE"
+flock 9
 
 cd "$APP_DIR"
 
