@@ -9,6 +9,7 @@ test("AI Hub uses a gateway process for Codex WebSocket proxying", () => {
   const deploy = readFileSync("ops/deploy-vps.sh", "utf8");
   const route = readFileSync("src/app/api/codex-proxy/[[...path]]/route.ts", "utf8");
   const proxy = readFileSync("src/lib/ai-hub/proxy.ts", "utf8");
+  const appProxy = readFileSync("src/proxy.ts", "utf8");
   const page = readFileSync("src/app/(authed)/ai-hub/page.tsx", "utf8");
 
   assert.match(ecosystem, /script:\s*"\.next\/standalone\/server\.js"/);
@@ -20,6 +21,8 @@ test("AI Hub uses a gateway process for Codex WebSocket proxying", () => {
   assert.match(route, /validateSession/);
   assert.match(proxy, /x-internal-member-id/);
   assert.match(proxy, /CODEX_APP_URL/);
+  assert.match(appProxy, /pathname\.startsWith\("\/@fs\/"\)/);
+  assert.match(appProxy, /NextResponse\.rewrite/);
   assert.match(gateway, /server\.on\("upgrade"/);
   assert.match(gateway, /\/__backend\/ipc/);
   assert.match(gateway, /\/api\/internal\/ai-hub\/session/);

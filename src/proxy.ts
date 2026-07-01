@@ -8,6 +8,12 @@ const INTERNAL_BEARER_PATHS = ["/api/internal/ai-hub"];
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  if (pathname.startsWith("/@fs/")) {
+    const url = request.nextUrl.clone();
+    url.pathname = `/api/codex-proxy${pathname}`;
+    return NextResponse.rewrite(url);
+  }
+
   // Allow public paths
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
