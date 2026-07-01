@@ -3,12 +3,17 @@ import type { NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/health", "/api/shopify", "/api/webhooks"];
 const ADMIN_PATHS = ["/admin", "/api/admin"];
+const INTERNAL_BEARER_PATHS = ["/api/internal/ai-hub"];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow public paths
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
+    return NextResponse.next();
+  }
+
+  if (INTERNAL_BEARER_PATHS.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
   }
 

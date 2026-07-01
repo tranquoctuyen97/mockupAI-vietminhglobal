@@ -225,6 +225,9 @@ export async function listStores(tenantId: string) {
             orderBy: { sortOrder: "asc" },
             include: { color: true },
           },
+          mockupItems: {
+            include: { mockup: true },
+          },
         },
       },
     },
@@ -529,7 +532,7 @@ export async function deleteTemplate(templateId: string) {
       const nextTemplates = await tx.storeMockupTemplate.findMany({
         where: { storeId: template.storeId },
         orderBy: { sortOrder: "asc" },
-        include: { colors: true },
+        include: { colors: true, mockupItems: { include: { mockup: true } } },
       });
       const nextTemplate = pickNextReadyDefaultTemplate(nextTemplates);
       if (nextTemplate) {
@@ -548,7 +551,7 @@ export async function deleteTemplate(templateId: string) {
 export async function setDefaultTemplate(storeId: string, templateId: string) {
   const template = await prisma.storeMockupTemplate.findFirst({
     where: { id: templateId, storeId },
-    include: { colors: true },
+    include: { colors: true, mockupItems: { include: { mockup: true } } },
   });
 
   if (!template) {

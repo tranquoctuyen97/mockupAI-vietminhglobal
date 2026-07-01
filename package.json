@@ -23,6 +23,7 @@
     "mailbox:matrix:preflight": "tsx scripts/verify-rt-gmail-live-matrix.ts preflight",
     "mailbox:matrix:checklist": "tsx scripts/verify-rt-gmail-live-matrix.ts checklist",
     "mailbox:matrix:template": "tsx scripts/verify-rt-gmail-live-matrix.ts template",
+    "ai-hub:codex-web:sync": "node scripts/sync-codex-web-fork.mjs",
     "worker": "npx tsx start-worker.ts"
   },
   "prisma": {

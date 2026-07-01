@@ -1,0 +1,17 @@
+-- RenameIndex
+ALTER INDEX "mailbox_response_metrics_latest_admin_reply_actor_user_id_respo" RENAME TO "mailbox_response_metrics_latest_admin_reply_actor_user_id_r_idx";
+
+-- RenameIndex
+ALTER INDEX "mailbox_response_metrics_tenant_id_store_id_response_started_at" RENAME TO "mailbox_response_metrics_tenant_id_store_id_response_starte_idx";
+
+-- RenameIndex
+ALTER INDEX "mockup_library_items_tenant_id_store_id_is_active_deleted_at_id" RENAME TO "mockup_library_items_tenant_id_store_id_is_active_deleted_a_idx";
+
+-- RenameIndex
+ALTER INDEX "wizard_draft_design_pairs_wizard_draft_id_dark_draft_design_id_" RENAME TO "wizard_draft_design_pairs_wizard_draft_id_dark_draft_design_key";
+
+-- RenameIndex
+ALTER INDEX "wizard_draft_design_pairs_wizard_draft_id_light_draft_design_id" RENAME TO "wizard_draft_design_pairs_wizard_draft_id_light_draft_desig_key";
+
+-- RenameIndex
+ALTER INDEX "wizard_draft_mockup_library_picks_draft_id_template_mockup_item" RENAME TO "wizard_draft_mockup_library_picks_wizard_draft_id_template__key";

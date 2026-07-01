@@ -9,6 +9,7 @@ export const FEATURES = [
   "listings",
   "auto_fulfill",
   "mockup_library",
+  "ai_hub",
   "users",
   "pricing",
   "integrations",

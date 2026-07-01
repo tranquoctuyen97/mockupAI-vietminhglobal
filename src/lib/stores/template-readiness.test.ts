@@ -90,6 +90,7 @@ test("TEMPLATE_MISSING_LABELS has stable user-facing labels", () => {
   assert.equal(TEMPLATE_MISSING_LABELS.variants, "Variants");
   assert.equal(TEMPLATE_MISSING_LABELS.colors, "Colors");
   assert.equal(TEMPLATE_MISSING_LABELS.placement, "Placement");
+  assert.equal(TEMPLATE_MISSING_LABELS.mockups, "Mockups");
 });
 
 test("getTemplateReadiness accepts Prisma include colors shape", () => {
@@ -105,4 +106,62 @@ test("getTemplateReadiness accepts Prisma include colors shape", () => {
   );
 
   assert.equal(readiness.ready, true);
+});
+
+test("custom templates use mockup coverage instead of template placement", () => {
+  assert.deepEqual(
+    getTemplateReadiness(
+      template({
+        defaultMockupSource: "CUSTOM",
+        defaultPlacement: null,
+        colors: [
+          { colorId: "navy", color: { id: "navy", name: "Navy" } },
+          { colorId: "red", color: { id: "red", name: "Red" } },
+        ],
+        mockupItems: [
+          {
+            appliesToColorIds: ["navy"],
+            mockup: {
+              renderMode: "COMPOSITE",
+              compositeRegionPx: { x: 1, y: 1, width: 10, height: 10, imageWidth: 20, imageHeight: 20 },
+            },
+          },
+          {
+            appliesToColorIds: ["red"],
+            mockup: {
+              renderMode: "COMPOSITE",
+              compositeRegionPx: { x: 2, y: 2, width: 10, height: 10, imageWidth: 20, imageHeight: 20 },
+            },
+          },
+        ],
+      }),
+    ),
+    { ready: true, missing: [] },
+  );
+});
+
+test("custom templates report mockups when coverage or composite region is missing", () => {
+  assert.deepEqual(
+    getTemplateReadiness(
+      template({
+        defaultMockupSource: "CUSTOM",
+        defaultPlacement: null,
+        colors: [{ colorId: "navy" }],
+        mockupItems: [],
+      }),
+    ),
+    { ready: false, missing: ["mockups"] },
+  );
+
+  assert.deepEqual(
+    getTemplateReadiness(
+      template({
+        defaultMockupSource: "CUSTOM",
+        defaultPlacement: null,
+        colors: [{ colorId: "navy" }],
+        mockupItems: [{ appliesToColorIds: ["navy"], mockup: { renderMode: "COMPOSITE", compositeRegionPx: null } }],
+      }),
+    ),
+    { ready: false, missing: ["mockups"] },
+  );
 });

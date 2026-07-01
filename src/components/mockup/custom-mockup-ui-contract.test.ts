@@ -249,6 +249,16 @@ test("new custom templates group pending mockup assignments by mockup id before 
   assert.doesNotMatch(configSource, /for \(const \[colorId, assignment\] of pendingAssignments\)[\s\S]*appliesToColorIds: \[colorId\]/);
 });
 
+test("new custom templates can assign mockups before store color ids exist", () => {
+  const configSource = read("src/app/(authed)/stores/[id]/config/page.tsx");
+
+  assert.match(configSource, /function templateColorKey\(name: string\)/);
+  assert.match(configSource, /id: entry\.color\.id \|\| templateColorKey\(entry\.color\.name\)/);
+  assert.doesNotMatch(configSource, /\.filter\(\(entry\) => entry\.color\?\.id\)/);
+  assert.match(configSource, /colorIdByPendingKey\.set\(templateColorKey\(tc\.color\.name\), found\.id\)/);
+  assert.match(configSource, /colorIdByPendingKey\.get\(pendingColorId\) \?\? pendingColorId/);
+});
+
 test("wizard edit action opens a dedicated placement editor instead of the upload modal", () => {
   const panelSource = read("src/components/mockup/WizardMockupSourcePanel.tsx");
 
