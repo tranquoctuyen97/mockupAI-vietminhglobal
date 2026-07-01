@@ -5,7 +5,9 @@ APP_DIR="${APP_DIR:-$(pwd)}"
 
 cd "$APP_DIR"
 
-git pull --ff-only
+if [ "${SKIP_GIT_PULL:-0}" != "1" ]; then
+  git pull --ff-only
+fi
 
 corepack enable >/dev/null 2>&1 || true
 pnpm install --frozen-lockfile

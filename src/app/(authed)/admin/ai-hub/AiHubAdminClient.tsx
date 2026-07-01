@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Bot, LogOut, RotateCw } from "lucide-react";
+import { Activity, Bot, Link2, LogOut, RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -13,7 +13,9 @@ type Status = {
 export default function AiHubAdminClient() {
   const [status, setStatus] = useState<Status | null>(null);
   const [pending, setPending] = useState(false);
+  const [authOutput, setAuthOutput] = useState("");
   const healthy = status?.runtime === "online" && status?.proxy === "reachable";
+  const connected = status?.codexAccount === "connected";
 
   async function loadStatus() {
     const res = await fetch("/api/admin/ai-hub/status");
@@ -33,6 +35,23 @@ export default function AiHubAdminClient() {
         return;
       }
       toast.success("Đã restart AI Hub runtime");
+      await loadStatus();
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function connect() {
+    setPending(true);
+    try {
+      const res = await fetch("/api/admin/ai-hub/connect", { method: "POST" });
+      if (!res.ok) {
+        toast.error("Connect thất bại");
+        return;
+      }
+      const data = (await res.json()) as { output?: string };
+      setAuthOutput(data.output ?? "");
+      toast.success("Đã bắt đầu Codex device auth");
       await loadStatus();
     } finally {
       setPending(false);
@@ -100,13 +119,36 @@ export default function AiHubAdminClient() {
             <RotateCw size={16} />
             Restart runtime
           </button>
-          <button className="btn-secondary" disabled={pending} onClick={disconnect} type="button">
-            <LogOut size={16} />
-            Disconnect Codex
-          </button>
+          {connected ? (
+            <button className="btn-secondary" disabled={pending} onClick={disconnect} type="button">
+              <LogOut size={16} />
+              Disconnect Codex
+            </button>
+          ) : (
+            <button className="btn-primary" disabled={pending} onClick={connect} type="button">
+              <Link2 size={16} />
+              Connect Codex
+            </button>
+          )}
         </div>
 
       </div>
+
+      {authOutput && (
+        <pre
+          className="mt-6"
+          style={{
+            maxWidth: 768,
+            whiteSpace: "pre-wrap",
+            borderRadius: "var(--radius-sm)",
+            backgroundColor: "var(--bg-tertiary)",
+            color: "var(--text-primary)",
+            padding: "16px 18px",
+          }}
+        >
+          {authOutput}
+        </pre>
+      )}
 
       {healthy && (
         <div
@@ -134,6 +176,10 @@ export default function AiHubAdminClient() {
               backgroundColor: "#10b981",
             }}
           />
+          <span>
+            Codex Web runtime đang online tại <code>127.0.0.1:8214</code>, proxy qua{" "}
+            <code>/api/codex-proxy/</code>.
+          </span>
         </div>
       )}
     </div>

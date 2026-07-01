@@ -49,8 +49,12 @@ test("admin page renders AI Hub admin client", () => {
 
   assert.match(page, /AiHubAdminClient/);
   assert.match(client, /\/api\/admin\/ai-hub\/status/);
+  assert.match(client, /\/api\/admin\/ai-hub\/connect/);
   assert.match(client, /\/api\/admin\/ai-hub\/restart/);
   assert.match(client, /\/api\/admin\/ai-hub\/disconnect/);
+  assert.match(client, /Connect Codex/);
+  assert.match(client, /Disconnect Codex/);
+  assert.match(client, /authOutput/);
   assert.match(client, /Codex Web runtime/);
   assert.match(client, /127\.0\.0\.1:8214/);
   assert.match(client, /\/api\/codex-proxy\//);

@@ -17,6 +17,7 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
           VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+          GIT_REMOTE_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -25,4 +26,4 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -p "$VPS_PORT" "$VPS_HOST" >> ~/.ssh/known_hosts
           sshpass -e ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
-            "cd '$VPS_APP_DIR' && git pull --ff-only && APP_DIR='$VPS_APP_DIR' bash ops/deploy-vps.sh"
+            "cd '$VPS_APP_DIR' && original_remote=\$(git remote get-url origin) && git remote set-url origin '$GIT_REMOTE_URL' && git pull --ff-only && git remote set-url origin \"\$original_remote\" && APP_DIR='$VPS_APP_DIR' SKIP_GIT_PULL=1 bash ops/deploy-vps.sh"
