@@ -70,7 +70,7 @@ export function rewriteCodexProxyPaths(body: string): string {
   return body
     .replace(/return"\/"\+/g, `return"${CODEX_PROXY_BASE}/"+`)
     .replace(
-      /(["'`])\/(?!api\/codex-proxy(?:\/|$))((?:codex-api(?:\/|\?|(?=["'`]))|codex-local-(?:image|browse|directories)(?:\/|\?|(?=["'`]))|sw\.js(?:\?|(?=["'`]))|assets\/|icons\/|manifest\.webmanifest(?:\?|(?=["'`]))|favicon\.ico(?:\?|(?=["'`]))))/g,
+      /(["'`])\/(?!api\/codex-proxy(?:\/|$))((?:@fs\/|codex-api(?:\/|\?|(?=["'`]))|codex-local-(?:image|browse|directories)(?:\/|\?|(?=["'`]))|sw\.js(?:\?|(?=["'`]))|assets\/|icons\/|manifest\.webmanifest(?:\?|(?=["'`]))|favicon\.ico(?:\?|(?=["'`]))))/g,
       `$1${CODEX_PROXY_BASE}/$2`,
     );
 }

@@ -56,6 +56,7 @@ test("proxy path rewrite covers codex runtime endpoints and assets", () => {
     'fetch("/codex-api/provider-models?provider=openai")',
     "fetch(`/codex-api/prompts?${params.toString()}`)",
     'const image = "/codex-local-image?path=/tmp/a.png";',
+    'const generated = "/@fs/tmp/ai-hub/codex-runtime/home/.codex/generated_images/a.png";',
     'navigator.serviceWorker.register("/sw.js")',
     'const logo = "/favicon.ico";',
     'const preload=function(e){return"/"+e};',
@@ -65,6 +66,7 @@ test("proxy path rewrite covers codex runtime endpoints and assets", () => {
   assert.match(output, /"\/api\/codex-proxy\/codex-api\/provider-models\?provider=openai"/);
   assert.match(output, /`\/api\/codex-proxy\/codex-api\/prompts\?\$\{params\.toString\(\)\}`/);
   assert.match(output, /"\/api\/codex-proxy\/codex-local-image\?path=\/tmp\/a\.png"/);
+  assert.match(output, /"\/api\/codex-proxy\/@fs\/tmp\/ai-hub\/codex-runtime\/home\/\.codex\/generated_images\/a\.png"/);
   assert.match(output, /"\/api\/codex-proxy\/sw\.js"/);
   assert.match(output, /"\/api\/codex-proxy\/favicon\.ico"/);
   assert.match(output, /return"\/api\/codex-proxy\/"\+e/);
