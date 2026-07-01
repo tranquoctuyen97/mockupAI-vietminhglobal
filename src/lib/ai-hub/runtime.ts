@@ -29,6 +29,10 @@ function getRuntimeHome(): string {
   return process.env.AI_HUB_RUNTIME_HOME ?? "/tmp/ai-hub/codex-runtime/home";
 }
 
+function getCodexCommand(): string {
+  return process.env.CODEX_CLI_PATH ?? "codex";
+}
+
 function getRuntimeEnv(): NodeJS.ProcessEnv {
   const home = getRuntimeHome();
   mkdirSync(`${home}/.codex`, { recursive: true });
@@ -69,7 +73,7 @@ function runCommand(
 }
 
 export async function checkCodexLoginStatus(): Promise<AiHubRuntimeStatus["codexAccount"]> {
-  const result = await runCommand("codex", ["login", "status"]);
+  const result = await runCommand(getCodexCommand(), ["login", "status"]);
   const text = `${result.stdout}\n${result.stderr}`.toLowerCase();
   if (result.code === 0 && text.includes("logged")) return "connected";
   if (text.includes("device") || text.includes("waiting")) return "waiting_for_device_auth";
@@ -84,7 +88,7 @@ export async function startCodexDeviceAuth(): Promise<{ output: string }> {
   }
 
   return new Promise((resolve) => {
-    const child = spawn("codex", ["login", "--device-auth"], {
+    const child = spawn(getCodexCommand(), ["login", "--device-auth"], {
       env: getRuntimeEnv(),
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -172,7 +176,7 @@ export async function restartCodexPm2(): Promise<{ ok: boolean; output: string }
 }
 
 export async function logoutCodex(): Promise<{ ok: boolean; output: string }> {
-  const result = await runCommand("codex", ["logout"]);
+  const result = await runCommand(getCodexCommand(), ["logout"]);
   return {
     ok: result.code === 0,
     output: `${result.stdout}\n${result.stderr}`.trim(),

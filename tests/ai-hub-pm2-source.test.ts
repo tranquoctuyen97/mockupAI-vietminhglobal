@@ -6,7 +6,9 @@ test("ecosystem config defines mockupai-codex codex-web runtime", () => {
   const source = readFileSync("ecosystem.config.js", "utf8");
 
   assert.match(source, /name:\s*"mockupai-codex"/);
-  assert.match(source, /git\+ssh:\/\/git@github\.com\/tranquoctuyen97\/codex-web\.git#/);
+  assert.match(source, /https:\/\/github\.com\/tranquoctuyen97\/codex-web\.git/);
+  assert.match(source, /AI_HUB_CODEX_WEB_DIR/);
+  assert.match(source, /args:\s*"run server"/);
   assert.match(source, /AI_HUB_CODEX_WEB_PORT\s*=\s*process\.env\.AI_HUB_CODEX_WEB_PORT\s*\|\|\s*"8214"/);
   assert.match(source, /PORT:\s*AI_HUB_CODEX_WEB_PORT/);
   assert.match(source, /CODEX_CLI_PATH/);

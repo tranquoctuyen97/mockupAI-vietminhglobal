@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Bot, Link2, LogOut, RotateCw } from "lucide-react";
+import { Activity, Bot, Copy, Link2, LogOut, RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -16,6 +16,8 @@ export default function AiHubAdminClient() {
   const [authOutput, setAuthOutput] = useState("");
   const healthy = status?.runtime === "online" && status?.proxy === "reachable";
   const connected = status?.codexAccount === "connected";
+  const deviceUrl = authOutput.match(/https:\/\/auth\.openai\.com\/codex\/device/)?.[0] ?? "";
+  const deviceCode = authOutput.match(/\b[A-Z0-9]{4}-[A-Z0-9]{5}\b/)?.[0] ?? "";
 
   async function loadStatus() {
     const res = await fetch("/api/admin/ai-hub/status");
@@ -58,6 +60,11 @@ export default function AiHubAdminClient() {
     }
   }
 
+  async function copyValue(value: string, label: string) {
+    await navigator.clipboard.writeText(value);
+    toast.success(`Đã copy ${label}`);
+  }
+
   async function disconnect() {
     setPending(true);
     try {
@@ -76,6 +83,14 @@ export default function AiHubAdminClient() {
   useEffect(() => {
     void loadStatus();
   }, []);
+
+  useEffect(() => {
+    if (!authOutput || connected) return;
+    const timer = window.setInterval(() => {
+      void loadStatus();
+    }, 3_000);
+    return () => window.clearInterval(timer);
+  }, [authOutput, connected]);
 
   return (
     <div>
@@ -135,19 +150,40 @@ export default function AiHubAdminClient() {
       </div>
 
       {authOutput && (
-        <pre
+        <div
           className="mt-6"
           style={{
             maxWidth: 768,
-            whiteSpace: "pre-wrap",
             borderRadius: "var(--radius-sm)",
             backgroundColor: "var(--bg-tertiary)",
             color: "var(--text-primary)",
             padding: "16px 18px",
           }}
         >
-          {authOutput}
-        </pre>
+          <div className="flex flex-wrap gap-2 mb-4">
+            {deviceUrl && (
+              <button
+                className="btn-secondary"
+                onClick={() => void copyValue(deviceUrl, "link")}
+                type="button"
+              >
+                <Copy size={16} />
+                Copy link
+              </button>
+            )}
+            {deviceCode && (
+              <button
+                className="btn-secondary"
+                onClick={() => void copyValue(deviceCode, "code")}
+                type="button"
+              >
+                <Copy size={16} />
+                Copy code
+              </button>
+            )}
+          </div>
+          <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{authOutput}</pre>
+        </div>
       )}
 
       {healthy && (

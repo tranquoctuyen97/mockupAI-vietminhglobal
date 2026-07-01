@@ -14,6 +14,8 @@ test("runtime helper only wraps codex and PM2 commands", () => {
   assert.match(source, /AI_HUB_RUNTIME_HOME/);
   assert.match(source, /HOME:\s*home/);
   assert.match(source, /CODEX_HOME/);
+  assert.match(source, /CODEX_CLI_PATH/);
+  assert.match(source, /getCodexCommand/);
   assert.match(source, /activeDeviceAuthProcess/);
   assert.match(source, /DEVICE_AUTH_INITIAL_OUTPUT_TIMEOUT_MS/);
   assert.match(source, /https:\/\/auth\.openai\.com\/codex\/device/);
@@ -55,6 +57,10 @@ test("admin page renders AI Hub admin client", () => {
   assert.match(client, /Connect Codex/);
   assert.match(client, /Disconnect Codex/);
   assert.match(client, /authOutput/);
+  assert.match(client, /Copy link/);
+  assert.match(client, /Copy code/);
+  assert.match(client, /navigator\.clipboard\.writeText/);
+  assert.match(client, /setInterval/);
   assert.match(client, /Codex Web runtime/);
   assert.match(client, /127\.0\.0\.1:8214/);
   assert.match(client, /\/api\/codex-proxy\//);
