@@ -16,6 +16,9 @@ test("runtime helper only wraps codex and PM2 commands", () => {
   assert.match(source, /CODEX_HOME/);
   assert.match(source, /CODEX_CLI_PATH/);
   assert.match(source, /getCodexCommand/);
+  assert.match(source, /codex-mobile-has-connected-device/);
+  assert.match(source, /markCodexWebSetupCompleted/);
+  assert.match(source, /writeFileSync/);
   assert.match(source, /activeDeviceAuthProcess/);
   assert.match(source, /DEVICE_AUTH_INITIAL_OUTPUT_TIMEOUT_MS/);
   assert.match(source, /https:\/\/auth\.openai\.com\/codex\/device/);

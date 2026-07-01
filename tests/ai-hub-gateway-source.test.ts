@@ -2,23 +2,30 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("AI Hub proxy is served by the MockupAI app process", () => {
+test("AI Hub uses a gateway process for Codex WebSocket proxying", () => {
   const ecosystem = readFileSync("ecosystem.config.js", "utf8");
   const pkg = readFileSync("package.json", "utf8");
+  const gateway = readFileSync("scripts/ai-hub-codex-web-gateway.ts", "utf8");
+  const deploy = readFileSync("ops/deploy-vps.sh", "utf8");
   const route = readFileSync("src/app/api/codex-proxy/[[...path]]/route.ts", "utf8");
   const proxy = readFileSync("src/lib/ai-hub/proxy.ts", "utf8");
   const page = readFileSync("src/app/(authed)/ai-hub/page.tsx", "utf8");
 
-  assert.match(ecosystem, /script:\s*"npm"/);
-  assert.match(ecosystem, /args:\s*"run start"/);
+  assert.match(ecosystem, /script:\s*"\.next\/standalone\/server\.js"/);
   assert.match(ecosystem, /AI_HUB_IFRAME_URL:\s*process\.env\.AI_HUB_IFRAME_URL\s*\|\|\s*"\/api\/codex-proxy\/"/);
-  assert.doesNotMatch(ecosystem, /mockupai-ai-hub-gateway/);
-  assert.doesNotMatch(ecosystem, /AI_HUB_GATEWAY_PORT/);
+  assert.match(ecosystem, /mockupai-ai-hub-gateway/);
+  assert.match(ecosystem, /AI_HUB_GATEWAY_PORT/);
   assert.doesNotMatch(pkg, /ai-hub:gateway/);
   assert.match(page, /\/api\/codex-proxy\//);
   assert.match(route, /validateSession/);
   assert.match(proxy, /x-internal-member-id/);
   assert.match(proxy, /CODEX_APP_URL/);
+  assert.match(gateway, /server\.on\("upgrade"/);
+  assert.match(gateway, /\/__backend\/ipc/);
+  assert.match(gateway, /\/api\/internal\/ai-hub\/session/);
+  assert.match(gateway, /x-internal-member-id/);
+  assert.match(deploy, /codex-mobile-has-connected-device/);
+  assert.match(deploy, /mockupai-ai-hub-gateway/);
 });
 
 test("internal AI Hub session endpoint validates website session and feature", () => {

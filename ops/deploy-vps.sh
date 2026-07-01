@@ -22,6 +22,8 @@ if [ "${SKIP_MIGRATIONS:-0}" != "1" ]; then
 fi
 
 pnpm run build
+cp -r public .next/standalone/
+cp -r .next/static .next/standalone/.next/
 
 CODEX_WEB_DIR="${AI_HUB_CODEX_WEB_DIR:-/root/code/codex-web}"
 CODEX_WEB_REF="${AI_HUB_CODEX_WEB_REF:-https://github.com/tranquoctuyen97/codex-web.git}"
@@ -39,7 +41,23 @@ npm --prefix "$CODEX_WEB_DIR" install
 npm --prefix "$CODEX_WEB_DIR" run build:server
 npm --prefix "$CODEX_WEB_DIR" run build:browser
 
+AI_HUB_RUNTIME_HOME="${AI_HUB_RUNTIME_HOME:-/tmp/ai-hub/codex-runtime/home}"
+mkdir -p "$AI_HUB_RUNTIME_HOME/.codex"
+node - "$AI_HUB_RUNTIME_HOME/.codex/.codex-global-state.json" <<'NODE'
+const fs = require("node:fs");
+const statePath = process.argv[2];
+let state = {};
+if (fs.existsSync(statePath)) {
+  try {
+    state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  } catch {}
+}
+state["codex-mobile-has-connected-device"] = true;
+fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+NODE
+
 pm2 startOrReload ecosystem.config.js --only mockupai --update-env
+pm2 startOrReload ecosystem.config.js --only mockupai-ai-hub-gateway --update-env
 pm2 startOrReload ecosystem.config.js --only mockupai-worker --update-env
 pm2 startOrReload ecosystem.config.js --only mockupai-codex --update-env
 pm2 save

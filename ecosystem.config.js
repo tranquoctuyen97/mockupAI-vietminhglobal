@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const AI_HUB_RUNTIME_HOME = process.env.AI_HUB_RUNTIME_HOME || "/tmp/ai-hub/codex-runtime/home";
 const AI_HUB_CODEX_WEB_REF =
   process.env.AI_HUB_CODEX_WEB_REF ||
@@ -5,6 +7,7 @@ const AI_HUB_CODEX_WEB_REF =
 const AI_HUB_CODEX_WEB_BRANCH = process.env.AI_HUB_CODEX_WEB_BRANCH || "mockupai-workspace-allowlist";
 const AI_HUB_CODEX_WEB_DIR = process.env.AI_HUB_CODEX_WEB_DIR || "/root/code/codex-web";
 const AI_HUB_CODEX_WEB_PORT = process.env.AI_HUB_CODEX_WEB_PORT || "8214";
+const AI_HUB_GATEWAY_PORT = process.env.AI_HUB_GATEWAY_PORT || "8215";
 const CODEX_CLI_PATH = process.env.CODEX_CLI_PATH || "codex";
 const APP_PORT = process.env.PORT || "3000";
 const AI_HUB_APP_ORIGIN = process.env.AI_HUB_APP_ORIGIN || `http://127.0.0.1:${APP_PORT}`;
@@ -13,8 +16,7 @@ module.exports = {
   apps: [
     {
       name: "mockupai",
-      script: "npm",
-      args: "run start",
+      script: ".next/standalone/server.js",
       cwd: ".",
       exec_mode: "fork",
       instances: 1,
@@ -33,6 +35,25 @@ module.exports = {
       },
       error_file: "./logs/pm2/mockupai-error.log",
       out_file: "./logs/pm2/mockupai-out.log",
+    },
+    {
+      name: "mockupai-ai-hub-gateway",
+      script: "pnpm",
+      args: "exec tsx scripts/ai-hub-codex-web-gateway.ts",
+      cwd: ".",
+      exec_mode: "fork",
+      instances: 1,
+      autorestart: true,
+      max_memory_restart: "256M",
+      env: {
+        NODE_ENV: "production",
+        AI_HUB_GATEWAY_PORT,
+        AI_HUB_APP_ORIGIN,
+        CODEX_APP_URL: process.env.CODEX_APP_URL || `http://127.0.0.1:${AI_HUB_CODEX_WEB_PORT}`,
+        AI_HUB_INTERNAL_TOKEN: process.env.AI_HUB_INTERNAL_TOKEN || "",
+      },
+      error_file: "./logs/pm2/mockupai-ai-hub-gateway-error.log",
+      out_file: "./logs/pm2/mockupai-ai-hub-gateway-out.log",
     },
     {
       name: "mockupai-worker",

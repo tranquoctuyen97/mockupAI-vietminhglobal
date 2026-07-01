@@ -1,10 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const PROCESS_NAMES = ["mockupai-codex", "mockupai-codex-local"];
 const COMMAND_TIMEOUT_MS = 15_000;
 const DEVICE_AUTH_INITIAL_OUTPUT_TIMEOUT_MS = 10_000;
 const DEVICE_AUTH_EXPIRY_MS = 15 * 60_000;
+const CODEX_WEB_SETUP_COMPLETED_KEY = "codex-mobile-has-connected-device";
 let activeDeviceAuthProcess: ChildProcess | null = null;
 let activeDeviceAuthOutput = "";
 
@@ -44,6 +45,24 @@ function getRuntimeEnv(): NodeJS.ProcessEnv {
   };
 }
 
+export function markCodexWebSetupCompleted(): void {
+  const statePath = `${getRuntimeHome()}/.codex/.codex-global-state.json`;
+  mkdirSync(`${getRuntimeHome()}/.codex`, { recursive: true });
+
+  let state: Record<string, unknown> = {};
+  if (existsSync(statePath)) {
+    try {
+      state = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+    } catch {
+      state = {};
+    }
+  }
+
+  if (state[CODEX_WEB_SETUP_COMPLETED_KEY] === true) return;
+  state[CODEX_WEB_SETUP_COMPLETED_KEY] = true;
+  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+}
+
 function runCommand(
   command: string,
   args: string[],
@@ -75,7 +94,10 @@ function runCommand(
 export async function checkCodexLoginStatus(): Promise<AiHubRuntimeStatus["codexAccount"]> {
   const result = await runCommand(getCodexCommand(), ["login", "status"]);
   const text = `${result.stdout}\n${result.stderr}`.toLowerCase();
-  if (result.code === 0 && text.includes("logged")) return "connected";
+  if (result.code === 0 && text.includes("logged")) {
+    markCodexWebSetupCompleted();
+    return "connected";
+  }
   if (text.includes("device") || text.includes("waiting")) return "waiting_for_device_auth";
   return "not_connected";
 }
@@ -168,6 +190,7 @@ export async function restartCodexPm2(): Promise<{ ok: boolean; output: string }
       PROCESS_NAMES[0];
   } catch {}
 
+  if ((await checkCodexLoginStatus()) === "connected") markCodexWebSetupCompleted();
   const result = await runCommand("pm2", ["restart", processName], 30_000);
   return {
     ok: result.code === 0,
