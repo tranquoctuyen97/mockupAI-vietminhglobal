@@ -93,104 +93,103 @@ export default function AiHubAdminClient() {
   }, [authOutput, connected]);
 
   return (
-    <div>
-      <div className="mb-8">
-        <h1 className="text-section-heading" style={{ color: "var(--text-primary)" }}>
-          <Bot
-            size={22}
-            style={{ display: "inline", marginRight: 8, verticalAlign: "text-bottom" }}
-          />
+    <div style={{ maxWidth: 1120 }}>
+      <div className="mb-10">
+        <Bot size={22} style={{ color: "var(--text-tertiary)", marginBottom: 12 }} />
+        <h1
+          style={{
+            color: "var(--text-primary)",
+            fontSize: "clamp(3rem, 7vw, 4.5rem)",
+            fontWeight: 800,
+            lineHeight: 0.95,
+            letterSpacing: 0,
+          }}
+        >
           AI Hub Admin
         </h1>
-        <p className="text-body mt-2" style={{ color: "var(--text-secondary)" }}>
-          Kiểm tra Codex Web runtime và proxy dùng chung cho team.
+        <p className="text-body mt-5" style={{ color: "var(--text-secondary)", fontSize: 20 }}>
+          Quản lý Codex account và runtime dùng chung cho team.
         </p>
       </div>
 
       <div
         className="card card-lg"
         style={{
-          maxWidth: 768,
-          borderRadius: 16,
-          padding: 24,
-          boxShadow: "0 1px 3px rgba(15, 23, 42, 0.12)",
+          borderRadius: 20,
+          padding: 36,
+          boxShadow: "0 2px 10px rgba(15, 23, 42, 0.12)",
         }}
       >
         <div
-          className="grid gap-3 mb-6"
-          style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}
+          className="grid gap-8 mb-8"
+          style={{ gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", maxWidth: 560 }}
         >
           <StatusTile label="Codex account" value={status?.codexAccount ?? "unknown"} />
           <StatusTile label="Runtime" value={status?.runtime ?? "unknown"} />
           <StatusTile label="Proxy" value={status?.proxy ?? "unknown"} />
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-3">
+          {!connected && (
+            <button className="btn-primary" disabled={pending} onClick={connect} type="button">
+              <Link2 size={18} />
+              Connect Codex
+            </button>
+          )}
           <button className="btn-secondary" disabled={pending} onClick={loadStatus} type="button">
-            <Activity size={16} />
+            <Activity size={18} />
             Check status
           </button>
           <button className="btn-secondary" disabled={pending} onClick={restart} type="button">
-            <RotateCw size={16} />
+            <RotateCw size={18} />
             Restart runtime
           </button>
-          {connected ? (
+          {connected && (
             <button className="btn-secondary" disabled={pending} onClick={disconnect} type="button">
-              <LogOut size={16} />
+              <LogOut size={18} />
               Disconnect Codex
-            </button>
-          ) : (
-            <button className="btn-primary" disabled={pending} onClick={connect} type="button">
-              <Link2 size={16} />
-              Connect Codex
             </button>
           )}
         </div>
 
+        {authOutput && (
+          <div
+            className="mt-8"
+            style={{
+              borderRadius: 12,
+              border: "1px solid var(--border-primary)",
+              backgroundColor: "var(--bg-primary)",
+              color: "var(--text-primary)",
+              padding: "28px 30px",
+            }}
+          >
+            <pre
+              style={{
+                margin: 0,
+                whiteSpace: "pre-wrap",
+                fontSize: 18,
+                lineHeight: 1.7,
+                color: "var(--text-secondary)",
+              }}
+            >
+              {authOutput}
+            </pre>
+            <div className="grid gap-4 mt-6">
+              {deviceUrl && (
+                <CopyRow copyLabel="Copy link" label={deviceUrl} onCopy={() => void copyValue(deviceUrl, "link")} />
+              )}
+              {deviceCode && (
+                <CopyRow copyLabel="Copy code" label={deviceCode} onCopy={() => void copyValue(deviceCode, "code")} />
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
-      {authOutput && (
+      {connected && healthy && (
         <div
           className="mt-6"
           style={{
-            maxWidth: 768,
-            borderRadius: "var(--radius-sm)",
-            backgroundColor: "var(--bg-tertiary)",
-            color: "var(--text-primary)",
-            padding: "16px 18px",
-          }}
-        >
-          <div className="flex flex-wrap gap-2 mb-4">
-            {deviceUrl && (
-              <button
-                className="btn-secondary"
-                onClick={() => void copyValue(deviceUrl, "link")}
-                type="button"
-              >
-                <Copy size={16} />
-                Copy link
-              </button>
-            )}
-            {deviceCode && (
-              <button
-                className="btn-secondary"
-                onClick={() => void copyValue(deviceCode, "code")}
-                type="button"
-              >
-                <Copy size={16} />
-                Copy code
-              </button>
-            )}
-          </div>
-          <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{authOutput}</pre>
-        </div>
-      )}
-
-      {healthy && (
-        <div
-          className="mt-6"
-          style={{
-            maxWidth: 768,
             display: "flex",
             alignItems: "center",
             gap: 12,
@@ -222,19 +221,50 @@ export default function AiHubAdminClient() {
   );
 }
 
-function StatusTile({ label, value }: { label: string; value: string }) {
+function CopyRow({ copyLabel, label, onCopy }: { copyLabel: string; label: string; onCopy: () => void }) {
   return (
     <div
       style={{
-        padding: 12,
-        borderRadius: "var(--radius-sm)",
-        backgroundColor: "var(--bg-tertiary)",
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
+        borderRadius: 8,
+        border: "1px solid var(--border-primary)",
+        padding: "10px 12px 10px 18px",
       }}
     >
-      <div className="text-caption" style={{ color: "var(--text-secondary)", marginBottom: 4 }}>
+      <span
+        style={{
+          minWidth: 0,
+          flex: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          fontFamily: "monospace",
+          fontSize: 18,
+          fontWeight: 700,
+          color: "var(--text-primary)",
+        }}
+      >
+        {label}
+      </span>
+      <button aria-label={copyLabel} className="btn-secondary" onClick={onCopy} type="button">
+        <Copy size={16} />
+        Copy
+      </button>
+    </div>
+  );
+}
+
+function StatusTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-caption" style={{ color: "var(--text-tertiary)", marginBottom: 8 }}>
         {label}
       </div>
-      <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>{value}</div>
+      <div style={{ fontFamily: "monospace", fontSize: 22, fontWeight: 800, color: "var(--text-primary)" }}>
+        {value}
+      </div>
     </div>
   );
 }
