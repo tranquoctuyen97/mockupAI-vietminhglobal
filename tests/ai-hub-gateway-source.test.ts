@@ -24,8 +24,8 @@ test("AI Hub uses a gateway process for Codex WebSocket proxying", () => {
   assert.match(gateway, /\/__backend\/ipc/);
   assert.match(gateway, /\/api\/internal\/ai-hub\/session/);
   assert.match(gateway, /x-internal-member-id/);
-  assert.match(deploy, /codex-mobile-has-connected-device/);
   assert.match(deploy, /mockupai-ai-hub-gateway/);
+  assert.doesNotMatch(deploy, /codex-mobile-has-connected-device/);
 });
 
 test("internal AI Hub session endpoint validates website session and feature", () => {

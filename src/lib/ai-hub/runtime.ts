@@ -63,6 +63,18 @@ export function markCodexWebSetupCompleted(): void {
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
 }
 
+export function clearCodexWebSetupCompleted(): void {
+  const statePath = `${getRuntimeHome()}/.codex/.codex-global-state.json`;
+  if (!existsSync(statePath)) return;
+
+  try {
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+    if (state[CODEX_WEB_SETUP_COMPLETED_KEY] === undefined) return;
+    delete state[CODEX_WEB_SETUP_COMPLETED_KEY];
+    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  } catch {}
+}
+
 function runCommand(
   command: string,
   args: string[],
@@ -99,10 +111,13 @@ export async function checkCodexLoginStatus(): Promise<AiHubRuntimeStatus["codex
     return "connected";
   }
   if (text.includes("device") || text.includes("waiting")) return "waiting_for_device_auth";
+  clearCodexWebSetupCompleted();
   return "not_connected";
 }
 
 export async function startCodexDeviceAuth(): Promise<{ output: string }> {
+  clearCodexWebSetupCompleted();
+
   if (activeDeviceAuthProcess && !activeDeviceAuthProcess.killed) {
     return {
       output: stripAnsi(activeDeviceAuthOutput).trim() || "Codex device auth is already running.",
@@ -200,6 +215,7 @@ export async function restartCodexPm2(): Promise<{ ok: boolean; output: string }
 
 export async function logoutCodex(): Promise<{ ok: boolean; output: string }> {
   const result = await runCommand(getCodexCommand(), ["logout"]);
+  clearCodexWebSetupCompleted();
   return {
     ok: result.code === 0,
     output: `${result.stdout}\n${result.stderr}`.trim(),

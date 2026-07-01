@@ -18,6 +18,8 @@ test("runtime helper only wraps codex and PM2 commands", () => {
   assert.match(source, /getCodexCommand/);
   assert.match(source, /codex-mobile-has-connected-device/);
   assert.match(source, /markCodexWebSetupCompleted/);
+  assert.match(source, /clearCodexWebSetupCompleted/);
+  assert.match(source, /delete state\[CODEX_WEB_SETUP_COMPLETED_KEY\]/);
   assert.match(source, /writeFileSync/);
   assert.match(source, /activeDeviceAuthProcess/);
   assert.match(source, /DEVICE_AUTH_INITIAL_OUTPUT_TIMEOUT_MS/);
