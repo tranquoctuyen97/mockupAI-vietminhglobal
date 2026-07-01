@@ -11,7 +11,7 @@ export function proxy(request: NextRequest) {
   if (pathname.startsWith("/@fs/")) {
     const url = request.nextUrl.clone();
     url.pathname = `/api/codex-proxy${pathname}`;
-    return NextResponse.rewrite(url);
+    return NextResponse.redirect(url);
   }
 
   // Allow public paths

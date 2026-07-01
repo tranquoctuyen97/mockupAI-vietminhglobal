@@ -22,7 +22,7 @@ test("AI Hub uses a gateway process for Codex WebSocket proxying", () => {
   assert.match(proxy, /x-internal-member-id/);
   assert.match(proxy, /CODEX_APP_URL/);
   assert.match(appProxy, /pathname\.startsWith\("\/@fs\/"\)/);
-  assert.match(appProxy, /NextResponse\.rewrite/);
+  assert.match(appProxy, /NextResponse\.redirect/);
   assert.match(gateway, /server\.on\("upgrade"/);
   assert.match(gateway, /\/__backend\/ipc/);
   assert.match(gateway, /\/api\/internal\/ai-hub\/session/);
