@@ -10,7 +10,7 @@ import { createGmailAdapter } from "@/lib/mailboxes/gmail-client";
 import { parseEmailIdentity } from "@/lib/mailboxes/identity";
 import { sendGmailThreadReply } from "@/lib/mailboxes/gmail-reply";
 import { buildGmailReplyContext } from "@/lib/mailboxes/reply-context";
-import { buildMonthlyResponseSummary, mailboxResponseMetrics } from "@/lib/mailboxes/response-metrics";
+import { buildMonthlyResponseSummary, buildResponseSummary, mailboxResponseMetrics } from "@/lib/mailboxes/response-metrics";
 import {
   createLabelSchema,
   internalNoteSchema,
@@ -140,6 +140,28 @@ function monthRange(value: string | null) {
   const from = new Date(`${month}-01T00:00:00.000Z`);
   const to = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + 1, 1));
   return { month, from, to };
+}
+
+function parseRangeBoundary(value: string, endOfDay: boolean) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const start = new Date(`${value}T00:00:00.000Z`);
+    return endOfDay ? new Date(start.getTime() + 24 * 60 * 60 * 1000) : start;
+  }
+  if (value.includes("T")) return new Date(value);
+  return null;
+}
+
+function dateRange(searchParams: URLSearchParams) {
+  const fromValue = searchParams.get("from");
+  const toValue = searchParams.get("to");
+  if (!fromValue || !toValue) return null;
+  const from = parseRangeBoundary(fromValue, false);
+  const to = parseRangeBoundary(toValue, true);
+  if (!from || !to) throw new Error("invalid_date_range");
+  if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from >= to) {
+    throw new Error("invalid_date_range");
+  }
+  return { fromValue, toValue, from, to };
 }
 
 function serializeOverdueResponseMetric(metric: {
@@ -281,9 +303,9 @@ async function handler(
     return handleSkipSender(request, session.tenantId, session.id, skipSenderMatch[1]);
   }
 
-  const replyMatch = proxyPath.match(/^\/conversations\/(\d+)\/threads$/);
+  const replyMatch = proxyPath.match(/^\/conversations\/([^/]+)\/threads$/);
   if (method === "POST" && replyMatch) {
-    return handleReply(request, session.tenantId, session.id, Number(replyMatch[1]));
+    return handleReply(request, session.tenantId, session.id, replyMatch[1]);
   }
 
   const internalNoteMatch = proxyPath.match(/^\/conversations\/(\d+)\/internal-notes$/);
@@ -376,13 +398,35 @@ async function handleListLabels(request: NextRequest, tenantId: string) {
 async function handleResponseMetricSummary(request: NextRequest, tenantId: string) {
   const storeId = request.nextUrl.searchParams.get("storeId") ?? undefined;
   const mailboxId = request.nextUrl.searchParams.get("mailboxId") ?? undefined;
-  const { month, from, to } = monthRange(request.nextUrl.searchParams.get("month"));
   if (storeId && !await requireStoreAccess(tenantId, storeId)) {
     return errorJson("Forbidden — store not found", 403);
   }
   if (storeId && mailboxId && !await requireMailbox(tenantId, storeId, mailboxId)) {
     return errorJson("Forbidden — mailbox not found or inactive", 403);
   }
+  const range = (() => {
+    try {
+      return dateRange(request.nextUrl.searchParams);
+    } catch {
+      return "invalid" as const;
+    }
+  })();
+  if (range === "invalid") return errorJson("Invalid date range", 422);
+  if (range) {
+    const metrics = await mailboxResponseMetrics.listForSummary({
+      tenantId,
+      storeId,
+      mailboxId,
+      from: range.from,
+      to: range.to,
+    });
+    return json({
+      from: range.fromValue,
+      to: range.toValue,
+      summary: [buildResponseSummary(`${range.fromValue}..${range.toValue}`, metrics)],
+    });
+  }
+  const { month, from, to } = monthRange(request.nextUrl.searchParams.get("month"));
   const metrics = await mailboxResponseMetrics.listForSummary({ tenantId, storeId, mailboxId, from, to });
   return json({ month, summary: buildMonthlyResponseSummary(metrics) });
 }
@@ -634,36 +678,42 @@ async function handleGetConversation(
   });
   if (!conversation) return errorJson("Conversation not found", 404);
   if (conversation.rtTicketId == null) {
-    const [messageLinks, internalNotes] = await Promise.all([
-      prisma.gmailMessageLink.findMany({
-        where: { mailboxId: mailbox.id, conversationId: conversation.id },
-        orderBy: { gmailInternalDate: "asc" },
-        select: { id: true, rfcMessageId: true, direction: true, gmailInternalDate: true },
-      }),
+    const [threadResult, internalNotes] = await Promise.all([
+      createGmailAdapter({
+        email: mailbox.email,
+        appPassword: await getDecryptedAppPassword(mailbox.id),
+      }).fetchThreadMessages(conversation.gmailThreadId),
       prisma.mailboxInternalNote.findMany({
         where: { mailboxId: mailbox.id, conversationId: conversation.id },
         orderBy: { createdAt: "asc" },
         include: { actor: { select: { email: true } } },
       }),
     ]);
+    const messageCount = threadResult.messages.length;
+    if (messageCount > 0 && messageCount !== conversation.articleCount) {
+      await prisma.mailboxConversation.update({
+        where: { id: conversation.id },
+        data: { articleCount: messageCount },
+      });
+    }
     const id = `gmail:${conversation.id}`;
     const threads = [
-      ...messageLinks.map((link) => ({
-        id: `gmail-${link.id}`,
+      ...threadResult.messages.map((message) => ({
+        id: `gmail-${message.gmailMessageId}`,
         conversationId: id,
-        subject: conversation.subject ?? undefined,
-        body: link.rfcMessageId ? `Message-ID: ${link.rfcMessageId}` : conversation.subject ?? "",
-        contentType: "text/plain",
-        from: link.direction === "INBOUND" ? conversation.senderEmail ?? undefined : mailbox.email,
-        to: link.direction === "INBOUND" ? mailbox.email : conversation.senderEmail ?? undefined,
+        subject: message.subject ?? conversation.subject ?? undefined,
+        body: message.body ?? "",
+        contentType: message.contentType ?? "text/plain",
+        from: message.fromName && message.fromEmail ? `${message.fromName} <${message.fromEmail}>` : message.fromEmail,
+        to: message.toName && message.toEmail ? `${message.toName} <${message.toEmail}>` : message.toEmail,
         cc: "",
-        type: link.direction === "INBOUND" ? "email" : "app_reply",
-        sender: link.direction === "INBOUND" ? conversation.senderEmail ?? undefined : mailbox.email,
+        type: message.fromEmail?.toLowerCase() === mailbox.email.toLowerCase() ? "app_reply" : "email",
+        sender: message.fromEmail,
         internal: false,
         hidden: false,
-        displayType: link.direction === "INBOUND" ? "email" as const : "app_reply" as const,
+        displayType: message.fromEmail?.toLowerCase() === mailbox.email.toLowerCase() ? "app_reply" as const : "email" as const,
         attachments: [],
-        createdAt: (link.gmailInternalDate ?? conversation.createdAt).toISOString(),
+        createdAt: message.internalDate.toISOString(),
       })),
       ...internalNotes.map((note) => ({
         id: `note-${note.id}`,
@@ -685,7 +735,10 @@ async function handleGetConversation(
     ].sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
 
     return json({
-      conversation: normalizeMailboxConversationListRow(conversation),
+      conversation: {
+        ...normalizeMailboxConversationListRow(conversation),
+        articleCount: messageCount > 0 ? messageCount : conversation.articleCount,
+      },
       gmailThreadId: conversation.gmailThreadId,
       threads,
     });
@@ -904,8 +957,10 @@ async function handleReply(
   request: NextRequest,
   tenantId: string,
   actorUserId: string,
-  ticketId: number,
+  conversationToken: string,
 ) {
+  const token = parseConversationToken(conversationToken);
+  if (!token) return errorJson("Conversation not found", 404);
   const storeId = extractStoreId(request.nextUrl.searchParams);
   if (storeId instanceof NextResponse) return storeId;
   const mailboxId = extractMailboxId(request.nextUrl.searchParams);
@@ -919,7 +974,7 @@ async function handleReply(
   }
 
   const conversation = await prisma.mailboxConversation.findFirst({
-    where: { mailboxId: mailbox.id, rtTicketId: ticketId },
+    where: conversationWhere(mailbox.id, token),
   });
   if (!conversation) return errorJson("Conversation not found", 404);
 
@@ -934,26 +989,42 @@ async function handleReply(
     select: { rfcMessageId: true, createdAt: true },
   });
 
-  const threads = await getTicketTransactions(ticketId);
-  if (!threads.ok || !threads.data) return errorJson("Mailbox upstream unavailable", 502);
-
-  const replyContext = buildGmailReplyContext({
-    mailboxEmail: mailbox.email,
-    ticketId,
-    threads: threads.data.items,
-    inboundMessageLinks,
-    fallbackCustomerEmail: conversation.senderEmail,
-    fallbackSubject: conversation.subject,
-  });
-  if (!replyContext) {
-    return errorJson("Conversation is missing Gmail reply headers", 409);
-  }
-
   const credentials = {
     email: mailbox.email,
     appPassword: await getDecryptedAppPassword(mailbox.id),
   };
   const gmail = createGmailAdapter(credentials);
+  let replyContext: ReturnType<typeof buildGmailReplyContext> | null = null;
+  if (conversation.rtTicketId != null) {
+    const threads = await getTicketTransactions(conversation.rtTicketId);
+    if (!threads.ok || !threads.data) return errorJson("Mailbox upstream unavailable", 502);
+    replyContext = buildGmailReplyContext({
+      mailboxEmail: mailbox.email,
+      ticketId: conversation.rtTicketId,
+      threads: threads.data.items,
+      inboundMessageLinks,
+      fallbackCustomerEmail: conversation.senderEmail,
+      fallbackSubject: conversation.subject,
+    });
+  } else {
+    const thread = await gmail.fetchThreadMessages(conversation.gmailThreadId);
+    const mailboxEmail = mailbox.email.trim().toLowerCase();
+    const inboundMessages = thread.messages
+      .filter((message) => message.fromEmail?.trim().toLowerCase() !== mailboxEmail && message.rfcMessageId)
+      .sort((left, right) => left.internalDate.getTime() - right.internalDate.getTime());
+    const latestInbound = inboundMessages.at(-1);
+    if (latestInbound?.fromEmail && latestInbound.rfcMessageId) {
+      replyContext = {
+        to: latestInbound.fromEmail,
+        subject: latestInbound.subject || conversation.subject || "(no subject)",
+        latestExternalMessageId: latestInbound.rfcMessageId,
+        references: inboundMessages.slice(0, -1).map((message) => message.rfcMessageId).filter((id): id is string => Boolean(id)),
+      };
+    }
+  }
+  if (!replyContext) {
+    return errorJson("Conversation is missing Gmail reply headers", 409);
+  }
   const composerAttachments = parsed.data.attachmentIds?.length
     ? await prisma.mailboxComposerAttachment.findMany({
         where: {
@@ -997,7 +1068,7 @@ async function handleReply(
       rfcMessageId: sent.rfcMessageId,
       imapUid: sent.uid,
       uidValidity: sent.uidValidity,
-      rtTicketId: ticketId,
+      rtTicketId: conversation.rtTicketId,
       direction: "OUTBOUND",
       gmailInternalDate: sent.internalDate,
     },
@@ -1019,16 +1090,18 @@ async function handleReply(
     repliedAt,
   });
 
-  await comment(ticketId, {
-    content: [
-      "App-sent Gmail reply recorded.",
-      `Gmail-Message-ID: ${sent.rfcMessageId}`,
-      `Gmail-Thread-ID: ${sent.gmailThreadId}`,
-      "",
-      parsed.data.text,
-    ].join("\n"),
-    contentType: "text/plain",
-  });
+  if (conversation.rtTicketId != null) {
+    await comment(conversation.rtTicketId, {
+      content: [
+        "App-sent Gmail reply recorded.",
+        `Gmail-Message-ID: ${sent.rfcMessageId}`,
+        `Gmail-Thread-ID: ${sent.gmailThreadId}`,
+        "",
+        parsed.data.text,
+      ].join("\n"),
+      contentType: "text/plain",
+    });
+  }
 
   await prisma.mailboxConversation.update({
     where: { id: conversation.id },
@@ -1043,8 +1116,8 @@ async function handleReply(
     actorUserId,
     tenantId,
     action: "mailbox.reply",
-    resourceType: "rt_ticket",
-    resourceId: String(ticketId),
+    resourceType: conversation.rtTicketId != null ? "rt_ticket" : "mailbox_conversation",
+    resourceId: conversation.rtTicketId != null ? String(conversation.rtTicketId) : conversation.id,
     metadata: { mailboxId: mailbox.id, storeId },
   });
 

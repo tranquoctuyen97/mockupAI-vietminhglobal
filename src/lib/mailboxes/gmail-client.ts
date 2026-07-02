@@ -39,6 +39,10 @@ const FETCH_METADATA: FetchQueryObject = {
   headers: ["message-id"],
   internalDate: true,
 };
+const FETCH_THREAD_MESSAGE: FetchQueryObject = {
+  ...FETCH_METADATA,
+  source: true,
+};
 const GMAIL_CONNECTION_TIMEOUT_MS = 30_000;
 const GMAIL_SOCKET_TIMEOUT_MS = 120_000;
 
@@ -73,6 +77,99 @@ function assertMutableLabel(name: string): void {
 function parseMessageId(headers?: Buffer): string | null {
   if (!headers) return null;
   return headers.toString("utf8").match(/^message-id:\s*(.+?)\s*$/im)?.[1] ?? null;
+}
+
+function parseSourceMessageId(source?: Buffer): string | null {
+  if (!source) return null;
+  return headerValue(splitMessage(source.toString("utf8")).headerText, "message-id");
+}
+
+function splitMessage(raw: string): { headerText: string; body: string } {
+  const separator = raw.match(/\r?\n\r?\n/);
+  if (!separator) return { headerText: "", body: raw };
+  return {
+    headerText: raw.slice(0, separator.index),
+    body: raw.slice((separator.index ?? 0) + separator[0].length),
+  };
+}
+
+function headerValue(headerText: string, name: string): string | null {
+  return headerText.match(new RegExp(`^${name}:\\s*(.+?)\\s*$`, "im"))?.[1] ?? null;
+}
+
+function contentTypeFrom(headerText: string): string {
+  return headerValue(headerText, "content-type")?.split(";")[0]?.trim().toLowerCase() || "text/plain";
+}
+
+function charsetFrom(headerText: string): BufferEncoding {
+  const charset = headerValue(headerText, "content-type")?.match(/charset="?([^";]+)"?/i)?.[1]?.toLowerCase();
+  if (charset === "iso-8859-1" || charset === "latin1" || charset === "windows-1252") return "latin1";
+  return "utf8";
+}
+
+function contentTransferEncodingFrom(headerText: string): string {
+  return headerValue(headerText, "content-transfer-encoding")?.trim().toLowerCase() || "7bit";
+}
+
+function boundaryFrom(headerText: string): string | null {
+  return headerValue(headerText, "content-type")?.match(/boundary="?([^";]+)"?/i)?.[1] ?? null;
+}
+
+function decodeQuotedPrintable(input: string, charset: BufferEncoding): string {
+  const bytes: number[] = [];
+  const normalized = input.replace(/=\r?\n/g, "");
+  for (let index = 0; index < normalized.length; index += 1) {
+    if (normalized[index] === "=" && /^[0-9a-f]{2}$/i.test(normalized.slice(index + 1, index + 3))) {
+      bytes.push(parseInt(normalized.slice(index + 1, index + 3), 16));
+      index += 2;
+    } else {
+      bytes.push(normalized.charCodeAt(index));
+    }
+  }
+  return Buffer.from(bytes).toString(charset);
+}
+
+function decodeMimeBody(body: string, encoding: string, charset: BufferEncoding): string {
+  if (encoding === "base64") {
+    return Buffer.from(body.replace(/\s/g, ""), "base64").toString(charset);
+  }
+  if (encoding === "quoted-printable") return decodeQuotedPrintable(body, charset);
+  return body;
+}
+
+function parseMimePart(headerText: string, body: string, depth = 0): { body: string; contentType: string } {
+  const contentType = contentTypeFrom(headerText);
+  if (!contentType.startsWith("multipart/") || depth > 8) {
+    return {
+      body: decodeMimeBody(body, contentTransferEncodingFrom(headerText), charsetFrom(headerText)).trim(),
+      contentType,
+    };
+  }
+
+  const boundary = boundaryFrom(headerText);
+  if (!boundary) return { body: body.trim(), contentType: "text/plain" };
+
+  const parts = body
+    .split(`--${boundary}`)
+    .map((part) => part.replace(/^--\s*/, "").trim())
+    .filter(Boolean)
+    .map((part) => {
+      const parsed = splitMessage(part);
+      return parseMimePart(parsed.headerText, parsed.body, depth + 1);
+    });
+  const readable = parts.find((part) => part.contentType === "text/html")
+    ?? parts.find((part) => part.contentType === "text/plain");
+  return {
+    body: readable?.body.trim() ?? parts[0]?.body.trim() ?? body.trim(),
+    contentType: readable?.contentType ?? parts[0]?.contentType ?? "text/plain",
+  };
+}
+
+function parseBody(source?: Buffer): { body: string; contentType: string } {
+  if (!source) return { body: "", contentType: "text/plain" };
+  const raw = source.toString("utf8");
+  const { headerText, body } = splitMessage(raw);
+  return parseMimePart(headerText, body);
 }
 
 function toMetadata(message: FetchMessageObject, uidValidity: bigint): GmailMessageMetadata {
@@ -420,6 +517,46 @@ export function createGmailAdapter(
           results.set(gmailThreadId, { uidValidity, messages });
         }
         return results;
+      } finally {
+        lock.release();
+      }
+    }),
+
+    fetchThreadMessages: (gmailThreadId: string) => withClient(async (connection) => {
+      if (!gmailThreadId) throw new Error("gmail_thread_id_required");
+      const allMail = (await connection.list()).find((mailbox) => mailbox.specialUse === "\\All")?.path ?? DEFAULT_ALL_MAIL;
+      const lock = await connection.getMailboxLock(allMail);
+      try {
+        const uids = await connection.search({ threadId: gmailThreadId }, { uid: true });
+        const uidValidity = connection.mailbox && connection.mailbox.uidValidity;
+        if (!uidValidity) throw new Error("gmail_uidvalidity_missing");
+        if (!uids || uids.length === 0) return { uidValidity, messages: [] };
+        const fetched = await connection.fetchAll(uids, FETCH_THREAD_MESSAGE, { uid: true });
+        const messages = fetched.map((message) => {
+          if (!message.emailId || !message.threadId) throw new Error("gmail_metadata_incomplete");
+          if (message.threadId !== gmailThreadId) throw new Error("gmail_thread_mismatch");
+          const sender = message.envelope?.from?.[0];
+          const recipient = message.envelope?.to?.[0];
+          const parsed = parseBody(message.source);
+          return {
+            uid: BigInt(message.uid),
+            uidValidity,
+            gmailMessageId: message.emailId,
+            gmailThreadId: message.threadId,
+            rfcMessageId: parseMessageId(message.headers) ?? parseSourceMessageId(message.source),
+            internalDate: new Date(message.internalDate ?? 0),
+            subject: message.envelope?.subject || undefined,
+            fromEmail: sender?.address || undefined,
+            fromName: sender?.name || undefined,
+            toEmail: recipient?.address || undefined,
+            toName: recipient?.name || undefined,
+            flags: [...(message.flags ?? [])],
+            labels: [...(message.labels ?? [])],
+            body: parsed.body,
+            contentType: parsed.contentType,
+          };
+        });
+        return { uidValidity, messages: messages.sort((a, b) => Number(a.uid - b.uid)) };
       } finally {
         lock.release();
       }
