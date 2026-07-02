@@ -15,6 +15,7 @@ import type { GmailLabelDescriptor, GmailMessageMetadata } from "./types";
 const execFileAsync = promisify(execFile);
 const DEFAULT_RUNTIME_DIR = process.env.MAILBOX_RUNTIME_DIR ?? "/run/mockupai-mailboxes";
 const GETMAIL_TIMEOUT_MS = Number(process.env.MAILBOX_GETMAIL_TIMEOUT_MS ?? 600_000);
+const MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS = Number(process.env.MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS ?? 60_000);
 
 export interface MailboxSyncDeps {
   findMailbox(mailboxId: string): Promise<SyncMailboxRecord | null>;
@@ -563,158 +564,161 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
       messageAt: Date;
     }> = [];
 
-    await prisma.$transaction(async (tx) => {
-      for (const message of [...messages].sort((left, right) => Number(left.uid - right.uid))) {
-        let link = await tx.gmailMessageLink.findUnique({
-          where: { mailboxId_gmailMessageId: { mailboxId: mailbox.id, gmailMessageId: message.gmailMessageId } },
-        });
-        if (!link) {
-          const conversation = await tx.mailboxConversation.findUnique({
-            where: { mailboxId_gmailThreadId: { mailboxId: mailbox.id, gmailThreadId: message.gmailThreadId } },
-            include: { labels: { include: { label: true } } },
+    await prisma.$transaction(
+      async (tx) => {
+        for (const message of [...messages].sort((left, right) => Number(left.uid - right.uid))) {
+          let link = await tx.gmailMessageLink.findUnique({
+            where: { mailboxId_gmailMessageId: { mailboxId: mailbox.id, gmailMessageId: message.gmailMessageId } },
           });
+          if (!link) {
+            const conversation = await tx.mailboxConversation.findUnique({
+              where: { mailboxId_gmailThreadId: { mailboxId: mailbox.id, gmailThreadId: message.gmailThreadId } },
+              include: { labels: { include: { label: true } } },
+            });
 
-          if (conversation && (message.fromName || message.fromEmail)) {
-            await tx.mailboxConversation.update({
-              where: { id: conversation.id },
+            if (conversation && (message.fromName || message.fromEmail)) {
+              await tx.mailboxConversation.update({
+                where: { id: conversation.id },
+                data: {
+                  subject: message.subject?.trim() || conversation.subject,
+                  senderName: message.fromName ?? conversation.senderName,
+                  senderEmail: message.fromEmail ?? conversation.senderEmail,
+                  isUnread: isUnreadInboxMessage(message),
+                  articleCount: conversation.articleCount > 0 ? conversation.articleCount : 1,
+                  rtLastUpdatedAt: conversation.rtLastUpdatedAt ?? message.internalDate,
+                  lastActivityAt: message.internalDate,
+                },
+              });
+            }
+
+            link = await tx.gmailMessageLink.create({
               data: {
-                subject: message.subject?.trim() || conversation.subject,
-                senderName: message.fromName ?? conversation.senderName,
-                senderEmail: message.fromEmail ?? conversation.senderEmail,
-                isUnread: isUnreadInboxMessage(message),
-                articleCount: conversation.articleCount > 0 ? conversation.articleCount : 1,
-                rtLastUpdatedAt: conversation.rtLastUpdatedAt ?? message.internalDate,
-                lastActivityAt: message.internalDate,
+                mailboxId: mailbox.id,
+                conversationId: conversation?.id,
+                gmailMessageId: message.gmailMessageId,
+                gmailThreadId: message.gmailThreadId,
+                rfcMessageId: message.rfcMessageId,
+                imapUid: message.uid,
+                uidValidity: message.uidValidity,
+                rtTicketId: conversation?.rtTicketId,
+                direction: "INBOUND",
+                gmailInternalDate: message.internalDate,
               },
             });
-          }
+            imported += 1;
 
-          link = await tx.gmailMessageLink.create({
-            data: {
-              mailboxId: mailbox.id,
-              conversationId: conversation?.id,
-              gmailMessageId: message.gmailMessageId,
-              gmailThreadId: message.gmailThreadId,
-              rfcMessageId: message.rfcMessageId,
-              imapUid: message.uid,
-              uidValidity: message.uidValidity,
-              rtTicketId: conversation?.rtTicketId,
-              direction: "INBOUND",
-              gmailInternalDate: message.internalDate,
-            },
-          });
-          imported += 1;
-
-          if (conversation?.labels.length) {
-            for (const join of conversation.labels) {
-              const operation = await tx.gmailLabelOperation.upsert({
-                where: {
-                  idempotencyKey: `inherit:${mailbox.id}:${conversation.id}:${join.labelId}:${message.gmailMessageId}`,
-                },
-                create: {
-                  mailboxId: mailbox.id,
-                  conversationId: conversation.id,
-                  labelId: join.labelId,
-                  type: "ASSIGN",
-                  desiredPayload: { labelName: join.label.name, gmailMessageIds: [message.gmailMessageId] },
-                  idempotencyKey: `inherit:${mailbox.id}:${conversation.id}:${join.labelId}:${message.gmailMessageId}`,
-                },
-                update: {},
-              });
-              if (operation.state === "PENDING") inheritedOperationIds.push(operation.id);
-              inherited += 1;
+            if (conversation?.labels.length) {
+              for (const join of conversation.labels) {
+                const operation = await tx.gmailLabelOperation.upsert({
+                  where: {
+                    idempotencyKey: `inherit:${mailbox.id}:${conversation.id}:${join.labelId}:${message.gmailMessageId}`,
+                  },
+                  create: {
+                    mailboxId: mailbox.id,
+                    conversationId: conversation.id,
+                    labelId: join.labelId,
+                    type: "ASSIGN",
+                    desiredPayload: { labelName: join.label.name, gmailMessageIds: [message.gmailMessageId] },
+                    idempotencyKey: `inherit:${mailbox.id}:${conversation.id}:${join.labelId}:${message.gmailMessageId}`,
+                  },
+                  update: {},
+                });
+                if (operation.state === "PENDING") inheritedOperationIds.push(operation.id);
+                inherited += 1;
+              }
             }
           }
-        }
 
-        if (!link.conversationId) continue;
-        if (link.conversationId) {
-          touchedConversationIds.add(link.conversationId);
-          const currentConversation = await tx.mailboxConversation.findUnique({
-            where: { id: link.conversationId },
-            select: { subject: true, articleCount: true, rtLastUpdatedAt: true },
-          });
-          const senderEmail = message.fromEmail?.trim().toLowerCase();
-          const mailboxEmail = mailbox.email.trim().toLowerCase();
-          if (senderEmail && senderEmail !== mailboxEmail) {
-            responseMetricInputs.push({
-              tenantId: mailbox.tenantId,
-              storeId: mailbox.storeId,
-              mailboxId: mailbox.id,
-              conversationId: link.conversationId,
-              messageAt: message.internalDate,
-            });
-          }
-          if (message.fromName || message.fromEmail) {
-            await tx.mailboxConversation.update({
+          if (!link.conversationId) continue;
+          if (link.conversationId) {
+            touchedConversationIds.add(link.conversationId);
+            const currentConversation = await tx.mailboxConversation.findUnique({
               where: { id: link.conversationId },
-              data: {
-                subject: message.subject?.trim() || currentConversation?.subject,
-                senderName: message.fromName ?? undefined,
-                senderEmail: message.fromEmail ?? undefined,
-                isUnread: isUnreadInboxMessage(message),
-                articleCount: currentConversation && currentConversation.articleCount > 0
-                  ? currentConversation.articleCount
-                  : 1,
-                rtLastUpdatedAt: currentConversation?.rtLastUpdatedAt ?? message.internalDate,
-                lastActivityAt: message.internalDate,
-              },
+              select: { subject: true, articleCount: true, rtLastUpdatedAt: true },
             });
-          } else {
-            await tx.mailboxConversation.update({
-              where: { id: link.conversationId },
-              data: {
-                subject: message.subject?.trim() || currentConversation?.subject,
-                isUnread: isUnreadInboxMessage(message),
-                articleCount: currentConversation && currentConversation.articleCount > 0
-                  ? currentConversation.articleCount
-                  : 1,
-                rtLastUpdatedAt: currentConversation?.rtLastUpdatedAt ?? message.internalDate,
-                lastActivityAt: message.internalDate,
-              },
-            });
-          }
-          const observedNames = [...new Set(["inbox", ...message.labels.map(normalizeObservedLabel)])];
-          const observedLabels = await tx.gmailLabel.findMany({
-            where: {
-              mailboxId: mailbox.id,
-              normalizedName: { in: observedNames },
-              state: "ACTIVE",
-            },
-            select: { id: true },
-          });
-          for (const label of observedLabels) {
-            await tx.conversationLabel.upsert({
-              where: {
-                conversationId_labelId: {
-                  conversationId: link.conversationId,
-                  labelId: label.id,
+            const senderEmail = message.fromEmail?.trim().toLowerCase();
+            const mailboxEmail = mailbox.email.trim().toLowerCase();
+            if (senderEmail && senderEmail !== mailboxEmail) {
+              responseMetricInputs.push({
+                tenantId: mailbox.tenantId,
+                storeId: mailbox.storeId,
+                mailboxId: mailbox.id,
+                conversationId: link.conversationId,
+                messageAt: message.internalDate,
+              });
+            }
+            if (message.fromName || message.fromEmail) {
+              await tx.mailboxConversation.update({
+                where: { id: link.conversationId },
+                data: {
+                  subject: message.subject?.trim() || currentConversation?.subject,
+                  senderName: message.fromName ?? undefined,
+                  senderEmail: message.fromEmail ?? undefined,
+                  isUnread: isUnreadInboxMessage(message),
+                  articleCount: currentConversation && currentConversation.articleCount > 0
+                    ? currentConversation.articleCount
+                    : 1,
+                  rtLastUpdatedAt: currentConversation?.rtLastUpdatedAt ?? message.internalDate,
+                  lastActivityAt: message.internalDate,
                 },
+              });
+            } else {
+              await tx.mailboxConversation.update({
+                where: { id: link.conversationId },
+                data: {
+                  subject: message.subject?.trim() || currentConversation?.subject,
+                  isUnread: isUnreadInboxMessage(message),
+                  articleCount: currentConversation && currentConversation.articleCount > 0
+                    ? currentConversation.articleCount
+                    : 1,
+                  rtLastUpdatedAt: currentConversation?.rtLastUpdatedAt ?? message.internalDate,
+                  lastActivityAt: message.internalDate,
+                },
+              });
+            }
+            const observedNames = [...new Set(["inbox", ...message.labels.map(normalizeObservedLabel)])];
+            const observedLabels = await tx.gmailLabel.findMany({
+              where: {
+                mailboxId: mailbox.id,
+                normalizedName: { in: observedNames },
+                state: "ACTIVE",
               },
-              create: { conversationId: link.conversationId, labelId: label.id },
-              update: { confirmedAt: new Date() },
+              select: { id: true },
             });
+            for (const label of observedLabels) {
+              await tx.conversationLabel.upsert({
+                where: {
+                  conversationId_labelId: {
+                    conversationId: link.conversationId,
+                    labelId: label.id,
+                  },
+                },
+                create: { conversationId: link.conversationId, labelId: label.id },
+                update: { confirmedAt: new Date() },
+              });
+            }
           }
+          if (!link.rtTicketId || !link.rtTransactionId) continue;
+          lastCommittedUid = message.uid;
         }
-        if (!link.rtTicketId || !link.rtTransactionId) break;
-        lastCommittedUid = message.uid;
-      }
 
-      await tx.mailbox.update({
-        where: { id: mailbox.id },
-        data: {
-          syncStatus: "ACTIVE",
-          lastSyncAt: new Date(),
-          lastSyncErrorCode: null,
-          syncCursor: {
-            upsert: {
-              create: { uidValidity, lastCommittedUid, lastReconciledAt: new Date() },
-              update: { uidValidity, lastCommittedUid, lastReconciledAt: new Date() },
+        await tx.mailbox.update({
+          where: { id: mailbox.id },
+          data: {
+            syncStatus: "ACTIVE",
+            lastSyncAt: new Date(),
+            lastSyncErrorCode: null,
+            syncCursor: {
+              upsert: {
+                create: { uidValidity, lastCommittedUid, lastReconciledAt: new Date() },
+                update: { uidValidity, lastCommittedUid, lastReconciledAt: new Date() },
+              },
             },
           },
-        },
-      });
-    });
+        });
+      },
+      { timeout: MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS },
+    );
 
     await Promise.all(inheritedOperationIds.map((operationId) => enqueueGmailLabelOperation(operationId)));
     const touchedConversations = touchedConversationIds.size
