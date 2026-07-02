@@ -84,6 +84,25 @@ describe("Gmail IMAP adapter", () => {
     expect(client.fetchAll).not.toHaveBeenCalledWith("161:*", expect.anything(), { uid: true });
   });
 
+  it("skips Inbox messages with incomplete Gmail metadata instead of failing the sync", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const client = mockClient({
+      search: vi.fn().mockResolvedValue([1, 2]),
+      fetchAll: vi.fn().mockResolvedValue([
+        { uid: 1, emailId: "msg-1", threadId: "thread-1", internalDate: new Date("2026-06-01"), flags: new Set<string>(), labels: new Set(["\\Inbox"]) },
+        { uid: 2, internalDate: new Date("2026-06-02"), flags: new Set<string>(), labels: new Set(["\\Inbox"]) },
+      ]),
+    });
+    const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, () => client as never);
+
+    const result = await adapter.scanInbox({ initialSyncAfter: new Date("2026-01-01"), lastCommittedUid: BigInt(0) });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].gmailMessageId).toBe("msg-1");
+    expect(warn).toHaveBeenCalledWith("[Gmail] Skipping message with incomplete metadata uid=2");
+    warn.mockRestore();
+  });
+
   it("uses Gmail labels without adding Seen and verifies readback", async () => {
     const client = mockClient();
     const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, () => client as never);

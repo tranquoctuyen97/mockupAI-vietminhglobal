@@ -93,6 +93,22 @@ function toMetadata(message: FetchMessageObject, uidValidity: bigint): GmailMess
   };
 }
 
+function compactMetadata(messages: FetchMessageObject[], uidValidity: bigint): GmailMessageMetadata[] {
+  const result: GmailMessageMetadata[] = [];
+  for (const message of messages) {
+    try {
+      result.push(toMetadata(message, uidValidity));
+    } catch (error) {
+      if (error instanceof Error && error.message === "gmail_metadata_incomplete") {
+        console.warn(`[Gmail] Skipping message with incomplete metadata uid=${message.uid ?? "unknown"}`);
+        continue;
+      }
+      throw error;
+    }
+  }
+  return result;
+}
+
 function systemDescriptor(mailbox: Pick<ListResponse, "path" | "specialUse">): GmailLabelDescriptor | null {
   const lowerPath = mailbox.path.toLocaleLowerCase("en-US");
   if (mailbox.specialUse === "\\Inbox" || lowerPath === "inbox") return { name: "INBOX", normalizedName: "inbox", type: "INBOX", mutable: false };
@@ -144,7 +160,7 @@ export function createGmailAdapter(
       const fetched = await connection.fetchAll(range, FETCH_METADATA, { uid: true });
       return {
         uidValidity,
-        messages: fetched.map((message) => toMetadata(message, uidValidity)).sort((a, b) => Number(a.uid - b.uid)),
+        messages: compactMetadata(fetched, uidValidity).sort((a, b) => Number(a.uid - b.uid)),
       };
     } finally {
       lock.release();
@@ -221,7 +237,7 @@ export function createGmailAdapter(
         if (!uidValidity) throw new Error("gmail_uidvalidity_missing");
         if (!uids || uids.length === 0) return { uidValidity, messages: [] };
         const messages = await connection.fetchAll(uids, FETCH_METADATA, { uid: true });
-        return { uidValidity, messages: messages.map((message) => toMetadata(message, uidValidity)).sort((a, b) => Number(a.uid - b.uid)) };
+        return { uidValidity, messages: compactMetadata(messages, uidValidity).sort((a, b) => Number(a.uid - b.uid)) };
       } finally {
         lock.release();
       }
@@ -372,7 +388,7 @@ export function createGmailAdapter(
         if (!uidValidity) throw new Error("gmail_uidvalidity_missing");
         if (!uids || uids.length === 0) return { uidValidity, messages: [] };
         const fetched = await connection.fetchAll(uids, FETCH_METADATA, { uid: true });
-        const messages = fetched.map((message) => toMetadata(message, uidValidity));
+        const messages = compactMetadata(fetched, uidValidity);
         if (messages.some((message) => message.gmailThreadId !== gmailThreadId)) throw new Error("gmail_thread_mismatch");
         return { uidValidity, messages };
       } finally {
@@ -397,7 +413,7 @@ export function createGmailAdapter(
             continue;
           }
           const fetched = await connection.fetchAll(uids, FETCH_METADATA, { uid: true });
-          const messages = fetched.map((message) => toMetadata(message, uidValidity));
+          const messages = compactMetadata(fetched, uidValidity);
           if (messages.some((message) => message.gmailThreadId !== gmailThreadId)) {
             throw new Error("gmail_thread_mismatch");
           }
@@ -422,7 +438,7 @@ export function createGmailAdapter(
         if (uids.length > 1) throw new Error("gmail_message_id_not_unique");
         const fetched = await connection.fetchAll(uids, FETCH_METADATA, { uid: true });
         if (fetched.length !== 1) return null;
-        return toMetadata(fetched[0], uidValidity);
+        return compactMetadata(fetched, uidValidity)[0] ?? null;
       } finally {
         lock.release();
       }
