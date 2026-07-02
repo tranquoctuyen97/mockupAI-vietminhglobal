@@ -564,9 +564,9 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
       messageAt: Date;
     }> = [];
 
-    await prisma.$transaction(
-      async (tx) => {
-        for (const message of [...messages].sort((left, right) => Number(left.uid - right.uid))) {
+    for (const message of [...messages].sort((left, right) => Number(left.uid - right.uid))) {
+      const committedUid = await prisma.$transaction(
+        async (tx) => {
           let link = await tx.gmailMessageLink.findUnique({
             where: { mailboxId_gmailMessageId: { mailboxId: mailbox.id, gmailMessageId: message.gmailMessageId } },
           });
@@ -629,7 +629,7 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
             }
           }
 
-          if (!link.conversationId) continue;
+          if (!link.conversationId) return null;
           if (link.conversationId) {
             touchedConversationIds.add(link.conversationId);
             const currentConversation = await tx.mailboxConversation.findUnique({
@@ -698,27 +698,28 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
               });
             }
           }
-          if (!link.rtTicketId || !link.rtTransactionId) continue;
-          lastCommittedUid = message.uid;
-        }
+          if (!link.rtTicketId || !link.rtTransactionId) return null;
+          return message.uid;
+        },
+        { timeout: MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS },
+      );
+      if (committedUid) lastCommittedUid = committedUid;
+    }
 
-        await tx.mailbox.update({
-          where: { id: mailbox.id },
-          data: {
-            syncStatus: "ACTIVE",
-            lastSyncAt: new Date(),
-            lastSyncErrorCode: null,
-            syncCursor: {
-              upsert: {
-                create: { uidValidity, lastCommittedUid, lastReconciledAt: new Date() },
-                update: { uidValidity, lastCommittedUid, lastReconciledAt: new Date() },
-              },
-            },
+    await prisma.mailbox.update({
+      where: { id: mailbox.id },
+      data: {
+        syncStatus: "ACTIVE",
+        lastSyncAt: new Date(),
+        lastSyncErrorCode: null,
+        syncCursor: {
+          upsert: {
+            create: { uidValidity, lastCommittedUid, lastReconciledAt: new Date() },
+            update: { uidValidity, lastCommittedUid, lastReconciledAt: new Date() },
           },
-        });
+        },
       },
-      { timeout: MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS },
-    );
+    });
 
     await Promise.all(inheritedOperationIds.map((operationId) => enqueueGmailLabelOperation(operationId)));
     const touchedConversations = touchedConversationIds.size
