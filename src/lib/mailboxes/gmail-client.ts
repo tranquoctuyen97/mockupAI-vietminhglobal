@@ -197,6 +197,20 @@ export function createGmailAdapter(
   return {
     probe: () => withClient(async () => ({ ok: true as const })),
 
+    fetchInboxByUids: (uids: bigint[]) => withClient(async (connection) => {
+      if (uids.length === 0) {
+        const lock = await connection.getMailboxLock("INBOX");
+        try {
+          const uidValidity = connection.mailbox && connection.mailbox.uidValidity;
+          if (!uidValidity) throw new Error("gmail_uidvalidity_missing");
+          return { uidValidity, messages: [] };
+        } finally {
+          lock.release();
+        }
+      }
+      return fetchLocked(connection, "INBOX", uids.map((uid) => Number(uid)));
+    }),
+
     scanInbox: (input: { initialSyncAfter: Date; lastCommittedUid: bigint }) => withClient(async (connection) => {
       if (input.lastCommittedUid > BigInt(0)) {
         return fetchLocked(connection, "INBOX", `${input.lastCommittedUid + BigInt(1)}:*`);

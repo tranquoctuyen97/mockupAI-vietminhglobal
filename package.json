@@ -9,7 +9,7 @@
   "scripts": {
     "postinstall": "prisma generate",
     "dev": "next dev --turbopack",
-    "build": "next build",
+    "build": "next build && rm -rf .next/standalone/.next/static .next/standalone/public && mkdir -p .next/standalone/.next && cp -R .next/static .next/standalone/.next/static && cp -R public .next/standalone/public",
     "start": "next start",
     "lint": "git fetch origin main:refs/remotes/origin/main --depth=1 && git diff --name-only origin/main HEAD -- 'src/**' 'start-worker.ts' 'biome.json' | xargs -r biome check",
     "format": "biome format --write",

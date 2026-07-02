@@ -25,7 +25,7 @@ export async function GET() {
 
   const stores = await listStores(session.tenantId);
   return NextResponse.json(stores, {
-    headers: { "Cache-Control": "private, max-age=30" },
+    headers: { "Cache-Control": "no-store" },
   });
 }
 

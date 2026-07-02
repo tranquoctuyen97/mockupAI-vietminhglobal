@@ -21,4 +21,11 @@ describe("mailbox response proxy hooks", () => {
     expect(source).toContain("handleOverdueResponseMetrics");
     expect(source).toContain("serializeOverdueResponseMetric");
   });
+
+  it("keeps overdue count scoped to active Inbox conversations", () => {
+    const service = readFileSync("src/lib/mailboxes/response-metrics.ts", "utf8");
+
+    expect(service).toContain('status: "active"');
+    expect(service).toContain('type: "INBOX"');
+  });
 });

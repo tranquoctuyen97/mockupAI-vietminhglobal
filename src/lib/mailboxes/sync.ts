@@ -3,10 +3,11 @@ import { randomUUID } from "node:crypto";
 import { basename, dirname } from "node:path";
 import { promisify } from "node:util";
 import { prisma } from "@/lib/db";
-import { setTicketGmailLabels } from "@/lib/rt/client";
+import { findMailgateIdentity, getTicket, setTicketGmailLabels } from "@/lib/rt/client";
 import { provisionMailbox } from "@/lib/rt/provisioning";
 import { getDecryptedAppPassword } from "./credentials";
 import { createGmailAdapter } from "./gmail-client";
+import { parseEmailIdentity } from "./identity";
 import { mailboxResponseMetrics } from "./response-metrics";
 import { enqueueGmailLabelOperation } from "./queue";
 import { writeRuntimeMailboxConfig } from "./runtime-config";
@@ -16,6 +17,7 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_RUNTIME_DIR = process.env.MAILBOX_RUNTIME_DIR ?? "/run/mockupai-mailboxes";
 const GETMAIL_TIMEOUT_MS = Number(process.env.MAILBOX_GETMAIL_TIMEOUT_MS ?? 600_000);
 const MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS = Number(process.env.MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS ?? 60_000);
+const RECENT_ORPHAN_BACKFILL_LIMIT = Number(process.env.MAILBOX_RECENT_ORPHAN_BACKFILL_LIMIT ?? 20_000);
 
 export interface MailboxSyncDeps {
   findMailbox(mailboxId: string): Promise<SyncMailboxRecord | null>;
@@ -113,6 +115,123 @@ function maxMessageUid(messages: GmailMessageMetadata[]): bigint {
   return messages.reduce((max, message) => message.uid > max ? message.uid : max, BigInt(0));
 }
 
+function ticketSenderIdentity(ticket: Awaited<ReturnType<typeof getTicket>>) {
+  if (!ticket.ok || !ticket.data) return { name: "", email: "" };
+  const requestor = Array.isArray(ticket.data.Requestor) ? ticket.data.Requestor[0] : ticket.data.Requestor;
+  const raw = requestor?.EmailAddress
+    ? `${requestor.Name || requestor.EmailAddress} <${requestor.EmailAddress}>`
+    : requestor?.Name || requestor?.id;
+  return parseEmailIdentity(raw);
+}
+
+async function findMessageConversation(
+  mailbox: SyncMailboxRecord,
+  message: GmailMessageMetadata,
+) {
+  if (!mailbox.rtQueueId || !message.rfcMessageId) return null;
+  const identity = await findMailgateIdentity({
+    messageId: message.rfcMessageId,
+    queueId: mailbox.rtQueueId,
+  });
+  if (!identity) return null;
+  return identity;
+}
+
+export async function backfillRecentOrphanLinks(mailbox: SyncMailboxRecord, appPassword?: string) {
+  if (!mailbox.rtQueueId || RECENT_ORPHAN_BACKFILL_LIMIT <= 0) return;
+  const links = await prisma.gmailMessageLink.findMany({
+    where: {
+      mailboxId: mailbox.id,
+      conversationId: null,
+      rfcMessageId: { not: null },
+      direction: "INBOUND",
+    },
+    orderBy: [{ gmailInternalDate: "desc" }, { imapUid: "desc" }],
+    take: RECENT_ORPHAN_BACKFILL_LIMIT,
+    select: {
+      id: true,
+      gmailThreadId: true,
+      rfcMessageId: true,
+      imapUid: true,
+      gmailInternalDate: true,
+    },
+  });
+  const gmailMessages = appPassword
+    ? await createGmailAdapter({ email: mailbox.email, appPassword }).fetchInboxByUids(links.map((link) => link.imapUid))
+    : { messages: [] };
+  const gmailMessageByUid = new Map(gmailMessages.messages.map((message) => [message.uid.toString(), message]));
+
+  for (const link of links) {
+    if (!link.rfcMessageId) continue;
+    const identity = await findMailgateIdentity({
+      messageId: link.rfcMessageId,
+      queueId: mailbox.rtQueueId,
+    });
+    if (!identity) continue;
+    const ticket = await getTicket(identity.ticketId);
+    const sender = ticketSenderIdentity(ticket);
+    const gmailMessage = gmailMessageByUid.get(link.imapUid.toString());
+    const gmailUnread = gmailMessage ? isUnreadInboxMessage(gmailMessage) : undefined;
+    const senderName = gmailMessage?.fromName ?? sender.name;
+    const senderEmail = gmailMessage?.fromEmail ?? sender.email;
+    await prisma.$transaction(async (tx) => {
+      const inboxLabel = await tx.gmailLabel.findFirst({
+        where: { mailboxId: mailbox.id, type: "INBOX", state: "ACTIVE" },
+        select: { id: true },
+      });
+      const conversation = await tx.mailboxConversation.upsert({
+        where: {
+          mailboxId_rtTicketId: {
+            mailboxId: mailbox.id,
+            rtTicketId: identity.ticketId,
+          },
+        },
+        create: {
+          mailboxId: mailbox.id,
+          rtTicketId: identity.ticketId,
+          gmailThreadId: link.gmailThreadId,
+          subject: ticket.ok ? ticket.data?.Subject ?? null : null,
+          senderName: senderName || null,
+          senderEmail: senderEmail || null,
+          ...(gmailUnread == null ? {} : { isUnread: gmailUnread }),
+          articleCount: 1,
+          rtLastUpdatedAt: link.gmailInternalDate,
+          lastActivityAt: link.gmailInternalDate,
+        },
+        update: {
+          gmailThreadId: link.gmailThreadId,
+          subject: ticket.ok ? ticket.data?.Subject ?? undefined : undefined,
+          senderName: senderName || undefined,
+          senderEmail: senderEmail || undefined,
+          ...(gmailUnread == null ? {} : { isUnread: gmailUnread }),
+          rtLastUpdatedAt: link.gmailInternalDate,
+          lastActivityAt: link.gmailInternalDate,
+        },
+      });
+      if (inboxLabel) {
+        await tx.conversationLabel.upsert({
+          where: {
+            conversationId_labelId: {
+              conversationId: conversation.id,
+              labelId: inboxLabel.id,
+            },
+          },
+          create: { conversationId: conversation.id, labelId: inboxLabel.id },
+          update: { confirmedAt: new Date() },
+        });
+      }
+      await tx.gmailMessageLink.update({
+        where: { id: link.id },
+        data: {
+          conversationId: conversation.id,
+          rtTicketId: identity.ticketId,
+          rtTransactionId: identity.transactionId,
+        },
+      });
+    });
+  }
+}
+
 export async function syncMailbox(
   mailboxId: string,
   deps: MailboxSyncDeps = prismaMailboxSyncDeps,
@@ -156,6 +275,7 @@ export async function syncMailbox(
     const appPassword = await deps.getAppPassword(mailbox.id);
     const discoveredLabels = await deps.discoverLabels({ email: mailbox.email, appPassword });
     await deps.persistLabelCatalog(mailbox.id, discoveredLabels);
+    await backfillRecentOrphanLinks(mailbox, appPassword);
     let effectiveLastCommittedUid = mailbox.syncCursor?.lastCommittedUid ?? BigInt(0);
     let scan = await deps.scanInbox({
       email: mailbox.email,
@@ -564,18 +684,46 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
       messageAt: Date;
     }> = [];
 
-    for (const message of [...messages].sort((left, right) => Number(left.uid - right.uid))) {
+    for (const message of [...messages].sort((left, right) => Number(right.uid - left.uid))) {
+      const existingLink = await prisma.gmailMessageLink.findUnique({
+        where: { mailboxId_gmailMessageId: { mailboxId: mailbox.id, gmailMessageId: message.gmailMessageId } },
+        select: { conversationId: true, rtTicketId: true, rtTransactionId: true },
+      });
+      const mailgateIdentity = existingLink?.conversationId && existingLink.rtTicketId && existingLink.rtTransactionId
+        ? null
+        : await findMessageConversation(mailbox, message);
       const committedUid = await prisma.$transaction(
         async (tx) => {
           let link = await tx.gmailMessageLink.findUnique({
             where: { mailboxId_gmailMessageId: { mailboxId: mailbox.id, gmailMessageId: message.gmailMessageId } },
           });
-          if (!link) {
-            const conversation = await tx.mailboxConversation.findUnique({
-              where: { mailboxId_gmailThreadId: { mailboxId: mailbox.id, gmailThreadId: message.gmailThreadId } },
+          let conversation = await tx.mailboxConversation.findUnique({
+            where: { mailboxId_gmailThreadId: { mailboxId: mailbox.id, gmailThreadId: message.gmailThreadId } },
+            include: { labels: { include: { label: true } } },
+          });
+          if (!conversation && mailgateIdentity) {
+            const existingByTicket = await tx.mailboxConversation.findUnique({
+              where: { mailboxId_rtTicketId: { mailboxId: mailbox.id, rtTicketId: mailgateIdentity.ticketId } },
               include: { labels: { include: { label: true } } },
             });
+            conversation = existingByTicket ?? await tx.mailboxConversation.create({
+              data: {
+                mailboxId: mailbox.id,
+                rtTicketId: mailgateIdentity.ticketId,
+                gmailThreadId: message.gmailThreadId,
+                subject: message.subject?.trim() || null,
+                senderName: message.fromName,
+                senderEmail: message.fromEmail,
+                isUnread: isUnreadInboxMessage(message),
+                articleCount: 1,
+                rtLastUpdatedAt: message.internalDate,
+                lastActivityAt: message.internalDate,
+              },
+              include: { labels: { include: { label: true } } },
+            });
+          }
 
+          if (!link) {
             if (conversation && (message.fromName || message.fromEmail)) {
               await tx.mailboxConversation.update({
                 where: { id: conversation.id },
@@ -600,7 +748,8 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
                 rfcMessageId: message.rfcMessageId,
                 imapUid: message.uid,
                 uidValidity: message.uidValidity,
-                rtTicketId: conversation?.rtTicketId,
+                rtTicketId: mailgateIdentity?.ticketId ?? conversation?.rtTicketId,
+                rtTransactionId: mailgateIdentity?.transactionId,
                 direction: "INBOUND",
                 gmailInternalDate: message.internalDate,
               },
@@ -627,6 +776,15 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
                 inherited += 1;
               }
             }
+          } else if (conversation && (!link.conversationId || !link.rtTicketId || !link.rtTransactionId)) {
+            link = await tx.gmailMessageLink.update({
+              where: { id: link.id },
+              data: {
+                conversationId: conversation.id,
+                rtTicketId: mailgateIdentity?.ticketId ?? conversation.rtTicketId,
+                rtTransactionId: mailgateIdentity?.transactionId ?? link.rtTransactionId,
+              },
+            });
           }
 
           if (!link.conversationId) return null;
@@ -703,7 +861,7 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
         },
         { timeout: MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS },
       );
-      if (committedUid) lastCommittedUid = committedUid;
+      if (committedUid && committedUid > lastCommittedUid) lastCommittedUid = committedUid;
     }
 
     await prisma.mailbox.update({

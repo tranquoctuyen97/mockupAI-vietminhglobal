@@ -273,6 +273,14 @@ export const mailboxResponseMetrics = createResponseMetricService({
           { latestAdminReplyAt: null, responseStartedAt: { lt: cutoff } },
           { responseDurationMs: { gt: BigInt(input.thresholdMs) } },
         ],
+        conversation: {
+          status: "active",
+          labels: {
+            some: {
+              label: { type: "INBOX", state: "ACTIVE" },
+            },
+          },
+        },
       },
       select: {
         responseStartedAt: true,

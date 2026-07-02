@@ -33,7 +33,7 @@ import type { AppStatus } from "@/lib/rt/types";
 import { getStorage } from "@/lib/storage/local-disk";
 
 function json(data: unknown, status = 200) {
-  return NextResponse.json(data, { status });
+  return NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
 }
 
 function errorJson(message: string, status: number) {

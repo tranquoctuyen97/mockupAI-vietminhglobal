@@ -49,7 +49,7 @@ export default async function MailboxesPage({
     name: s.name,
     domain: s.shopifyDomain,
   }));
-  const initialSelectedStoreId = stores.some((s) => s.id === storeId) ? storeId : null;
+  const initialSelectedStoreId = stores.some((s) => s.id === storeId) ? storeId : stores[0]?.id ?? null;
 
   return <MailboxesClient stores={storeList} initialSelectedStoreId={initialSelectedStoreId} />;
 }
