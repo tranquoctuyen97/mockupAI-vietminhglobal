@@ -2,13 +2,12 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("mailbox sync verified-linkage contract", () => {
-  it("does not commit an Inbox UID before both RT ticket and transaction identities exist", () => {
+  it("commits Inbox UIDs after creating Gmail-only conversations", () => {
     const source = readFileSync("src/lib/mailboxes/sync.ts", "utf8");
 
-    expect(source).toContain("if (!link.rtTicketId || !link.rtTransactionId) break");
-    expect(source).toContain("lastCommittedUid = message.uid");
-    expect(source.indexOf("if (!link.rtTicketId || !link.rtTransactionId) break"))
-      .toBeLessThan(source.indexOf("lastCommittedUid = message.uid"));
+    expect(source).toContain("gmailOnly += 1");
+    expect(source).toContain("return message.uid");
+    expect(source).not.toContain("if (!link.rtTicketId || !link.rtTransactionId) return null");
   });
 
   it("enqueues inherited label operations and the scheduler recovers orphaned pending operations", () => {
@@ -56,11 +55,12 @@ describe("mailbox sync verified-linkage contract", () => {
     expect(source).toContain('type: { in: ["CREATE", "RENAME", "DELETE"] }');
   });
 
-  it("maps Inbox message labels to the verified conversation and mirrors them to RT", () => {
+  it("maps labels observed on Inbox messages and mirrors labels to RT only when available", () => {
     const source = readFileSync("src/lib/mailboxes/sync.ts", "utf8");
 
     expect(source).toContain("message.labels.map(normalizeObservedLabel)");
     expect(source).toContain("tx.conversationLabel.upsert");
+    expect(source).toContain("conversation.rtTicketId == null");
     expect(source).toContain("setTicketGmailLabels(");
     expect(source).toContain('"rt_label_sync_failed"');
   });

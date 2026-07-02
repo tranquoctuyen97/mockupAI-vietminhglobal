@@ -47,12 +47,12 @@ interface MailboxLabel {
 }
 
 interface Conversation {
-  id: number;
+  id: string;
   mailboxId: string;
   number: string;
   subject: string;
   status: "active" | "pending" | "closed";
-  customerId?: number;
+  customerId?: number | null;
   assigneeId?: number;
   updatedAt: string;
   createdAt: string;
@@ -77,7 +77,7 @@ interface InternalNotePreview {
 
 interface Thread {
   id: number | string;
-  conversationId: number;
+  conversationId: string;
   subject?: string;
   body: string;
   contentType: string;
@@ -186,7 +186,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
   const [composerAttachments, setComposerAttachments] = useState<ComposerAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const selectedConversationIdRef = useRef<number | null>(null);
+  const selectedConversationIdRef = useRef<string | null>(null);
   const conversationPageCacheRef = useRef(
     new Map<string, { conversations: Conversation[]; page: PageInfo }>(),
   );
@@ -309,7 +309,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
     [selectedMailbox, selectedStoreId],
   );
 
-  const syncConversationUnreadState = useCallback((convId: number, unread: boolean) => {
+  const syncConversationUnreadState = useCallback((convId: string, unread: boolean) => {
     let delta = 0;
     setConversations((items) =>
       items.map((item) => {
@@ -1369,7 +1369,7 @@ function ConversationList({
   onPage,
 }: {
   conversations: Conversation[];
-  selectedId: number | null;
+  selectedId: string | null;
   title: string;
   total: number | null;
   loading: boolean;
@@ -1388,8 +1388,8 @@ function ConversationList({
   onRefresh: () => void;
   onPage: (page: number) => void;
 }) {
-  const [openLabelMenuConversationId, setOpenLabelMenuConversationId] = useState<number | null>(null);
-  const [bulkSelectedIds, setBulkSelectedIds] = useState<number[]>([]);
+  const [openLabelMenuConversationId, setOpenLabelMenuConversationId] = useState<string | null>(null);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([]);
   const [bulkLabelMenuOpen, setBulkLabelMenuOpen] = useState(false);
   const [bulkLabelIds, setBulkLabelIds] = useState<string[]>([]);
   const selectedConversations = conversations.filter((conversation) => bulkSelectedIds.includes(conversation.id));
@@ -1402,7 +1402,7 @@ function ConversationList({
     setBulkSelectedIds((ids) => ids.filter((id) => visibleIds.has(id)));
   }, [conversations]);
 
-  const toggleBulkConversation = (conversationId: number) => {
+  const toggleBulkConversation = (conversationId: string) => {
     setBulkSelectedIds((ids) =>
       ids.includes(conversationId)
         ? ids.filter((id) => id !== conversationId)
@@ -1669,7 +1669,7 @@ function ConversationRow({
         onChange={onToggleBulk}
         style={checkboxStyle}
       />
-      <Avatar label={contactName} index={conversation.id || index} />
+      <Avatar label={contactName} index={index} />
       <div style={rowBody}>
         <div style={rowTop}>
           <div style={rowIdentity}>
@@ -1964,7 +1964,7 @@ function ConversationDetail({
   return (
     <section style={detailPanel}>
       <header style={detailHeader}>
-        <Avatar label={detailContactName} index={conversation.id} large />
+        <Avatar label={detailContactName} index={0} large />
         <div style={{ minWidth: 0 }}>
           <h2 style={detailName}>{detailContactName}</h2>
           <div style={detailSubjectLine}>{detailSubject}</div>

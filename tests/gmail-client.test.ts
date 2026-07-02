@@ -38,6 +38,20 @@ function mockClient(overrides: Record<string, unknown> = {}) {
 }
 
 describe("Gmail IMAP adapter", () => {
+  it("uses a socket timeout long enough for Gmail metadata scans", async () => {
+    const client = mockClient();
+    const createClient = vi.fn(() => client as never);
+    const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, createClient);
+
+    await adapter.probe();
+
+    expect(createClient).toHaveBeenCalledWith(expect.objectContaining({
+      connectionTimeout: 30_000,
+      greetingTimeout: 30_000,
+      socketTimeout: 120_000,
+    }));
+  });
+
   it("scans Inbox metadata without reading the message", async () => {
     const client = mockClient();
     const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, () => client as never);
@@ -57,6 +71,17 @@ describe("Gmail IMAP adapter", () => {
       fromName: "Customer",
       flags: [],
     });
+  });
+
+  it("still scans current Inbox metadata when a UID cursor exists", async () => {
+    const client = mockClient();
+    const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, () => client as never);
+
+    await adapter.scanInbox({ initialSyncAfter: new Date("2026-01-01"), lastCommittedUid: BigInt(160) });
+
+    expect(client.search).toHaveBeenCalledWith({ since: new Date("2026-01-01") }, { uid: true });
+    expect(client.fetchAll).toHaveBeenCalledWith([1], expect.anything(), { uid: true });
+    expect(client.fetchAll).not.toHaveBeenCalledWith("161:*", expect.anything(), { uid: true });
   });
 
   it("uses Gmail labels without adding Seen and verifies readback", async () => {

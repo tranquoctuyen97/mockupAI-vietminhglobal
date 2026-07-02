@@ -1157,7 +1157,7 @@ model GmailLabel {
 model MailboxConversation {
   id             String                @id @default(cuid())
   mailboxId      String                @map("mailbox_id")
-  rtTicketId     Int                   @map("rt_ticket_id")
+  rtTicketId     Int?                  @map("rt_ticket_id")
   gmailThreadId  String                @map("gmail_thread_id")
   subject        String?               @map("subject")
   senderName     String?               @map("sender_name")

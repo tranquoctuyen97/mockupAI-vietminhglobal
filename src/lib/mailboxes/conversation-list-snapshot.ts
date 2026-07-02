@@ -1,7 +1,7 @@
 export type MailboxConversationListRow = {
   id: string;
   mailboxId: string;
-  rtTicketId: number;
+  rtTicketId: number | null;
   subject: string | null;
   status: string;
   isUnread: boolean;
@@ -37,11 +37,12 @@ export type MailboxConversationListRow = {
 export function normalizeMailboxConversationListRow(row: MailboxConversationListRow) {
   const updatedAt = row.lastActivityAt ?? row.rtLastUpdatedAt ?? row.updatedAt;
   const createdAt = row.rtCreatedAt ?? row.createdAt;
+  const conversationId = row.rtTicketId == null ? `gmail:${row.id}` : String(row.rtTicketId);
 
   return {
-    id: row.rtTicketId,
+    id: conversationId,
     mailboxId: row.mailboxId,
-    number: String(row.rtTicketId),
+    number: conversationId,
     subject: row.subject?.trim() || "(no subject)",
     status: row.status,
     updatedAt: updatedAt.toISOString(),

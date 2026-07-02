@@ -44,6 +44,45 @@ function parsePath(segments: string[]): string {
   return `/${segments.join("/")}`;
 }
 
+type ConversationToken = { raw: string; rtTicketId?: number; conversationId?: string };
+
+function parseConversationToken(raw: string): ConversationToken | null {
+  if (raw.startsWith("gmail:")) {
+    const conversationId = raw.slice("gmail:".length);
+    return conversationId ? { raw, conversationId } : null;
+  }
+  const rtTicketId = Number(raw);
+  return Number.isSafeInteger(rtTicketId) && rtTicketId > 0 ? { raw, rtTicketId } : null;
+}
+
+function conversationWhere(mailboxId: string, token: ConversationToken) {
+  return token.rtTicketId
+    ? { mailboxId, rtTicketId: token.rtTicketId }
+    : { mailboxId, id: token.conversationId };
+}
+
+async function resolveGmailConversation(
+  request: NextRequest,
+  tenantId: string,
+  conversationToken: string,
+) {
+  const token = parseConversationToken(conversationToken);
+  if (!token) return errorJson("Conversation not found", 404);
+  const storeId = extractStoreId(request.nextUrl.searchParams);
+  if (storeId instanceof NextResponse) return storeId;
+  const mailboxId = extractMailboxId(request.nextUrl.searchParams);
+  if (mailboxId instanceof NextResponse) return mailboxId;
+  const mailbox = await requireProvisionedMailbox(tenantId, storeId, mailboxId);
+  if (!mailbox?.rtQueueId) return errorJson("Forbidden — mailbox not found or not provisioned", 403);
+
+  const conversation = await prisma.mailboxConversation.findFirst({
+    where: conversationWhere(mailbox.id, token),
+    select: { id: true, gmailThreadId: true, isUnread: true, rtTicketId: true, senderEmail: true },
+  });
+  if (!conversation?.gmailThreadId) return errorJson("Conversation not found", 404);
+  return { storeId, mailbox, conversation };
+}
+
 async function requireStoreAccess(tenantId: string, storeId: string) {
   return prisma.store.findFirst({
     where: { id: storeId, tenantId, status: "ACTIVE", deletedAt: null },
@@ -109,7 +148,7 @@ function serializeOverdueResponseMetric(metric: {
   latestAdminReplyActorUserId?: string | null;
   responseDurationMs: bigint | null;
   conversation?: {
-    rtTicketId: number;
+    rtTicketId: number | null;
     subject: string | null;
     senderName: string | null;
     senderEmail: string | null;
@@ -209,37 +248,37 @@ async function handler(
     return handleDeleteLabel(request, session.tenantId, session.id, labelMatch[1]);
   }
 
-  const detailMatch = proxyPath.match(/^\/conversations\/(\d+)$/);
+  const detailMatch = proxyPath.match(/^\/conversations\/([^/]+)$/);
   if (method === "GET" && detailMatch) {
-    return handleGetConversation(request, session.tenantId, Number(detailMatch[1]));
+    return handleGetConversation(request, session.tenantId, detailMatch[1]);
   }
-  if (method === "PUT" && detailMatch) {
+  if (method === "PUT" && detailMatch && /^\d+$/.test(detailMatch[1])) {
     return handleStatusUpdate(request, session.tenantId, session.id, Number(detailMatch[1]));
   }
 
-  const readMatch = proxyPath.match(/^\/conversations\/(\d+)\/read$/);
+  const readMatch = proxyPath.match(/^\/conversations\/([^/]+)\/read$/);
   if (method === "POST" && readMatch) {
-    return handleMarkConversationRead(request, session.tenantId, Number(readMatch[1]));
+    return handleMarkConversationRead(request, session.tenantId, readMatch[1]);
   }
 
-  const unreadMatch = proxyPath.match(/^\/conversations\/(\d+)\/unread$/);
+  const unreadMatch = proxyPath.match(/^\/conversations\/([^/]+)\/unread$/);
   if (method === "POST" && unreadMatch) {
-    return handleMarkConversationUnread(request, session.tenantId, Number(unreadMatch[1]));
+    return handleMarkConversationUnread(request, session.tenantId, unreadMatch[1]);
   }
 
-  const spamMatch = proxyPath.match(/^\/conversations\/(\d+)\/report-spam$/);
+  const spamMatch = proxyPath.match(/^\/conversations\/([^/]+)\/report-spam$/);
   if (method === "POST" && spamMatch) {
-    return handleReportConversationSpam(request, session.tenantId, session.id, Number(spamMatch[1]));
+    return handleReportConversationSpam(request, session.tenantId, session.id, spamMatch[1]);
   }
 
-  const deleteMatch = proxyPath.match(/^\/conversations\/(\d+)\/delete$/);
+  const deleteMatch = proxyPath.match(/^\/conversations\/([^/]+)\/delete$/);
   if (method === "POST" && deleteMatch) {
-    return handleDeleteConversation(request, session.tenantId, session.id, Number(deleteMatch[1]));
+    return handleDeleteConversation(request, session.tenantId, session.id, deleteMatch[1]);
   }
 
-  const skipSenderMatch = proxyPath.match(/^\/conversations\/(\d+)\/skip-sender$/);
+  const skipSenderMatch = proxyPath.match(/^\/conversations\/([^/]+)\/skip-sender$/);
   if (method === "POST" && skipSenderMatch) {
-    return handleSkipSender(request, session.tenantId, session.id, Number(skipSenderMatch[1]));
+    return handleSkipSender(request, session.tenantId, session.id, skipSenderMatch[1]);
   }
 
   const replyMatch = proxyPath.match(/^\/conversations\/(\d+)\/threads$/);
@@ -578,8 +617,10 @@ async function handleListConversations(request: NextRequest, tenantId: string) {
 async function handleGetConversation(
   request: NextRequest,
   tenantId: string,
-  ticketId: number,
+  conversationToken: string,
 ) {
+  const token = parseConversationToken(conversationToken);
+  if (!token) return errorJson("Conversation not found", 404);
   const storeId = extractStoreId(request.nextUrl.searchParams);
   if (storeId instanceof NextResponse) return storeId;
   const mailboxId = extractMailboxId(request.nextUrl.searchParams);
@@ -588,9 +629,68 @@ async function handleGetConversation(
   if (!mailbox?.rtQueueId) return errorJson("Forbidden — mailbox not found or not provisioned", 403);
 
   const conversation = await prisma.mailboxConversation.findFirst({
-    where: { mailboxId: mailbox.id, rtTicketId: ticketId },
+    where: conversationWhere(mailbox.id, token),
+    include: { labels: { include: { label: true } } },
   });
   if (!conversation) return errorJson("Conversation not found", 404);
+  if (conversation.rtTicketId == null) {
+    const [messageLinks, internalNotes] = await Promise.all([
+      prisma.gmailMessageLink.findMany({
+        where: { mailboxId: mailbox.id, conversationId: conversation.id },
+        orderBy: { gmailInternalDate: "asc" },
+        select: { id: true, rfcMessageId: true, direction: true, gmailInternalDate: true },
+      }),
+      prisma.mailboxInternalNote.findMany({
+        where: { mailboxId: mailbox.id, conversationId: conversation.id },
+        orderBy: { createdAt: "asc" },
+        include: { actor: { select: { email: true } } },
+      }),
+    ]);
+    const id = `gmail:${conversation.id}`;
+    const threads = [
+      ...messageLinks.map((link) => ({
+        id: `gmail-${link.id}`,
+        conversationId: id,
+        subject: conversation.subject ?? undefined,
+        body: link.rfcMessageId ? `Message-ID: ${link.rfcMessageId}` : conversation.subject ?? "",
+        contentType: "text/plain",
+        from: link.direction === "INBOUND" ? conversation.senderEmail ?? undefined : mailbox.email,
+        to: link.direction === "INBOUND" ? mailbox.email : conversation.senderEmail ?? undefined,
+        cc: "",
+        type: link.direction === "INBOUND" ? "email" : "app_reply",
+        sender: link.direction === "INBOUND" ? conversation.senderEmail ?? undefined : mailbox.email,
+        internal: false,
+        hidden: false,
+        displayType: link.direction === "INBOUND" ? "email" as const : "app_reply" as const,
+        attachments: [],
+        createdAt: (link.gmailInternalDate ?? conversation.createdAt).toISOString(),
+      })),
+      ...internalNotes.map((note) => ({
+        id: `note-${note.id}`,
+        conversationId: id,
+        subject: "Internal note",
+        body: note.body,
+        contentType: "text/plain",
+        from: note.actor.email,
+        to: mailbox.email,
+        cc: "",
+        type: "comment",
+        sender: note.actor.email,
+        internal: true,
+        hidden: false,
+        displayType: "internal" as const,
+        attachments: [],
+        createdAt: note.createdAt.toISOString(),
+      })),
+    ].sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+
+    return json({
+      conversation: normalizeMailboxConversationListRow(conversation),
+      gmailThreadId: conversation.gmailThreadId,
+      threads,
+    });
+  }
+  const ticketId = conversation.rtTicketId;
 
   const [ticketResult, historyResult, attachmentResult] = await Promise.all([
     getTicket(ticketId),
@@ -954,20 +1054,11 @@ async function handleReply(
 async function handleMarkConversationRead(
   request: NextRequest,
   tenantId: string,
-  ticketId: number,
+  conversationToken: string,
 ) {
-  const storeId = extractStoreId(request.nextUrl.searchParams);
-  if (storeId instanceof NextResponse) return storeId;
-  const mailboxId = extractMailboxId(request.nextUrl.searchParams);
-  if (mailboxId instanceof NextResponse) return mailboxId;
-  const mailbox = await requireProvisionedMailbox(tenantId, storeId, mailboxId);
-  if (!mailbox?.rtQueueId) return errorJson("Forbidden — mailbox not found or not provisioned", 403);
-
-  const conversation = await prisma.mailboxConversation.findFirst({
-    where: { mailboxId: mailbox.id, rtTicketId: ticketId },
-    select: { gmailThreadId: true },
-  });
-  if (!conversation?.gmailThreadId) return errorJson("Conversation not found", 404);
+  const resolved = await resolveGmailConversation(request, tenantId, conversationToken);
+  if (resolved instanceof NextResponse) return resolved;
+  const { mailbox, conversation } = resolved;
 
   try {
     const appPassword = await getDecryptedAppPassword(mailbox.id);
@@ -977,13 +1068,13 @@ async function handleMarkConversationRead(
     }).markThreadRead(conversation.gmailThreadId);
 
     await prisma.mailboxConversation.updateMany({
-      where: { mailboxId: mailbox.id, rtTicketId: ticketId },
+      where: { id: conversation.id },
       data: { isUnread: false },
     });
   } catch (error) {
     console.error("[MailboxProxy] markThreadRead failed", {
       mailboxId: mailbox.id,
-      ticketId,
+      ticketId: conversation.rtTicketId,
       gmailThreadId: conversation.gmailThreadId,
       error,
     });
@@ -996,20 +1087,11 @@ async function handleMarkConversationRead(
 async function handleMarkConversationUnread(
   request: NextRequest,
   tenantId: string,
-  ticketId: number,
+  conversationToken: string,
 ) {
-  const storeId = extractStoreId(request.nextUrl.searchParams);
-  if (storeId instanceof NextResponse) return storeId;
-  const mailboxId = extractMailboxId(request.nextUrl.searchParams);
-  if (mailboxId instanceof NextResponse) return mailboxId;
-  const mailbox = await requireProvisionedMailbox(tenantId, storeId, mailboxId);
-  if (!mailbox?.rtQueueId) return errorJson("Forbidden — mailbox not found or not provisioned", 403);
-
-  const conversation = await prisma.mailboxConversation.findFirst({
-    where: { mailboxId: mailbox.id, rtTicketId: ticketId },
-    select: { id: true, gmailThreadId: true },
-  });
-  if (!conversation?.gmailThreadId) return errorJson("Conversation not found", 404);
+  const resolved = await resolveGmailConversation(request, tenantId, conversationToken);
+  if (resolved instanceof NextResponse) return resolved;
+  const { mailbox, conversation } = resolved;
 
   try {
     const appPassword = await getDecryptedAppPassword(mailbox.id);
@@ -1025,7 +1107,7 @@ async function handleMarkConversationUnread(
   } catch (error) {
     console.error("[MailboxProxy] markThreadUnread failed", {
       mailboxId: mailbox.id,
-      ticketId,
+      ticketId: conversation.rtTicketId,
       gmailThreadId: conversation.gmailThreadId,
       error,
     });
@@ -1039,20 +1121,11 @@ async function handleReportConversationSpam(
   request: NextRequest,
   tenantId: string,
   actorUserId: string,
-  ticketId: number,
+  conversationToken: string,
 ) {
-  const storeId = extractStoreId(request.nextUrl.searchParams);
-  if (storeId instanceof NextResponse) return storeId;
-  const mailboxId = extractMailboxId(request.nextUrl.searchParams);
-  if (mailboxId instanceof NextResponse) return mailboxId;
-  const mailbox = await requireProvisionedMailbox(tenantId, storeId, mailboxId);
-  if (!mailbox?.rtQueueId) return errorJson("Forbidden — mailbox not found or not provisioned", 403);
-
-  const conversation = await prisma.mailboxConversation.findFirst({
-    where: { mailboxId: mailbox.id, rtTicketId: ticketId },
-    select: { id: true, gmailThreadId: true, isUnread: true },
-  });
-  if (!conversation?.gmailThreadId) return errorJson("Conversation not found", 404);
+  const resolved = await resolveGmailConversation(request, tenantId, conversationToken);
+  if (resolved instanceof NextResponse) return resolved;
+  const { storeId, mailbox, conversation } = resolved;
 
   const appPassword = await getDecryptedAppPassword(mailbox.id);
   await createGmailAdapter({
@@ -1089,7 +1162,7 @@ async function handleReportConversationSpam(
     tenantId,
     action: "mailbox.report_spam",
     resourceType: "rt_ticket",
-    resourceId: String(ticketId),
+    resourceId: String(conversation.rtTicketId ?? conversation.id),
     metadata: { mailboxId: mailbox.id, storeId },
   });
 
@@ -1100,20 +1173,11 @@ async function handleDeleteConversation(
   request: NextRequest,
   tenantId: string,
   actorUserId: string,
-  ticketId: number,
+  conversationToken: string,
 ) {
-  const storeId = extractStoreId(request.nextUrl.searchParams);
-  if (storeId instanceof NextResponse) return storeId;
-  const mailboxId = extractMailboxId(request.nextUrl.searchParams);
-  if (mailboxId instanceof NextResponse) return mailboxId;
-  const mailbox = await requireProvisionedMailbox(tenantId, storeId, mailboxId);
-  if (!mailbox?.rtQueueId) return errorJson("Forbidden — mailbox not found or not provisioned", 403);
-
-  const conversation = await prisma.mailboxConversation.findFirst({
-    where: { mailboxId: mailbox.id, rtTicketId: ticketId },
-    select: { id: true, gmailThreadId: true, isUnread: true },
-  });
-  if (!conversation?.gmailThreadId) return errorJson("Conversation not found", 404);
+  const resolved = await resolveGmailConversation(request, tenantId, conversationToken);
+  if (resolved instanceof NextResponse) return resolved;
+  const { storeId, mailbox, conversation } = resolved;
 
   const appPassword = await getDecryptedAppPassword(mailbox.id);
   await createGmailAdapter({
@@ -1153,7 +1217,7 @@ async function handleDeleteConversation(
     tenantId,
     action: "mailbox.delete",
     resourceType: "rt_ticket",
-    resourceId: String(ticketId),
+    resourceId: String(conversation.rtTicketId ?? conversation.id),
     metadata: {
       mailboxId: mailbox.id,
       storeId,
@@ -1169,20 +1233,11 @@ async function handleSkipSender(
   request: NextRequest,
   tenantId: string,
   actorUserId: string,
-  ticketId: number,
+  conversationToken: string,
 ) {
-  const storeId = extractStoreId(request.nextUrl.searchParams);
-  if (storeId instanceof NextResponse) return storeId;
-  const mailboxId = extractMailboxId(request.nextUrl.searchParams);
-  if (mailboxId instanceof NextResponse) return mailboxId;
-  const mailbox = await requireProvisionedMailbox(tenantId, storeId, mailboxId);
-  if (!mailbox?.rtQueueId) return errorJson("Forbidden — mailbox not found or not provisioned", 403);
-
-  const conversation = await prisma.mailboxConversation.findFirst({
-    where: { mailboxId: mailbox.id, rtTicketId: ticketId },
-    select: { id: true, gmailThreadId: true, senderEmail: true },
-  });
-  if (!conversation?.gmailThreadId) return errorJson("Conversation not found", 404);
+  const resolved = await resolveGmailConversation(request, tenantId, conversationToken);
+  if (resolved instanceof NextResponse) return resolved;
+  const { storeId, mailbox, conversation } = resolved;
   const senderEmail = conversation.senderEmail?.trim().toLowerCase();
   if (!senderEmail || !senderEmail.includes("@")) return errorJson("Conversation sender email is missing", 422);
   if (senderEmail === mailbox.email.trim().toLowerCase()) return errorJson("Cannot skip the mailbox sender", 422);
@@ -1234,7 +1289,7 @@ async function handleSkipSender(
     tenantId,
     action: "mailbox.skip_sender",
     resourceType: "rt_ticket",
-    resourceId: String(ticketId),
+    resourceId: String(conversation.rtTicketId ?? conversation.id),
     metadata: {
       mailboxId: mailbox.id,
       storeId,

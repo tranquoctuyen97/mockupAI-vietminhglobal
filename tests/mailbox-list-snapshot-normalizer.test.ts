@@ -51,7 +51,7 @@ describe("normalizeMailboxConversationListRow", () => {
     });
 
     expect(result).toEqual({
-      id: 123,
+      id: "123",
       mailboxId: "mailbox_1",
       number: "123",
       subject: "Need help with order",
@@ -74,6 +74,34 @@ describe("normalizeMailboxConversationListRow", () => {
       unread: true,
       customerId: 123,
     });
+  });
+
+  it("uses a stable Gmail-only id when a conversation has no RT ticket yet", () => {
+    const createdAt = new Date("2026-06-28T04:00:00.000Z");
+
+    const result = normalizeMailboxConversationListRow({
+      id: "conv_gmail_only",
+      mailboxId: "mailbox_1",
+      rtTicketId: null,
+      subject: "Inbox only",
+      status: "active",
+      isUnread: true,
+      articleCount: 1,
+      senderName: "Customer",
+      senderEmail: "customer@example.com",
+      lastActivityAt: createdAt,
+      rtCreatedAt: null,
+      rtLastUpdatedAt: null,
+      createdAt,
+      updatedAt: createdAt,
+      labels: [],
+      internalNotes: [],
+      responseMetric: null,
+    });
+
+    expect(result.id).toBe("gmail:conv_gmail_only");
+    expect(result.number).toBe("gmail:conv_gmail_only");
+    expect(result.customerId).toBeNull();
   });
 
   it("uses stable fallbacks for incomplete historical rows", () => {

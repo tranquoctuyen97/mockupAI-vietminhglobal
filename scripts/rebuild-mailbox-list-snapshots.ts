@@ -17,6 +17,7 @@ async function main() {
   const conversations = await prisma.mailboxConversation.findMany({
     where: {
       ...(mailboxId ? { mailboxId } : {}),
+      rtTicketId: { not: null },
       OR: [
         { subject: null },
         { rtStatus: null },
@@ -30,7 +31,7 @@ async function main() {
 
   let updated = 0;
   for (const conversation of conversations) {
-    if (!conversation.mailbox.rtQueueId) continue;
+    if (!conversation.mailbox.rtQueueId || conversation.rtTicketId == null) continue;
     const ticket = await getTicket(conversation.rtTicketId);
     if (!ticket.ok || !ticket.data) continue;
 

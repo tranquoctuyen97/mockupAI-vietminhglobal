@@ -99,7 +99,7 @@ describe("mailbox UI source", () => {
   });
 
   it("separates bulk checkbox selection from opening a conversation", () => {
-    expect(source).toContain("const [bulkSelectedIds, setBulkSelectedIds] = useState<number[]>([])");
+    expect(source).toContain("const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([])");
     expect(source).toContain("bulkSelected={bulkSelectedIds.includes(conversation.id)}");
     expect(source).toContain("onToggleBulk={() => toggleBulkConversation(conversation.id)}");
     expect(source).toContain("onClick={(event) => event.stopPropagation()}");

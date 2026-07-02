@@ -1,5 +1,5 @@
 export interface MailboxIdentityInput {
-  customerId?: number;
+  customerId?: number | null;
   fromName?: string;
   fromEmail?: string;
 }

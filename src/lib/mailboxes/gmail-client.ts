@@ -39,6 +39,8 @@ const FETCH_METADATA: FetchQueryObject = {
   headers: ["message-id"],
   internalDate: true,
 };
+const GMAIL_CONNECTION_TIMEOUT_MS = 30_000;
+const GMAIL_SOCKET_TIMEOUT_MS = 120_000;
 
 function headerSearch(field: string, value: string): SearchObject {
   return { header: [field, value] } as unknown as SearchObject;
@@ -110,9 +112,9 @@ export function createGmailAdapter(
       secure: true,
       auth: { user: credentials.email, pass: credentials.appPassword },
       logger: false,
-      connectionTimeout: 15_000,
-      greetingTimeout: 15_000,
-      socketTimeout: 30_000,
+      connectionTimeout: GMAIL_CONNECTION_TIMEOUT_MS,
+      greetingTimeout: GMAIL_CONNECTION_TIMEOUT_MS,
+      socketTimeout: GMAIL_SOCKET_TIMEOUT_MS,
     });
   }
 
@@ -212,9 +214,6 @@ export function createGmailAdapter(
     }),
 
     scanInbox: (input: { initialSyncAfter: Date; lastCommittedUid: bigint }) => withClient(async (connection) => {
-      if (input.lastCommittedUid > BigInt(0)) {
-        return fetchLocked(connection, "INBOX", `${input.lastCommittedUid + BigInt(1)}:*`);
-      }
       const lock = await connection.getMailboxLock("INBOX");
       try {
         const uids = await connection.search({ since: input.initialSyncAfter }, { uid: true });

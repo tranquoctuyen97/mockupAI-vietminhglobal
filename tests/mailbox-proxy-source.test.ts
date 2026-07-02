@@ -12,6 +12,9 @@ describe("mailbox proxy source", () => {
   it("returns a normalized conversation object and verifies the RT ticket belongs to the mailbox queue", () => {
     const source = readFileSync("src/app/api/mailbox-proxy/[...path]/route.ts", "utf8");
 
+    expect(source).toContain("parseConversationToken");
+    expect(source).toContain('raw.startsWith("gmail:")');
+    expect(source).toContain("normalizeMailboxConversationListRow(conversation)");
     expect(source).toContain("getTicket(ticketId)");
     expect(source).toContain("ticketQueueId !== mailbox.rtQueueId");
     expect(source).toContain("...normalizeRtTicket(");

@@ -8,7 +8,7 @@ export interface ResponseMetricShape {
   latestAdminReplyActorUserId?: string | null;
   responseDurationMs: bigint | null;
   conversation?: {
-    rtTicketId: number;
+    rtTicketId: number | null;
     subject: string | null;
     senderName: string | null;
     senderEmail: string | null;

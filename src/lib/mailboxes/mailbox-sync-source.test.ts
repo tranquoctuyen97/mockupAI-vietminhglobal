@@ -16,11 +16,11 @@ test("mailbox sync reconnects orphan Gmail links to RT conversations", () => {
   assert.match(source, /senderEmail:\s*senderEmail/);
   assert.match(source, /conversationId:\s*null/);
   assert.match(source, /type:\s*"INBOX"/);
-  assert.match(source, /function findMessageConversation/);
   assert.match(source, /Number\(right\.uid - left\.uid\)/);
   assert.match(source, /committedUid && committedUid > lastCommittedUid/);
-  assert.match(source, /!link\.conversationId \|\| !link\.rtTicketId \|\| !link\.rtTransactionId/);
-  assert.match(source, /rtTransactionId:\s*mailgateIdentity\?\.transactionId/);
+  assert.match(source, /const observedNames = \[\.\.\.new Set\(\["inbox", \.\.\.message\.labels\.map\(normalizeObservedLabel\)\]\)\]/);
+  assert.match(source, /gmailOnly \+= 1/);
+  assert.match(source, /return message\.uid/);
   assert.match(source, /lastCommittedUid:\s*effectiveLastCommittedUid/);
   assert.doesNotMatch(source, /lastCommittedUid:\s*BigInt\(0\),\n\s*\}\);\n\s*if \(/);
 });

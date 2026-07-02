@@ -5,7 +5,9 @@ describe("mailbox sync metadata persistence source", () => {
   it("does not stop creating Gmail message links at the first message without an RT ticket", () => {
     const source = readFileSync("src/lib/mailboxes/sync.ts", "utf8");
 
-    expect(source).toContain("if (!link.rtTicketId || !link.rtTransactionId) return null;");
+    expect(source).toContain("return message.uid;");
+    expect(source).toContain("gmailOnly += 1");
+    expect(source).not.toContain("if (!link.rtTicketId || !link.rtTransactionId) return null;");
     expect(source).not.toContain("if (!link.rtTicketId || !link.rtTransactionId) break;");
   });
 
