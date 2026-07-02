@@ -3,16 +3,19 @@
  * Upload a design file (PNG/JPG, max 20MB)
  */
 
+import { createReadStream } from "node:fs";
+import { unlink } from "node:fs/promises";
+import { IncomingMessage } from "node:http";
+import { Readable } from "node:stream";
+
+import formidable from "formidable";
 import { NextResponse } from "next/server";
+
 import { validateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { getStorage } from "@/lib/storage/local-disk";
 import { probeAndPreview } from "@/lib/images/probe";
 import { logAudit } from "@/lib/audit";
-import formidable from "formidable";
-import { readFile, unlink } from "node:fs/promises";
-import { IncomingMessage } from "node:http";
-import { Readable } from "node:stream";
 
 export const runtime = "nodejs";
 
@@ -75,6 +78,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  let tempFilePath: string | null = null;
+
   try {
     // Parse multipart form
     const incoming = await requestToIncoming(request);
@@ -98,6 +103,7 @@ export async function POST(request: Request) {
     }
 
     const file = fileArray[0];
+    tempFilePath = file.filepath;
 
     if (!file.mimetype || !ALLOWED_TYPES.includes(file.mimetype)) {
       return NextResponse.json(
@@ -108,7 +114,6 @@ export async function POST(request: Request) {
 
     const storeId = fields.storeId?.[0]?.trim();
     if (!storeId) {
-      await unlink(file.filepath).catch(() => {});
       return NextResponse.json(
         { error: "Vui lòng chọn store trước khi upload" },
         { status: 400 },
@@ -121,18 +126,14 @@ export async function POST(request: Request) {
     });
 
     if (!store) {
-      await unlink(file.filepath).catch(() => {});
       return NextResponse.json(
         { error: "Store không hợp lệ hoặc không thuộc tenant hiện tại" },
         { status: 400 },
       );
     }
 
-    // Read file buffer for probing
-    const buffer = await readFile(file.filepath);
-
     // Probe metadata + generate preview
-    const probeResult = await probeAndPreview(buffer);
+    const probeResult = await probeAndPreview(file.filepath);
 
     // Generate storage keys
     const designId = `design_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -142,11 +143,12 @@ export async function POST(request: Request) {
 
     // Save files to storage
     const storage = getStorage();
-    await storage.putBuffer(originalKey, buffer);
-    await storage.putBuffer(previewKey, probeResult.previewBuffer);
+    await storage.putStream(originalKey, createReadStream(file.filepath), file.mimetype);
+    await storage.putBuffer(previewKey, probeResult.previewBuffer, "image/webp");
 
     // Clean up temp file
     await unlink(file.filepath).catch(() => {});
+    tempFilePath = null;
 
     // Extract name from fields or filename
     const name = (fields.name?.[0] || file.originalFilename || "Untitled")
@@ -214,9 +216,24 @@ export async function POST(request: Request) {
       );
     }
 
+    const errorMessage = error instanceof Error ? error.message : "";
+    if (
+      errorMessage.includes("exceeds pixel limit") ||
+      errorMessage.includes("30,000px limit")
+    ) {
+      return NextResponse.json(
+        { error: "Ảnh quá lớn về kích thước pixel (tối đa 30,000 x 30,000 px)" },
+        { status: 413 },
+      );
+    }
+
     return NextResponse.json(
       { error: "Upload thất bại. Vui lòng thử lại." },
       { status: 500 },
     );
+  } finally {
+    if (tempFilePath) {
+      await unlink(tempFilePath).catch(() => {});
+    }
   }
 }

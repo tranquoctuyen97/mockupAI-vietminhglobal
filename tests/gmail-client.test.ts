@@ -129,6 +129,273 @@ describe("Gmail IMAP adapter", () => {
     expect(client.search).toHaveBeenCalledWith({ threadId: "thread-1" }, { uid: true });
   });
 
+  it("fetches readable messages for a known Gmail thread from All Mail", async () => {
+    const client = mockClient({
+      fetchAll: vi.fn().mockResolvedValue([
+        {
+          uid: 1,
+          emailId: "msg-1",
+          threadId: "thread-1",
+          internalDate: new Date("2026-07-02T08:09:00.000Z"),
+          envelope: {
+            subject: "xsxwcdsw",
+            from: [{ name: "Customer", address: "customer@example.test" }],
+            to: [{ name: "Support", address: "support@example.test" }],
+          },
+          flags: new Set<string>(["\\Seen"]),
+          labels: new Set(["\\Inbox"]),
+          headers: Buffer.from("Message-ID: <one@example.test>\r\n"),
+          source: Buffer.from("From: Customer <customer@example.test>\r\nTo: Support <support@example.test>\r\nSubject: xsxwcdsw\r\nMessage-ID: <one@example.test>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nhello"),
+        },
+        {
+          uid: 2,
+          emailId: "msg-2",
+          threadId: "thread-1",
+          internalDate: new Date("2026-07-02T08:12:50.000Z"),
+          envelope: {
+            subject: "Re: xsxwcdsw",
+            from: [{ name: "Support", address: "support@example.test" }],
+            to: [{ name: "Customer", address: "customer@example.test" }],
+          },
+          flags: new Set<string>(["\\Seen"]),
+          labels: new Set(["\\Sent"]),
+          headers: Buffer.from("Message-ID: <two@example.test>\r\n"),
+          source: Buffer.from("From: Support <support@example.test>\r\nTo: Customer <customer@example.test>\r\nSubject: Re: xsxwcdsw\r\nMessage-ID: <two@example.test>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nreply"),
+        },
+      ]),
+    });
+    const adapter = createGmailAdapter({ email: "support@example.test", appPassword: "secret" }, () => client as never);
+
+    const result = await adapter.fetchThreadMessages("thread-1");
+
+    expect(client.getMailboxLock).toHaveBeenCalledWith("[Gmail]/All Mail");
+    expect(client.search).toHaveBeenCalledWith({ threadId: "thread-1" }, { uid: true });
+    expect(client.fetchAll).toHaveBeenCalledWith([1], expect.objectContaining({ source: true, envelope: true, threadId: true }), { uid: true });
+    expect(result.messages).toHaveLength(2);
+    expect(result.messages[0]).toMatchObject({
+      gmailMessageId: "msg-1",
+      gmailThreadId: "thread-1",
+      rfcMessageId: "<one@example.test>",
+      subject: "xsxwcdsw",
+      fromEmail: "customer@example.test",
+      toEmail: "support@example.test",
+      body: "hello",
+      contentType: "text/plain",
+    });
+    expect(result.messages[1]).toMatchObject({
+      gmailMessageId: "msg-2",
+      body: "reply",
+      contentType: "text/plain",
+    });
+  });
+
+  it("extracts the readable text part from a multipart Gmail message", async () => {
+    const source = [
+      "From: Customer <customer@example.test>",
+      "To: Support <support@example.test>",
+      "Subject: xsxwcdsw",
+      "Message-ID: <one@example.test>",
+      "Content-Type: multipart/alternative; boundary=\"abc123\"",
+      "",
+      "--abc123",
+      "Content-Type: text/plain; charset=\"UTF-8\"",
+      "",
+      "hello ba",
+      "--abc123",
+      "Content-Type: text/html; charset=\"UTF-8\"",
+      "",
+      "<p>hello ba</p>",
+      "--abc123--",
+      "",
+    ].join("\r\n");
+    const client = mockClient({
+      fetchAll: vi.fn().mockResolvedValue([{
+        uid: 1,
+        emailId: "msg-1",
+        threadId: "thread-1",
+        internalDate: new Date("2026-07-02T08:09:00.000Z"),
+        envelope: {
+          subject: "xsxwcdsw",
+          from: [{ name: "Customer", address: "customer@example.test" }],
+          to: [{ name: "Support", address: "support@example.test" }],
+        },
+        flags: new Set<string>(["\\Seen"]),
+        labels: new Set(["\\Inbox"]),
+        headers: Buffer.from("Message-ID: <one@example.test>\r\n"),
+        source: Buffer.from(source),
+      }]),
+    });
+    const adapter = createGmailAdapter({ email: "support@example.test", appPassword: "secret" }, () => client as never);
+
+    const result = await adapter.fetchThreadMessages("thread-1");
+
+    expect(result.messages[0]).toMatchObject({
+      body: "<p>hello ba</p>",
+      contentType: "text/html",
+    });
+    expect(result.messages[0].body).not.toContain("--abc123");
+  });
+
+  it("decodes encoded MIME parts before rendering Gmail thread messages", async () => {
+    const encodedHtml = Buffer.from("<div>Cảnh báo bảo mật</div>", "utf8").toString("base64");
+    const source = [
+      "From: Google <no-reply@accounts.google.com>",
+      "Message-ID: <security@example.test>",
+      "Content-Type: multipart/alternative; boundary=\"abc123\"",
+      "",
+      "--abc123",
+      "Content-Type: text/plain; charset=\"UTF-8\"",
+      "Content-Transfer-Encoding: quoted-printable",
+      "",
+      "Canh=20bao=20bao=20mat",
+      "--abc123",
+      "Content-Type: text/html; charset=\"UTF-8\"",
+      "Content-Transfer-Encoding: base64",
+      "",
+      encodedHtml,
+      "--abc123--",
+      "",
+    ].join("\r\n");
+    const client = mockClient({
+      fetchAll: vi.fn().mockResolvedValue([{
+        uid: 1,
+        emailId: "msg-1",
+        threadId: "thread-1",
+        internalDate: new Date("2026-07-02T08:09:00.000Z"),
+        envelope: {
+          subject: "Cảnh báo bảo mật",
+          from: [{ name: "Google", address: "no-reply@accounts.google.com" }],
+          to: [{ name: "Support", address: "support@example.test" }],
+        },
+        flags: new Set<string>(["\\Seen"]),
+        labels: new Set(["\\Inbox"]),
+        source: Buffer.from(source),
+      }]),
+    });
+    const adapter = createGmailAdapter({ email: "support@example.test", appPassword: "secret" }, () => client as never);
+
+    const result = await adapter.fetchThreadMessages("thread-1");
+
+    expect(result.messages[0]).toMatchObject({
+      body: "<div>Cảnh báo bảo mật</div>",
+      contentType: "text/html",
+    });
+    expect(result.messages[0].body).not.toContain(encodedHtml);
+  });
+
+  it("descends into nested multipart Gmail delivery status messages", async () => {
+    const source = [
+      "From: Mail Delivery Subsystem <mailer-daemon@googlemail.com>",
+      "Message-ID: <dsn@example.test>",
+      "Content-Type: multipart/related; boundary=\"outer\"",
+      "",
+      "--outer",
+      "Content-Type: multipart/alternative; boundary=\"inner\"",
+      "",
+      "--inner",
+      "Content-Type: text/plain; charset=\"UTF-8\"",
+      "",
+      "Address not found",
+      "",
+      "The response was:",
+      "",
+      "DNS Error: DNS type 'mx' lookup of example.test responded with code NXDOMAIN",
+      "--inner",
+      "Content-Type: text/html; charset=\"UTF-8\"",
+      "",
+      "<html><body><h1>Address not found</h1><p>Your message wasn't delivered.</p></body></html>",
+      "--inner--",
+      "--outer--",
+      "",
+    ].join("\r\n");
+    const client = mockClient({
+      fetchAll: vi.fn().mockResolvedValue([{
+        uid: 1,
+        emailId: "msg-1",
+        threadId: "thread-1",
+        internalDate: new Date("2026-06-25T06:53:00.000Z"),
+        envelope: {
+          subject: "Delivery Status Notification (Failure)",
+          from: [{ name: "Mail Delivery Subsystem", address: "mailer-daemon@googlemail.com" }],
+          to: [{ name: "Support", address: "support@example.test" }],
+        },
+        flags: new Set<string>(["\\Seen"]),
+        labels: new Set(["\\Inbox"]),
+        source: Buffer.from(source),
+      }]),
+    });
+    const adapter = createGmailAdapter({ email: "support@example.test", appPassword: "secret" }, () => client as never);
+
+    const result = await adapter.fetchThreadMessages("thread-1");
+
+    expect(result.messages[0]).toMatchObject({
+      body: "<html><body><h1>Address not found</h1><p>Your message wasn't delivered.</p></body></html>",
+      contentType: "text/html",
+    });
+    expect(result.messages[0].body).not.toContain("multipart/alternative");
+    expect(result.messages[0].body).not.toContain("--inner");
+    expect(result.messages[0].body).not.toContain("Content-Type:");
+  });
+
+  it("decodes quoted-printable UTF-8 bodies without mojibake", async () => {
+    const source = [
+      "From: Google <no-reply@accounts.google.com>",
+      "Message-ID: <security-qp@example.test>",
+      "Content-Type: text/html; charset=\"UTF-8\"",
+      "Content-Transfer-Encoding: quoted-printable",
+      "",
+      "<h1>Ai =C4=91=C3=B3 m=E1=BB=9Bi =C4=91=C4=83ng nh=E1=BA=ADp t=C3=A0i kho=E1=BA=A3n</h1>",
+      "",
+    ].join("\r\n");
+    const client = mockClient({
+      fetchAll: vi.fn().mockResolvedValue([{
+        uid: 1,
+        emailId: "msg-1",
+        threadId: "thread-1",
+        internalDate: new Date("2026-07-02T08:09:00.000Z"),
+        envelope: {
+          subject: "Cảnh báo bảo mật",
+          from: [{ name: "Google", address: "no-reply@accounts.google.com" }],
+          to: [{ name: "Support", address: "support@example.test" }],
+        },
+        flags: new Set<string>(["\\Seen"]),
+        labels: new Set(["\\Inbox"]),
+        source: Buffer.from(source),
+      }]),
+    });
+    const adapter = createGmailAdapter({ email: "support@example.test", appPassword: "secret" }, () => client as never);
+
+    const result = await adapter.fetchThreadMessages("thread-1");
+
+    expect(result.messages[0].body).toContain("Ai đó mới đăng nhập tài khoản");
+    expect(result.messages[0].body).not.toContain("Ä");
+    expect(result.messages[0].body).not.toContain("=C4");
+  });
+
+  it("falls back to raw source Message-ID when IMAP headers are missing", async () => {
+    const client = mockClient({
+      fetchAll: vi.fn().mockResolvedValue([{
+        uid: 1,
+        emailId: "msg-1",
+        threadId: "thread-1",
+        internalDate: new Date("2026-07-02T08:09:00.000Z"),
+        envelope: {
+          subject: "xsxwcdsw",
+          from: [{ name: "Customer", address: "customer@example.test" }],
+          to: [{ name: "Support", address: "support@example.test" }],
+        },
+        flags: new Set<string>(["\\Seen"]),
+        labels: new Set(["\\Inbox"]),
+        source: Buffer.from("From: Customer <customer@example.test>\r\nMessage-ID: <source-only@example.test>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nhello"),
+      }]),
+    });
+    const adapter = createGmailAdapter({ email: "support@example.test", appPassword: "secret" }, () => client as never);
+
+    const result = await adapter.fetchThreadMessages("thread-1");
+
+    expect(result.messages[0].rfcMessageId).toBe("<source-only@example.test>");
+  });
+
   it("looks up a single message by RFC Message-ID in All Mail for Gmail read-back verification", async () => {
     const client = mockClient();
     const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, () => client as never);

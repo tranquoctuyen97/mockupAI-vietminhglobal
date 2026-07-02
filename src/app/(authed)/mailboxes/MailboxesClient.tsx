@@ -1,6 +1,9 @@
 "use client";
 
 import {
+  ArrowLeft,
+  BarChart3,
+  CalendarDays,
   ChevronDown,
   Clock3,
   Inbox,
@@ -12,6 +15,7 @@ import {
   Send,
   Settings,
   StickyNote,
+  X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -19,7 +23,7 @@ import { toast } from "sonner";
 import {
   EmailBodyRenderer,
 } from "@/components/mailboxes/EmailBodyRenderer";
-import { isHtmlEmail } from "@/lib/mailboxes/email-body-renderer";
+import { htmlToReadableText, isHtmlEmail } from "@/lib/mailboxes/email-body-renderer";
 import { displayMailboxIdentity, parseEmailIdentity } from "@/lib/mailboxes/identity";
 
 interface StoreOption {
@@ -115,30 +119,12 @@ interface PageInfo {
 }
 
 interface ResponseSummaryRow {
-  reportMonth: string;
   totalConversations: number;
   repliedConversations: number;
   unrepliedConversations: number;
   overdueConversations: number;
   averageResponseDurationMs: number | null;
-  maxResponseDurationMs: number | null;
   oldestPendingAgeMs: number | null;
-  actorBreakdown?: Array<{
-    actorUserId: string;
-    repliedConversations: number;
-    averageResponseDurationMs: number | null;
-  }>;
-}
-
-interface OverdueResponseRow {
-  id?: number | null;
-  subject?: string | null;
-  fromName?: string | null;
-  fromEmail?: string | null;
-  responseStartedAt: string;
-  latestAdminReplyAt: string | null;
-  latestAdminReplyActorUserId?: string | null;
-  responseDurationMs: string | number | null;
 }
 
 interface Props {
@@ -147,6 +133,7 @@ interface Props {
 }
 
 const POLL_INTERVAL = 45_000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -155,6 +142,43 @@ async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(body.error || `HTTP ${res.status}`);
   }
   return res.json();
+}
+
+function isoDate(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function isoDateTime(date: Date) {
+  return date.toISOString();
+}
+
+function parseDateValue(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return new Date();
+  return new Date(year, month - 1, day);
+}
+
+function dateToValue(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateLabel(value: string) {
+  const date = parseDateValue(value);
+  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+}
+
+function buildCalendarDays(monthDate: Date) {
+  const first = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+  const start = new Date(first);
+  start.setDate(first.getDate() - first.getDay());
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date;
+  });
 }
 
 export default function MailboxesClient({ stores, initialSelectedStoreId = null }: Props) {
@@ -172,8 +196,6 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
   const [conversationLabelsSaving, setConversationLabelsSaving] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [pageInfo, setPageInfo] = useState<PageInfo | null>(null);
-  const [responseSummary, setResponseSummary] = useState<ResponseSummaryRow[]>([]);
-  const [overdueResponses, setOverdueResponses] = useState<OverdueResponseRow[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -185,6 +207,12 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
   const [pendingConversationActionId, setPendingConversationActionId] = useState<string | null>(null);
   const [composerAttachments, setComposerAttachments] = useState<ComposerAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [metricsOpen, setMetricsOpen] = useState(false);
+  const [metricsFrom, setMetricsFrom] = useState(() => isoDate(new Date(Date.now() - 29 * DAY_MS)));
+  const [metricsTo, setMetricsTo] = useState(() => isoDate(new Date()));
+  const [metricsSummary, setMetricsSummary] = useState<ResponseSummaryRow | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const selectedConversationIdRef = useRef<string | null>(null);
   const conversationPageCacheRef = useRef(
@@ -210,6 +238,10 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
   const conversationListTitle = selectedLabel?.type === "INBOX"
     ? "Inbox"
     : selectedLabel?.name ?? "All conversations";
+  const readingConversation = Boolean(selectedConv);
+  const inboxGridStyle = readingConversation
+    ? railCollapsed ? inboxCollapsedReaderLayout : inboxReaderLayout
+    : railCollapsed ? inboxCollapsedEmptyLayout : inboxEmptyLayout;
   const conversationPageCacheKey = useCallback(
     (page: number, pageSize: number) =>
       [
@@ -240,8 +272,8 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
     setConversations([]);
     setPageInfo(null);
     setComposerAttachments([]);
-    setResponseSummary([]);
-    setOverdueResponses([]);
+    setMetricsOpen(false);
+    setMetricsSummary(null);
     setCurrentPage(1);
     router.replace(storeId ? `/mailboxes?storeId=${storeId}` : "/mailboxes");
   };
@@ -663,31 +695,36 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
     setThreads([]);
     setConversations([]);
     setPageInfo(null);
-    setResponseSummary([]);
-    setOverdueResponses([]);
+    setMetricsSummary(null);
     setCurrentPage(1);
   };
 
-  useEffect(() => {
-    if (!selectedStoreId || !selectedMailbox) {
-      setResponseSummary([]);
-      setOverdueResponses([]);
-      return;
+  const loadResponseMetrics = useCallback(async (range?: { from: string; to: string }) => {
+    if (!selectedStoreId || !selectedMailbox) return;
+    setMetricsLoading(true);
+    try {
+      const fromValue = range?.from ?? metricsFrom;
+      const toValue = range?.to ?? metricsTo;
+      const qs = new URLSearchParams({
+        storeId: selectedStoreId,
+        mailboxId: selectedMailbox.id,
+        from: fromValue,
+        to: toValue,
+      });
+      const data = await apiFetch<{ summary: ResponseSummaryRow[] }>(
+        `/api/mailbox-proxy/response-metrics/summary?${qs}`,
+      );
+      setMetricsSummary(data.summary[0] ?? null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không thể tải response metrics");
+    } finally {
+      setMetricsLoading(false);
     }
+  }, [metricsFrom, metricsTo, selectedMailbox, selectedStoreId]);
 
-    const summaryUrl = `/api/mailbox-proxy/response-metrics/summary?storeId=${encodeURIComponent(selectedStoreId)}&mailboxId=${encodeURIComponent(selectedMailbox.id)}`;
-    const overdueUrl = `/api/mailbox-proxy/response-metrics/overdue?storeId=${encodeURIComponent(selectedStoreId)}&mailboxId=${encodeURIComponent(selectedMailbox.id)}`;
-
-    Promise.all([
-      apiFetch<{ summary: ResponseSummaryRow[] }>(summaryUrl),
-      apiFetch<{ conversations: OverdueResponseRow[] }>(overdueUrl),
-    ])
-      .then(([summaryJson, overdueJson]) => {
-        setResponseSummary(Array.isArray(summaryJson.summary) ? summaryJson.summary : []);
-        setOverdueResponses(Array.isArray(overdueJson.conversations) ? overdueJson.conversations : []);
-      })
-      .catch((error: Error) => toast.error(error.message));
-  }, [selectedMailbox, selectedStoreId]);
+  useEffect(() => {
+    if (metricsOpen) void loadResponseMetrics();
+  }, [loadResponseMetrics, metricsOpen]);
 
   const createLabel = async () => {
     if (!selectedStoreId || !selectedMailbox || !newLabelName.trim()) return;
@@ -917,11 +954,23 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
   return (
     <main style={pageShell}>
       <header style={topHeader}>
-        <div>
-          <h1 style={pageTitle}>Mailboxes</h1>
-          <p style={pageSubtitle}>Manage support mailboxes and customer conversations</p>
+        <div style={headerTopRow}>
+          <div>
+            <h1 style={pageTitle}>Mailboxes</h1>
+            <p style={pageSubtitle}>Manage support mailboxes and customer conversations</p>
+          </div>
+          <div style={headerActions}>
+            {selectedStoreId && selectedMailbox ? (
+              <button type="button" style={manageButton} onClick={() => setMetricsOpen(true)}>
+                <BarChart3 size={16} /> Response metrics
+              </button>
+            ) : null}
+            <button type="button" style={manageButtonPrimary} onClick={() => router.push("/stores")}>
+              <Settings size={16} /> Manage stores
+            </button>
+          </div>
         </div>
-        <div style={headerActions}>
+        <div style={storeSwitcherRow}>
           <StoreMenu
             stores={stores}
             mailboxes={mailboxes}
@@ -931,11 +980,22 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
             onChoose={chooseStore}
             onChooseMailbox={chooseMailbox}
           />
-          <button type="button" style={manageButton} onClick={() => router.push("/stores")}>
-            <Settings size={16} /> Manage stores
-          </button>
         </div>
       </header>
+
+      {metricsOpen && selectedMailbox ? (
+        <ResponseMetricsModal
+          mailboxEmail={selectedMailbox.email}
+          from={metricsFrom}
+          to={metricsTo}
+          summary={metricsSummary}
+          loading={metricsLoading}
+          onFrom={setMetricsFrom}
+          onTo={setMetricsTo}
+          onApply={() => loadResponseMetrics()}
+          onClose={() => setMetricsOpen(false)}
+        />
+      ) : null}
 
       {!selectedStoreId ? (
         <EmptyWorkspace
@@ -966,11 +1026,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
         />
       ) : (
         <>
-          <ResponseMetricsPanel
-            responseSummary={responseSummary}
-            overdueResponses={overdueResponses}
-          />
-          <section style={inboxLayout}>
+          <section style={inboxGridStyle}>
             <FilterRail
               selectedMailbox={selectedMailbox}
               inboxUnreadCount={mailboxUnreadCount}
@@ -979,6 +1035,8 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
               labelComposerOpen={labelComposerOpen}
               newLabelName={newLabelName}
               labelSaving={labelSaving}
+              collapsed={railCollapsed}
+              onToggleCollapsed={() => setRailCollapsed((value) => !value)}
               onLabel={(labelId) => {
                 setSelectedLabelId(labelId);
                 setCurrentPage(1);
@@ -997,66 +1055,75 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
               onDeleteLabel={(label) => void deleteLabel(label)}
             />
 
-            <ConversationList
-              conversations={conversations}
-              selectedId={selectedConv?.id ?? null}
-              title={conversationListTitle}
-              total={isInboxView ? null : totalConversations}
-              loading={convLoading}
-              currentPage={currentPage}
-              pageInfo={pageInfo}
-              labels={labels}
-              labelsSaving={conversationLabelsSaving}
-              pendingActionId={pendingConversationActionId}
-              onOpen={(conversation) => {
-                void (async () => {
-                  await openConversation(
-                    conversation.unread ? { ...conversation, unread: false } : conversation,
-                  );
-                  if (conversation.unread) await markConversationRead(conversation);
-                })();
-              }}
-              onSaveLabels={(conversation, labelIds) => void saveConversationLabels(conversation, labelIds)}
-              onMarkRead={(conversation) => void markConversationRead(conversation)}
-              onMarkUnread={(conversation) => void markConversationUnread(conversation)}
-              onReportSpam={(conversation) => void reportConversationSpam(conversation)}
-              onDelete={(conversation) => void deleteConversation(conversation)}
-              onSkipSender={(conversation) => void skipConversationSender(conversation)}
-              onRefresh={() => void loadConversations()}
-              onPage={setCurrentPage}
-            />
+            {!selectedConv ? (
+              <ConversationList
+                conversations={conversations}
+                selectedId={null}
+                title={conversationListTitle}
+                total={isInboxView ? null : totalConversations}
+                loading={convLoading}
+                currentPage={currentPage}
+                pageInfo={pageInfo}
+                labels={labels}
+                labelsSaving={conversationLabelsSaving}
+                pendingActionId={pendingConversationActionId}
+                onOpen={(conversation) => {
+                  void (async () => {
+                    await openConversation(
+                      conversation.unread ? { ...conversation, unread: false } : conversation,
+                    );
+                    if (conversation.unread) await markConversationRead(conversation);
+                  })();
+                }}
+                onSaveLabels={(conversation, labelIds) => void saveConversationLabels(conversation, labelIds)}
+                onMarkRead={(conversation) => void markConversationRead(conversation)}
+                onMarkUnread={(conversation) => void markConversationUnread(conversation)}
+                onReportSpam={(conversation) => void reportConversationSpam(conversation)}
+                onDelete={(conversation) => void deleteConversation(conversation)}
+                onSkipSender={(conversation) => void skipConversationSender(conversation)}
+                onRefresh={() => void loadConversations()}
+                onPage={setCurrentPage}
+              />
+            ) : null}
 
-            <ConversationDetail
-              conversation={selectedConv}
-              threads={threads}
-              loading={detailLoading}
-              labels={labels}
-              replyText={replyText}
-              sending={sending}
-              composerAttachments={composerAttachments}
-              uploadingAttachment={uploadingAttachment}
-              selectedLabelIds={conversationLabelIds}
-              labelsSaving={conversationLabelsSaving}
-              onReplyText={setReplyText}
-              onSend={() => void sendReply()}
-              onSaveInternalNote={(text) => void saveInternalNote(text)}
-              onUploadAttachment={(file) => void uploadComposerAttachment(file)}
-              onRemoveAttachment={(attachmentId) => {
-                setComposerAttachments((items) => items.filter((attachment) => attachment.id !== attachmentId));
-              }}
-              onMarkUnread={() => {
-                if (selectedConv) void markConversationUnread(selectedConv);
-              }}
-              onReportSpam={() => {
-                if (selectedConv) void reportConversationSpam(selectedConv);
-              }}
-              onToggleLabel={(labelId) => {
-                setConversationLabelIds((ids) =>
-                  ids.includes(labelId) ? ids.filter((id) => id !== labelId) : [...ids, labelId],
-                );
-              }}
-              onSaveLabels={() => void saveConversationLabels()}
-            />
+            {selectedConv ? (
+              <ConversationDetail
+                conversation={selectedConv}
+                threads={threads}
+                loading={detailLoading}
+                labels={labels}
+                replyText={replyText}
+                sending={sending}
+                composerAttachments={composerAttachments}
+                uploadingAttachment={uploadingAttachment}
+                selectedLabelIds={conversationLabelIds}
+                labelsSaving={conversationLabelsSaving}
+                onReplyText={setReplyText}
+                onSend={() => void sendReply()}
+                onSaveInternalNote={(text) => void saveInternalNote(text)}
+                onUploadAttachment={(file) => void uploadComposerAttachment(file)}
+                onRemoveAttachment={(attachmentId) => {
+                  setComposerAttachments((items) => items.filter((attachment) => attachment.id !== attachmentId));
+                }}
+                onMarkUnread={() => {
+                  if (selectedConv) void markConversationUnread(selectedConv);
+                }}
+                onReportSpam={() => {
+                  if (selectedConv) void reportConversationSpam(selectedConv);
+                }}
+                onToggleLabel={(labelId) => {
+                  setConversationLabelIds((ids) =>
+                    ids.includes(labelId) ? ids.filter((id) => id !== labelId) : [...ids, labelId],
+                  );
+                }}
+                onSaveLabels={() => void saveConversationLabels()}
+                onBack={() => {
+                  setSelectedConv(null);
+                  selectedConversationIdRef.current = null;
+                  setThreads([]);
+                }}
+              />
+            ) : null}
           </section>
         </>
       )}
@@ -1139,35 +1206,194 @@ function StoreMenu({
   );
 }
 
-function ResponseMetricsPanel({
-  responseSummary,
-  overdueResponses,
+function ResponseMetricsModal({
+  mailboxEmail,
+  from,
+  to,
+  summary,
+  loading,
+  onFrom,
+  onTo,
+  onApply,
+  onClose,
 }: {
-  responseSummary: ResponseSummaryRow[];
-  overdueResponses: OverdueResponseRow[];
+  mailboxEmail: string;
+  from: string;
+  to: string;
+  summary: ResponseSummaryRow | null;
+  loading: boolean;
+  onFrom: (value: string) => void;
+  onTo: (value: string) => void;
+  onApply: (range?: { from: string; to: string }) => void;
+  onClose: () => void;
 }) {
-  const currentSummary = responseSummary[0] ?? null;
+  const [preset, setPreset] = useState<"24h" | "7d" | "30d" | "custom">("custom");
+  const applyPreset = (nextPreset: "24h" | "7d" | "30d") => {
+    const duration = nextPreset === "24h" ? DAY_MS : nextPreset === "7d" ? 7 * DAY_MS : 30 * DAY_MS;
+    const now = new Date();
+    const nextFromDate = new Date(now.getTime() - duration);
+    const nextFrom = isoDate(nextFromDate);
+    const nextTo = isoDate(now);
+    onFrom(nextFrom);
+    onTo(nextTo);
+    setPreset(nextPreset);
+    onApply({ from: isoDateTime(nextFromDate), to: isoDateTime(now) });
+  };
   return (
-    <section style={responseMetricsPanel}>
-      <div style={responseMetricStat}>
-        <Clock3 size={17} color="#64748b" style={metricIcon} />
-        <span style={metricLabel}>Over 24h</span>
-        <strong style={metricValue}>{overdueResponses.length}</strong>
-        <small style={metricCaption}>conversations breaching SLA</small>
-      </div>
-      <div style={responseMetricStat}>
-        <Clock3 size={17} color="#22c55e" style={metricIcon} />
-        <span style={metricLabel}>Avg response</span>
-        <strong style={metricValue}>{formatDuration(currentSummary?.averageResponseDurationMs)}</strong>
-        <small style={metricCaption}>latest admin reply duration</small>
-      </div>
-      <div style={responseMetricStat}>
-        <Clock3 size={17} color="#64748b" style={metricIcon} />
-        <span style={metricLabel}>Oldest pending</span>
-        <strong style={metricValue}>{formatDuration(currentSummary?.oldestPendingAgeMs)}</strong>
-        <small style={metricCaption}>customer waiting longest</small>
-      </div>
-    </section>
+    <div style={modalBackdrop} role="presentation" onMouseDown={onClose}>
+      <section
+        style={metricsModal}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Response metrics"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div style={metricsModalHeader}>
+          <div>
+            <h2 style={metricsModalTitle}>Response metrics</h2>
+            <p style={metricsModalSubtitle}>{mailboxEmail}</p>
+          </div>
+          <button type="button" style={modalCloseButton} onClick={onClose} aria-label="Close response metrics">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div style={rangeSection}>
+          <span style={rangeLabel}>Select time range</span>
+          <div style={rangeButtons}>
+            <button type="button" style={preset === "24h" ? rangeButtonActive : rangeButton} onClick={() => applyPreset("24h")}>
+              Last 24 hours
+            </button>
+            <button type="button" style={preset === "7d" ? rangeButtonActive : rangeButton} onClick={() => applyPreset("7d")}>
+              Last 7 days
+            </button>
+            <button type="button" style={preset === "30d" ? rangeButtonActive : rangeButton} onClick={() => applyPreset("30d")}>
+              Last 30 days
+            </button>
+            <button type="button" style={preset === "custom" ? rangeButtonActive : rangeButton} onClick={() => setPreset("custom")}>
+              Custom <CalendarDays size={14} />
+            </button>
+          </div>
+        </div>
+
+        {preset === "custom" ? (
+          <div style={metricsFilters}>
+            <label style={fieldLabel}>
+              From
+              <DatePickerField value={from} onChange={onFrom} />
+            </label>
+            <label style={fieldLabel}>
+              To
+              <DatePickerField value={to} onChange={onTo} />
+            </label>
+            <button type="button" style={applyButton} disabled={loading} onClick={() => onApply()}>
+              <RefreshCw size={16} /> {loading ? "Loading" : "Apply"}
+            </button>
+          </div>
+        ) : null}
+
+        <div style={metricsGrid}>
+          <MetricCard label="Over 24h" value={summary?.overdueConversations ?? 0} caption="conversations breaching SLA" />
+          <MetricCard label="Avg response time" value={formatDuration(summary?.averageResponseDurationMs)} caption="only conversations with replies" tone="green" />
+          <MetricCard label="Oldest pending" value={formatDuration(summary?.oldestPendingAgeMs)} caption="customer waiting longest" />
+        </div>
+
+        <div style={metricsBreakdown}>
+          <MetricLine label="Total conversations" value={summary?.totalConversations ?? 0} />
+          <MetricLine label="Replied conversations" value={summary?.repliedConversations ?? 0} />
+          <MetricLine label="Pending conversations" value={summary?.unrepliedConversations ?? 0} />
+          <MetricLine label="SLA breached" value={summary?.overdueConversations ?? 0} />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function DatePickerField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [monthDate, setMonthDate] = useState(() => parseDateValue(value));
+  const days = buildCalendarDays(monthDate);
+
+  function moveMonth(delta: number) {
+    setMonthDate(new Date(monthDate.getFullYear(), monthDate.getMonth() + delta, 1));
+  }
+
+  function selectDate(date: Date) {
+    onChange(dateToValue(date));
+    setMonthDate(date);
+    setOpen(false);
+  }
+
+  return (
+    <div style={datePickerWrap}>
+      <button type="button" style={datePickerButton} onClick={() => setOpen((value) => !value)}>
+        <span>{formatDateLabel(value)}</span>
+        <CalendarDays size={15} />
+      </button>
+      {open ? (
+        <div style={datePickerPopover}>
+          <div style={datePickerHeader}>
+            <button type="button" style={datePickerNavButton} onClick={() => moveMonth(-1)}>Prev</button>
+            <strong>{monthDate.toLocaleString(undefined, { month: "long", year: "numeric" })}</strong>
+            <button type="button" style={datePickerNavButton} onClick={() => moveMonth(1)}>Next</button>
+          </div>
+          <div style={datePickerGrid}>
+            {["S", "M", "T", "W", "T", "F", "S"].map((day, index) => (
+              <span key={`${day}-${index}`} style={datePickerWeekday}>{day}</span>
+            ))}
+            {days.map((day) => {
+              const dayValue = dateToValue(day);
+              const selected = dayValue === value;
+              const muted = day.getMonth() !== monthDate.getMonth();
+              return (
+                <button
+                  key={dayValue}
+                  type="button"
+                  style={{
+                    ...datePickerDay,
+                    ...(selected ? datePickerDaySelected : {}),
+                    ...(muted ? datePickerDayMuted : {}),
+                  }}
+                  onClick={() => selectDate(day)}
+                >
+                  {day.getDate()}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  caption,
+  tone = "gray",
+}: {
+  label: string;
+  value: string | number;
+  caption: string;
+  tone?: "gray" | "green";
+}) {
+  return (
+    <div style={metricCard}>
+      <Clock3 size={17} color={tone === "green" ? "#22c55e" : "#64748b"} style={metricIcon} />
+      <span style={metricLabel}>{label}</span>
+      <strong style={metricValue}>{value}</strong>
+      <small style={metricCaption}>{caption}</small>
+    </div>
+  );
+}
+
+function MetricLine({ label, value }: { label: string; value: number }) {
+  return (
+    <div style={metricLine}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
 
@@ -1179,6 +1405,8 @@ function FilterRail({
   labelComposerOpen,
   newLabelName,
   labelSaving,
+  collapsed,
+  onToggleCollapsed,
   onLabel,
   onOpenLabelComposer,
   onCloseLabelComposer,
@@ -1194,6 +1422,8 @@ function FilterRail({
   labelComposerOpen: boolean;
   newLabelName: string;
   labelSaving: boolean;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
   onLabel: (labelId: string | null) => void;
   onOpenLabelComposer: () => void;
   onCloseLabelComposer: () => void;
@@ -1205,9 +1435,65 @@ function FilterRail({
   const inboxLabel = labels.find((label) => label.type === "INBOX" && label.state === "ACTIVE") ?? null;
   const userLabels = labels.filter((label) => label.type === "USER" && label.name !== "[Gmail]");
 
+  if (collapsed) {
+    return (
+      <aside style={railPanelCollapsed}>
+        <button
+          type="button"
+          style={railCollapseButton}
+          onClick={onToggleCollapsed}
+          aria-label="Expand mailbox filters"
+        >
+          <ArrowLeft size={16} style={{ transform: "rotate(180deg)" }} />
+        </button>
+        <button type="button" style={railIconButton} title={selectedMailbox.email}>
+          <Mail size={16} />
+        </button>
+        <button
+          type="button"
+          style={{
+            ...railIconButton,
+            ...(selectedLabelId === inboxLabel?.id ? railIconButtonActive : {}),
+          }}
+          title="Inbox"
+          onClick={inboxLabel ? () => onLabel(inboxLabel.id) : undefined}
+        >
+          <Inbox size={16} />
+        </button>
+        {userLabels.map((label) => (
+          <button
+            key={label.id}
+            type="button"
+            disabled={label.state !== "ACTIVE"}
+            style={{
+              ...railDotButton,
+              ...(selectedLabelId === label.id ? railIconButtonActive : {}),
+            }}
+            title={label.name}
+            onClick={label.state === "ACTIVE" ? () => onLabel(label.id) : undefined}
+          >
+            <span style={labelTreeDot} />
+          </button>
+        ))}
+      </aside>
+    );
+  }
+
   return (
     <aside style={railPanel}>
-      <RailHeader title="Mailbox" />
+      <RailHeader
+        title="Mailbox"
+        action={
+          <button
+            type="button"
+            style={railHeaderButton}
+            onClick={onToggleCollapsed}
+            aria-label="Collapse mailbox filters"
+          >
+            <ArrowLeft size={15} />
+          </button>
+        }
+      />
       <button
         type="button"
         style={{ ...smallButton, width: "calc(100% - 16px)", margin: "0 8px 14px", justifyContent: "flex-start" }}
@@ -1393,6 +1679,7 @@ function ConversationList({
   const [bulkLabelMenuOpen, setBulkLabelMenuOpen] = useState(false);
   const [bulkLabelIds, setBulkLabelIds] = useState<string[]>([]);
   const selectedConversations = conversations.filter((conversation) => bulkSelectedIds.includes(conversation.id));
+  const allVisibleSelected = conversations.length > 0 && conversations.every((conversation) => bulkSelectedIds.includes(conversation.id));
   const bulkUserLabels = labels.filter(
     (label) => label.type === "USER" && label.mutable && label.state === "ACTIVE" && !label.name.startsWith("[Gmail]"),
   );
@@ -1421,14 +1708,28 @@ function ConversationList({
     setBulkLabelMenuOpen(false);
   };
 
+  const toggleAllVisible = () => {
+    setBulkSelectedIds(allVisibleSelected ? [] : conversations.map((conversation) => conversation.id));
+  };
+
   return (
     <section style={listPanel}>
       <div style={listToolbar}>
-        <div style={listTitle}>
+        <div style={listTitleBlock}>
           <strong>{title}</strong>
           {typeof total === "number" ? <span style={smallCount}>{total}</span> : null}
         </div>
         <div style={toolbarButtons}>
+          <label style={selectAllLabel}>
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              disabled={conversations.length === 0}
+              onChange={toggleAllVisible}
+              style={checkboxStyle}
+            />
+            Select all
+          </label>
           <button type="button" style={iconButton} onClick={onRefresh} title="Refresh">
             <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
           </button>
@@ -1535,20 +1836,23 @@ function ConversationList({
 
       {pageInfo && pageInfo.totalPages > 1 && (
         <div style={pager}>
-          <button
-            type="button"
-            style={smallButton}
-            disabled={currentPage <= 1}
-            onClick={() => onPage(currentPage - 1)}
-          >
-            Prev
-          </button>
-          <span style={mutedMini}>
-            Page {currentPage} of {pageInfo.totalPages}
+          <span style={pagerSummary}>
+            Showing {((currentPage - 1) * pageInfo.size) + 1} to {Math.min(currentPage * pageInfo.size, pageInfo.totalElements)} of {pageInfo.totalElements} conversations
           </span>
           <button
             type="button"
-            style={smallButton}
+            style={pagerButton}
+            disabled={currentPage <= 1}
+            onClick={() => onPage(currentPage - 1)}
+          >
+            <ArrowLeft size={16} />
+          </button>
+          <span style={pagerCurrent}>
+            {currentPage}
+          </span>
+          <button
+            type="button"
+            style={pagerButton}
             disabled={currentPage >= pageInfo.totalPages}
             onClick={() => onPage(currentPage + 1)}
           >
@@ -1610,6 +1914,7 @@ function ConversationRow({
   const visibleLabels = displayLabels.slice(0, 2);
   const hiddenLabelCount = Math.max(0, displayLabels.length - visibleLabels.length);
   const unread = conversation.unread ?? false;
+  const messageCount = conversation.articleCount;
   const assignableLabelIds = new Set(
     labels
       .filter((label) => label.type === "USER" && label.mutable && label.state === "ACTIVE")
@@ -1630,6 +1935,7 @@ function ConversationRow({
     ? conversation.responseMetric.responseDurationMs
     : null;
   const responseOverdue = responseAge != null && Number(responseAge) > 24 * 60 * 60 * 1000;
+  const statusLabel = unread ? "New" : conversation.status === "closed" ? "Closed" : null;
 
   const openLabelMenu = (x: number, y: number) => {
     setDraftLabelIds(rowLabels.map((label) => label.id).filter((id) => assignableLabelIds.has(id)));
@@ -1657,7 +1963,7 @@ function ConversationRow({
       style={{
         ...conversationRow,
         background: selected ? "#eef9e9" : unread ? "#fbfff8" : "#fff",
-        borderLeft: unread ? "3px solid #84cc16" : "3px solid transparent",
+        borderLeft: selected || unread ? "3px solid #84cc16" : "3px solid transparent",
         position: "relative",
       }}
     >
@@ -1678,21 +1984,17 @@ function ConversationRow({
               {contactName}
             </strong>
           </div>
-          <div style={rowTimeStack}>
-            <span style={{ ...timeText, color: unread ? "#101828" : "#667085", fontWeight: unread ? 800 : 500 }}>
-              {formatTime(conversation.updatedAt)}
-            </span>
-            {responseAge != null ? (
-              <span style={responseOverdue ? responseTimeBadgeDanger : responseTimeBadge}>
-                {formatDuration(responseAge)}
-              </span>
-            ) : null}
-          </div>
         </div>
         <div style={{ ...rowSubject, fontWeight: unread ? 800 : 500, color: unread ? "#101828" : "#667085" }}>
           {conversation.subject || "(no subject)"}
         </div>
         <div style={rowMeta}>
+          {messageCount > 1 ? (
+            <span style={messageCountBadge} title={`${messageCount} messages`}>
+              <Mail size={13} />
+              {messageCount}
+            </span>
+          ) : null}
           {visibleLabels.map((label) => (
             <span key={label.id} style={neutralBadge}>{label.name}</span>
           ))}
@@ -1724,6 +2026,18 @@ function ConversationRow({
             </span>
           ) : null}
         </div>
+      </div>
+      <div style={rowSide}>
+        {statusLabel ? <span style={unread ? statusBadgeNew : neutralBadge}>{statusLabel}</span> : null}
+        <span style={{ ...timeText, color: unread ? "#101828" : "#667085", fontWeight: unread ? 800 : 600 }}>
+          {formatTime(conversation.updatedAt)}
+        </span>
+        {responseAge != null ? (
+          <span style={responseOverdue ? responseTimeBadgeDanger : responseTimeBadge}>
+            <Clock3 size={13} />
+            {formatDuration(responseAge)}
+          </span>
+        ) : null}
       </div>
       {menuOpen ? (
         <div
@@ -1873,8 +2187,9 @@ function ConversationDetail({
   onReportSpam,
   onToggleLabel,
   onSaveLabels,
+  onBack,
 }: {
-  conversation: Conversation | null;
+  conversation: Conversation;
   threads: Thread[];
   loading: boolean;
   labels: MailboxLabel[];
@@ -1893,12 +2208,14 @@ function ConversationDetail({
   onReportSpam: () => void;
   onToggleLabel: (labelId: string) => void;
   onSaveLabels: () => void;
+  onBack: () => void;
 }) {
   const [labelMenuOpen, setLabelMenuOpen] = useState(false);
   const [labelQuery, setLabelQuery] = useState("");
   const [composerMode, setComposerMode] = useState<"reply" | "note">("reply");
   const [internalNoteText, setInternalNoteText] = useState("");
   const [notesOpen, setNotesOpen] = useState(false);
+  const [expandedThreadIds, setExpandedThreadIds] = useState<string[]>([]);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     setLabelMenuOpen(false);
@@ -1906,7 +2223,12 @@ function ConversationDetail({
     setComposerMode("reply");
     setInternalNoteText("");
     setNotesOpen(false);
+    setExpandedThreadIds([]);
   }, [conversation?.id]);
+  useEffect(() => {
+    const latestThread = [...threads].reverse().find((thread) => !thread.hidden && thread.displayType !== "internal");
+    if (latestThread) setExpandedThreadIds([String(latestThread.id)]);
+  }, [conversation?.id, threads]);
 
   if (loading) {
     return (
@@ -1915,17 +2237,6 @@ function ConversationDetail({
           loading
           title="Loading conversation"
           text="Fetching the email body and thread history."
-        />
-      </section>
-    );
-  }
-
-  if (!conversation) {
-    return (
-      <section style={detailPanel}>
-        <DetailState
-          title="Select a conversation"
-          text="Choose an email from the list to read the message and reply."
         />
       </section>
     );
@@ -1947,14 +2258,6 @@ function ConversationDetail({
   const displayLabelChips = conversationLabels.filter((label) => label.type === "USER" && label.state === "ACTIVE");
   const visibleLabelChips = displayLabelChips.slice(0, 2);
   const hiddenLabelCount = Math.max(0, displayLabelChips.length - visibleLabelChips.length);
-  const detailResponseAge = conversation.responseMetric?.latestAdminReplyAt
-    ? conversation.responseMetric.responseDurationMs
-    : null;
-  const detailPendingAge = !conversation.responseMetric?.latestAdminReplyAt && conversation.responseMetric
-    ? ageSince(conversation.responseMetric.responseStartedAt)
-    : null;
-  const detailOverdueAge = detailResponseAge ?? detailPendingAge;
-  const detailIsOverdue = detailOverdueAge != null && Number(detailOverdueAge) > 24 * 60 * 60 * 1000;
   const filteredUserLabels = labels.filter((label) =>
     label.type === "USER"
     && label.state === "ACTIVE"
@@ -1964,6 +2267,9 @@ function ConversationDetail({
   return (
     <section style={detailPanel}>
       <header style={detailHeader}>
+        <button type="button" style={readerBackButton} onClick={onBack} aria-label="Back to mailbox">
+          <ArrowLeft size={18} />
+        </button>
         <Avatar label={detailContactName} index={0} large />
         <div style={{ minWidth: 0 }}>
           <h2 style={detailName}>{detailContactName}</h2>
@@ -2076,13 +2382,22 @@ function ConversationDetail({
       </header>
 
       <div style={detailBody}>
-        <div style={threadArea}>
+        <div style={threadAreaReader}>
           {hasLoadedBody ? (
             visibleThreads.map((thread, index) => (
               <ThreadCard
                 key={thread.id}
                 thread={thread}
                 fallbackSubject={index === 0 ? conversation.subject : undefined}
+                expanded={expandedThreadIds.includes(String(thread.id))}
+                onToggle={() => {
+                  const threadId = String(thread.id);
+                  setExpandedThreadIds((ids) =>
+                    ids.includes(threadId)
+                      ? ids.filter((id) => id !== threadId)
+                      : [...ids, threadId],
+                  );
+                }}
               />
             ))
           ) : (
@@ -2093,16 +2408,6 @@ function ConversationDetail({
           )}
         </div>
       </div>
-
-      {detailIsOverdue ? (
-        <div style={overdueStrip}>
-          <div style={overdueChip}>
-            <span style={overdueLabel}>Overdue</span>
-            <strong style={overdueTitle}>{conversation.subject || detailContactName}</strong>
-            <small style={overdueMeta}>waiting {formatDuration(detailOverdueAge)}</small>
-          </div>
-        </div>
-      ) : null}
 
       {hasLoadedBody ? (
         <div style={composer}>
@@ -2203,7 +2508,17 @@ function ConversationDetail({
   );
 }
 
-function ThreadCard({ thread, fallbackSubject }: { thread: Thread; fallbackSubject?: string }) {
+function ThreadCard({
+  thread,
+  fallbackSubject,
+  expanded,
+  onToggle,
+}: {
+  thread: Thread;
+  fallbackSubject?: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const isAdminReply = thread.displayType === "app_reply";
   const isInternalNote = thread.displayType === "internal";
   const isCustomerEmail = !isAdminReply && !isInternalNote;
@@ -2223,16 +2538,14 @@ function ThreadCard({ thread, fallbackSubject }: { thread: Thread; fallbackSubje
     const filename = attachment.filename.toLowerCase();
     return filename !== "message.html" && filename !== "message.htm";
   });
+  const summary = summarizeEmailBody(thread.body, thread.contentType);
 
   return (
-    <div style={{
-      ...threadBubbleRow,
-      justifyContent: isAdminReply ? "flex-end" : "flex-start",
-    }}>
+    <div style={threadBubbleRow}>
       {isCustomerEmail ? <Avatar label={senderLabel} variant="customer" /> : null}
       <article
         style={{
-          ...threadCard,
+          ...gmailThreadCard,
           ...(isHtmlThread ? htmlThreadCard : {}),
           ...(isAdminReply ? adminThreadCard : {}),
           ...(isInternalNote ? internalThreadCard : {}),
@@ -2243,7 +2556,9 @@ function ThreadCard({ thread, fallbackSubject }: { thread: Thread; fallbackSubje
           ...emailHeader,
           ...(isAdminReply ? adminEmailHeader : {}),
           ...(isInternalNote ? internalEmailHeader : {}),
+          cursor: "pointer",
         }}
+        onClick={onToggle}
       >
         <div style={emailHeaderTop}>
           <div style={threadMetaBlock}>
@@ -2268,12 +2583,18 @@ function ThreadCard({ thread, fallbackSubject }: { thread: Thread; fallbackSubje
           </div>
         </div>
       </div>
-      <EmailBodyRenderer
-        body={thread.body}
-        contentType={thread.contentType}
-        compact
-      />
-      {realAttachments.length > 0 ? (
+      {expanded ? (
+        <EmailBodyRenderer
+          body={thread.body}
+          contentType={thread.contentType}
+          compact
+        />
+      ) : (
+        <button type="button" style={threadSummaryButton} onClick={onToggle}>
+          {summary}
+        </button>
+      )}
+      {expanded && realAttachments.length > 0 ? (
         <div style={attachmentList}>
           {realAttachments.map((attachment) => (
             <span key={attachment.id} style={attachmentChip}>
@@ -2288,15 +2609,16 @@ function ThreadCard({ thread, fallbackSubject }: { thread: Thread; fallbackSubje
   );
 }
 
+function summarizeEmailBody(body: string, contentType: string): string {
+  const text = (isHtmlEmail(contentType, body) ? htmlToReadableText(body) : body).replace(/\s+/g, " ").trim();
+  return text.length > 180 ? `${text.slice(0, 180)}...` : text || "(no preview)";
+}
+
 function RailHeader({ title, action }: { title: string; action?: React.ReactNode }) {
   return (
     <div style={railHeader}>
       <span>{title}</span>
-      {action && (
-        <button type="button" style={railAction}>
-          {action}
-        </button>
-      )}
+      {action ?? null}
     </div>
   );
 }
@@ -2473,18 +2795,30 @@ const pageShell: React.CSSProperties = {
   minWidth: 0,
   display: "flex",
   flexDirection: "column",
-  gap: 20,
+  gap: 18,
   overflow: "hidden",
-  background: "#f4f7f2",
-  padding: "18px 20px 20px",
+  background: "#f8faf7",
+  padding: "24px 26px 26px",
 };
 
 const topHeader: React.CSSProperties = {
+  display: "grid",
+  gap: 18,
+  minWidth: 0,
+};
+
+const headerTopRow: React.CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "flex-start",
   gap: 24,
   flexWrap: "wrap",
+  minWidth: 0,
+};
+
+const storeSwitcherRow: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
   minWidth: 0,
 };
 
@@ -2516,16 +2850,16 @@ const headerActions: React.CSSProperties = {
 
 const storeMenu: React.CSSProperties = {
   height: 56,
-  maxWidth: "100%",
+  width: "min(720px, 100%)",
   minWidth: 0,
   display: "flex",
   alignItems: "center",
-  gap: 10,
-  padding: "0 12px",
+  gap: 12,
+  padding: "0 14px",
   background: "#fff",
   border: "1px solid #d8dee8",
   borderRadius: 12,
-  boxShadow: "0 8px 18px rgba(16, 24, 40, 0.10)",
+  boxShadow: "0 8px 20px rgba(16, 24, 40, 0.06)",
 };
 
 const storeAvatar: React.CSSProperties = {
@@ -2569,26 +2903,39 @@ const activePill: React.CSSProperties = {
 };
 
 const unreadBlock: React.CSSProperties = {
-  display: "grid",
-  gap: 0,
-  textAlign: "right",
-  color: "#475467",
-  fontSize: 11,
-  lineHeight: 1.1,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  border: "1px solid #bbf7d0",
+  background: "#dcfce7",
+  color: "#15803d",
+  borderRadius: 999,
+  padding: "5px 10px",
+  fontSize: 12,
+  lineHeight: 1,
+  fontWeight: 900,
 };
 
 const manageButton: React.CSSProperties = {
-  height: 56,
+  height: 44,
   border: "1px solid #d8dee8",
-  borderRadius: 12,
+  borderRadius: 8,
   background: "#fff",
-  padding: "0 18px",
+  padding: "0 14px",
   display: "inline-flex",
   alignItems: "center",
   gap: 8,
   color: "#101828",
   fontWeight: 800,
   cursor: "pointer",
+  boxShadow: "0 2px 8px rgba(16, 24, 40, 0.04)",
+};
+
+const manageButtonPrimary: React.CSSProperties = {
+  ...manageButton,
+  borderColor: "#84cc16",
+  background: "#8bd35d",
+  color: "#17310f",
 };
 
 const inboxLayout: React.CSSProperties = {
@@ -2601,16 +2948,251 @@ const inboxLayout: React.CSSProperties = {
   overflow: "hidden",
 };
 
-const responseMetricsPanel: React.CSSProperties = {
+const inboxEmptyLayout: React.CSSProperties = {
+  ...inboxLayout,
+  gridTemplateColumns: "260px minmax(0, 1fr)",
+};
+
+const inboxReaderLayout: React.CSSProperties = {
+  ...inboxLayout,
+  gridTemplateColumns: "260px minmax(0, 1fr)",
+};
+
+const inboxCollapsedEmptyLayout: React.CSSProperties = {
+  ...inboxLayout,
+  gridTemplateColumns: "56px minmax(0, 1fr)",
+};
+
+const inboxCollapsedReaderLayout: React.CSSProperties = {
+  ...inboxLayout,
+  gridTemplateColumns: "56px minmax(0, 1fr)",
+};
+
+const modalBackdrop: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 60,
+  background: "rgba(15, 23, 42, 0.32)",
   display: "grid",
-  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+  placeItems: "center",
+  padding: 20,
+};
+
+const metricsModal: React.CSSProperties = {
+  width: "min(900px, 100%)",
+  border: "1px solid #d8dee8",
+  borderRadius: 16,
+  background: "#fff",
+  boxShadow: "0 24px 70px rgba(15, 23, 42, 0.26)",
+  padding: 22,
+  display: "grid",
+  gap: 16,
+};
+
+const metricsModalHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
   gap: 12,
 };
 
-const responseMetricStat: React.CSSProperties = {
+const metricsModalTitle: React.CSSProperties = {
+  margin: 0,
+  color: "#111827",
+  fontSize: 24,
+  lineHeight: 1.15,
+  fontWeight: 950,
+};
+
+const metricsModalSubtitle: React.CSSProperties = {
+  margin: "5px 0 0",
+  color: "#56637a",
+  fontSize: 13,
+  fontWeight: 800,
+};
+
+const modalCloseButton: React.CSSProperties = {
+  width: 34,
+  height: 34,
+  border: "1px solid #d8dee8",
+  borderRadius: 8,
+  background: "#fff",
+  color: "#101828",
+  display: "grid",
+  placeItems: "center",
+  cursor: "pointer",
+};
+
+const rangeSection: React.CSSProperties = {
+  display: "grid",
+  gap: 8,
+};
+
+const rangeLabel: React.CSSProperties = {
+  color: "#26364d",
+  fontSize: 13,
+  fontWeight: 800,
+};
+
+const rangeButtons: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  flexWrap: "wrap",
+};
+
+const rangeButton: React.CSSProperties = {
+  minHeight: 38,
+  border: "1px solid #d8dee8",
+  borderRadius: 8,
+  background: "#fff",
+  color: "#101828",
+  padding: "0 14px",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 7,
+  fontSize: 13,
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const rangeButtonActive: React.CSSProperties = {
+  ...rangeButton,
+  borderColor: "#bbf7d0",
+  background: "#dcfce7",
+  color: "#166534",
+};
+
+const metricsFilters: React.CSSProperties = {
+  display: "flex",
+  alignItems: "end",
+  gap: 10,
+  flexWrap: "wrap",
+};
+
+const fieldLabel: React.CSSProperties = {
+  display: "grid",
+  gap: 6,
+  color: "#475467",
+  fontSize: 12,
+  fontWeight: 900,
+};
+
+const datePickerWrap: React.CSSProperties = {
+  position: "relative",
+};
+
+const datePickerButton: React.CSSProperties = {
+  height: 40,
+  minWidth: 150,
+  border: "1px solid #d8dee8",
+  borderRadius: 8,
+  background: "#fff",
+  color: "#111827",
+  padding: "0 10px",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 10,
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const datePickerPopover: React.CSSProperties = {
+  position: "absolute",
+  zIndex: 70,
+  top: "calc(100% + 6px)",
+  left: 0,
+  width: 280,
+  padding: 12,
+  border: "1px solid #d8dee8",
+  borderRadius: 12,
+  background: "#fff",
+  boxShadow: "0 16px 40px rgba(15,23,42,0.18)",
+};
+
+const datePickerHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 8,
+  marginBottom: 10,
+  color: "#101828",
+  fontSize: 13,
+};
+
+const datePickerNavButton: React.CSSProperties = {
+  minHeight: 30,
+  border: "1px solid #d8dee8",
+  borderRadius: 8,
+  background: "#fff",
+  color: "#344054",
+  padding: "0 9px",
+  fontSize: 12,
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const datePickerGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(7, 1fr)",
+  gap: 4,
+};
+
+const datePickerWeekday: React.CSSProperties = {
+  textAlign: "center",
+  color: "#667085",
+  fontSize: 11,
+  fontWeight: 800,
+  padding: "4px 0",
+};
+
+const datePickerDay: React.CSSProperties = {
+  height: 32,
+  border: "1px solid transparent",
+  borderRadius: 8,
+  background: "transparent",
+  color: "#101828",
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const datePickerDaySelected: React.CSSProperties = {
+  borderColor: "#bbf7d0",
+  background: "#dcfce7",
+  color: "#166534",
+  fontWeight: 900,
+};
+
+const datePickerDayMuted: React.CSSProperties = {
+  color: "#98a2b3",
+};
+
+const applyButton: React.CSSProperties = {
+  height: 40,
+  border: 0,
+  borderRadius: 8,
+  background: "#6ac64a",
+  color: "#12320f",
+  padding: "0 18px",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 7,
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const metricsGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+  gap: 14,
+};
+
+const metricCard: React.CSSProperties = {
   border: "1px solid #d9e2ec",
   borderRadius: 12,
-  padding: "16px 18px",
+  padding: "18px 20px",
   background: "#fff",
   display: "grid",
   gap: 6,
@@ -2633,7 +3215,7 @@ const metricLabel: React.CSSProperties = {
 
 const metricValue: React.CSSProperties = {
   color: "#111827",
-  fontSize: 27,
+  fontSize: 30,
   lineHeight: 1,
   fontWeight: 950,
 };
@@ -2644,12 +3226,31 @@ const metricCaption: React.CSSProperties = {
   fontWeight: 800,
 };
 
+const metricsBreakdown: React.CSSProperties = {
+  border: "1px solid #edf0f2",
+  borderRadius: 12,
+  overflow: "hidden",
+  background: "#fff",
+};
+
+const metricLine: React.CSSProperties = {
+  minHeight: 44,
+  padding: "0 14px",
+  borderBottom: "1px solid #edf0f2",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  color: "#26364d",
+  fontSize: 14,
+  fontWeight: 800,
+};
+
 const panel: React.CSSProperties = {
   background: "#fff",
   border: "1px solid #d8dee8",
-  borderRadius: 14,
+  borderRadius: 16,
   overflow: "hidden",
-  boxShadow: "0 2px 8px rgba(16, 24, 40, 0.08)",
+  boxShadow: "0 8px 24px rgba(16, 24, 40, 0.05)",
   minWidth: 0,
   minHeight: 0,
 };
@@ -2658,6 +3259,15 @@ const railPanel: React.CSSProperties = {
   ...panel,
   overflow: "auto",
   paddingBottom: 16,
+};
+
+const railPanelCollapsed: React.CSSProperties = {
+  ...panel,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: 8,
+  padding: "10px 8px",
 };
 
 const listPanel: React.CSSProperties = {
@@ -2688,6 +3298,39 @@ const railAction: React.CSSProperties = {
   display: "grid",
   placeItems: "center",
   cursor: "pointer",
+};
+
+const railHeaderButton: React.CSSProperties = {
+  ...railAction,
+  color: "#475467",
+};
+
+const railCollapseButton: React.CSSProperties = {
+  ...railHeaderButton,
+  width: 36,
+  height: 36,
+};
+
+const railIconButton: React.CSSProperties = {
+  width: 36,
+  height: 36,
+  border: "1px solid #d8dee8",
+  borderRadius: 8,
+  background: "#fff",
+  display: "grid",
+  placeItems: "center",
+  color: "#344054",
+  cursor: "pointer",
+};
+
+const railIconButtonActive: React.CSSProperties = {
+  background: "#eef9e9",
+  borderColor: "#d7efcd",
+  color: "#2f7d32",
+};
+
+const railDotButton: React.CSSProperties = {
+  ...railIconButton,
 };
 
 const railButton: React.CSSProperties = {
@@ -2816,16 +3459,16 @@ const dotStyle: React.CSSProperties = {
 };
 
 const listToolbar: React.CSSProperties = {
-  height: 66,
+  height: 70,
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
   gap: 12,
-  padding: "0 12px 0 18px",
+  padding: "0 18px",
   borderBottom: "1px solid #edf0f2",
 };
 
-const listTitle: React.CSSProperties = {
+const listTitleBlock: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 8,
@@ -2849,6 +3492,16 @@ const toolbarButtons: React.CSSProperties = {
   display: "flex",
   gap: 8,
   alignItems: "center",
+};
+
+const selectAllLabel: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 7,
+  color: "#475467",
+  fontSize: 13,
+  fontWeight: 800,
+  whiteSpace: "nowrap",
 };
 
 const bulkToolbar: React.CSSProperties = {
@@ -2929,15 +3582,16 @@ const conversationScroller: React.CSSProperties = {
 
 const conversationRow: React.CSSProperties = {
   width: "100%",
-  minHeight: 82,
+  minHeight: 84,
   border: 0,
   borderBottom: "1px solid #edf0f2",
   display: "grid",
-  gridTemplateColumns: "20px 40px minmax(0, 1fr)",
+  gridTemplateColumns: "20px 40px minmax(0, 1fr) 96px",
   gap: 12,
-  padding: "12px 14px 12px 16px",
+  padding: "12px 14px",
   textAlign: "left",
   cursor: "pointer",
+  alignItems: "start",
 };
 
 const rowLabelMenu: React.CSSProperties = {
@@ -3004,6 +3658,7 @@ const avatar: React.CSSProperties = {
 
 const rowBody: React.CSSProperties = {
   minWidth: 0,
+  alignSelf: "center",
 };
 
 const rowTop: React.CSSProperties = {
@@ -3040,17 +3695,10 @@ const timeText: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-const rowTimeStack: React.CSSProperties = {
-  display: "grid",
-  justifyItems: "end",
-  gap: 6,
-  flex: "0 0 auto",
-};
-
 const rowSubject: React.CSSProperties = {
-  marginTop: 5,
+  marginTop: 8,
   color: "#101828",
-  fontSize: 13,
+  fontSize: 14,
   fontWeight: 800,
   overflow: "hidden",
   textOverflow: "ellipsis",
@@ -3070,8 +3718,16 @@ const rowMeta: React.CSSProperties = {
   display: "flex",
   gap: 7,
   alignItems: "center",
-  marginTop: 8,
+  marginTop: 10,
   flexWrap: "wrap",
+};
+
+const rowSide: React.CSSProperties = {
+  display: "grid",
+  justifyItems: "end",
+  alignContent: "start",
+  gap: 10,
+  minWidth: 0,
 };
 
 const storeBadge: React.CSSProperties = {
@@ -3085,13 +3741,34 @@ const storeBadge: React.CSSProperties = {
 };
 
 const neutralBadge: React.CSSProperties = {
-  border: "1px solid #d8dee8",
+  border: "1px solid #e5e7eb",
   background: "#f8fafc",
   color: "#475467",
-  borderRadius: 6,
-  padding: "3px 8px",
+  borderRadius: 999,
+  padding: "5px 10px",
   fontSize: 12,
   fontWeight: 800,
+};
+
+const statusBadgeNew: React.CSSProperties = {
+  ...neutralBadge,
+  borderColor: "#ede9fe",
+  background: "#f3e8ff",
+  color: "#6d28d9",
+};
+
+const messageCountBadge: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  minWidth: 26,
+  height: 22,
+  padding: "0 7px",
+  borderRadius: 8,
+  background: "#eef2ff",
+  color: "#3730a3",
+  fontSize: 12,
+  fontWeight: 700,
 };
 
 const responseTimeBadge: React.CSSProperties = {
@@ -3099,9 +3776,12 @@ const responseTimeBadge: React.CSSProperties = {
   background: "#ecfdf3",
   color: "#047857",
   borderRadius: 999,
-  padding: "3px 8px",
+  padding: "4px 8px",
   fontSize: 12,
   fontWeight: 900,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
 };
 
 const responseTimeBadgeDanger: React.CSSProperties = {
@@ -3201,6 +3881,21 @@ const detailHeader: React.CSSProperties = {
   padding: "20px 22px 16px",
   borderBottom: "1px solid #edf0f2",
   flex: "0 0 auto",
+  background: "#fff",
+  zIndex: 3,
+};
+
+const readerBackButton: React.CSSProperties = {
+  width: 36,
+  height: 36,
+  border: "1px solid #d8dee8",
+  borderRadius: 999,
+  background: "#fff",
+  display: "grid",
+  placeItems: "center",
+  color: "#475467",
+  cursor: "pointer",
+  flex: "0 0 auto",
 };
 
 const detailName: React.CSSProperties = {
@@ -3243,48 +3938,6 @@ const detailBody: React.CSSProperties = {
   minWidth: 0,
 };
 
-const overdueStrip: React.CSSProperties = {
-  flex: "0 0 auto",
-  display: "grid",
-  gridTemplateColumns: "minmax(0, 360px)",
-  gap: 12,
-  padding: "14px 20px 18px",
-  background: "#f4f7f9",
-};
-
-const overdueChip: React.CSSProperties = {
-  border: "1px solid #fecaca",
-  borderRadius: 12,
-  background: "#fff1f0",
-  padding: "12px 14px",
-  display: "grid",
-  gap: 4,
-  minWidth: 0,
-};
-
-const overdueLabel: React.CSSProperties = {
-  color: "#b91c1c",
-  fontSize: 12,
-  fontWeight: 950,
-  letterSpacing: "0.08em",
-  textTransform: "uppercase",
-};
-
-const overdueTitle: React.CSSProperties = {
-  color: "#111827",
-  fontSize: 14,
-  fontWeight: 900,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-};
-
-const overdueMeta: React.CSSProperties = {
-  color: "#dc2626",
-  fontSize: 12,
-  fontWeight: 800,
-};
-
 const threadArea: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
@@ -3292,6 +3945,14 @@ const threadArea: React.CSSProperties = {
   gap: 14,
   padding: "20px 20px 22px",
   minWidth: 0,
+};
+
+const threadAreaReader: React.CSSProperties = {
+  ...threadArea,
+  maxWidth: 1240,
+  width: "100%",
+  margin: "0 auto",
+  padding: "28px 32px 34px",
 };
 
 const threadBubbleRow: React.CSSProperties = {
@@ -3302,9 +3963,9 @@ const threadBubbleRow: React.CSSProperties = {
   minWidth: 0,
 };
 
-const threadCard: React.CSSProperties = {
-  width: "fit-content",
-  maxWidth: "min(72%, 760px)",
+const gmailThreadCard: React.CSSProperties = {
+  width: "100%",
+  maxWidth: "min(100%, 1180px)",
   border: "1px solid #d8dee8",
   borderRadius: 12,
   padding: 0,
@@ -3315,8 +3976,8 @@ const threadCard: React.CSSProperties = {
 };
 
 const htmlThreadCard: React.CSSProperties = {
-  width: "min(86%, 920px)",
-  maxWidth: "min(86%, 920px)",
+  width: "100%",
+  maxWidth: "min(100%, 1180px)",
 };
 
 const adminThreadCard: React.CSSProperties = {
@@ -3325,7 +3986,7 @@ const adminThreadCard: React.CSSProperties = {
 };
 
 const internalThreadCard: React.CSSProperties = {
-  maxWidth: "min(76%, 820px)",
+  maxWidth: "min(100%, 1180px)",
   background: "#fff7d6",
   borderColor: "#f2d36b",
 };
@@ -3427,6 +4088,22 @@ const threadSubjectMeta: React.CSSProperties = {
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
+};
+
+const threadSummaryButton: React.CSSProperties = {
+  width: "100%",
+  border: 0,
+  borderTop: "1px solid #edf0f2",
+  background: "transparent",
+  padding: "10px 12px 12px",
+  color: "#667085",
+  fontSize: 13,
+  lineHeight: 1.45,
+  textAlign: "left",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  cursor: "pointer",
 };
 
 const emailHeaderGrid: React.CSSProperties = {
@@ -3702,8 +4379,36 @@ const pager: React.CSSProperties = {
   borderTop: "1px solid #edf0f2",
   display: "flex",
   alignItems: "center",
-  justifyContent: "center",
-  gap: 10,
+  justifyContent: "flex-end",
+  gap: 12,
+  padding: "0 16px",
+};
+
+const pagerSummary: React.CSSProperties = {
+  marginRight: "auto",
+  color: "#667085",
+  fontSize: 13,
+  fontWeight: 700,
+  lineHeight: 1.4,
+};
+
+const pagerButton: React.CSSProperties = {
+  ...smallButton,
+  minWidth: 40,
+  height: 36,
+  borderRadius: 8,
+};
+
+const pagerCurrent: React.CSSProperties = {
+  width: 36,
+  height: 36,
+  borderRadius: 8,
+  background: "#dcfce7",
+  color: "#166534",
+  display: "grid",
+  placeItems: "center",
+  fontSize: 14,
+  fontWeight: 900,
 };
 
 const mutedMini: React.CSSProperties = {

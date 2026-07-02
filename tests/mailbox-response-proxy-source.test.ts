@@ -20,6 +20,10 @@ describe("mailbox response proxy hooks", () => {
     expect(source).toContain("handleResponseMetricSummary");
     expect(source).toContain("handleOverdueResponseMetrics");
     expect(source).toContain("serializeOverdueResponseMetric");
+    expect(source).toContain("dateRange(request.nextUrl.searchParams)");
+    expect(source).toContain("parseRangeBoundary");
+    expect(source).toContain("value.includes(\"T\")");
+    expect(source).toContain("buildResponseSummary");
   });
 
   it("keeps overdue count scoped to active Inbox conversations", () => {

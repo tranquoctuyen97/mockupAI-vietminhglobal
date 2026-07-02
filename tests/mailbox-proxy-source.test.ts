@@ -63,4 +63,29 @@ describe("mailbox proxy source", () => {
     expect(functionBody(source, "handleMarkConversationUnread")).toContain("isUnread: true");
     expect(functionBody(source, "handleReportConversationSpam")).toContain("isUnread: false");
   });
+
+  it("allows Gmail-only conversations to reply without an RT ticket route", () => {
+    const source = readFileSync("src/app/api/mailbox-proxy/[...path]/route.ts", "utf8");
+    const body = functionBody(source, "handleReply");
+
+    expect(source).toContain('proxyPath.match(/^\\/conversations\\/([^/]+)\\/threads$/)');
+    expect(source).toContain("return handleReply(request, session.tenantId, session.id, replyMatch[1])");
+    expect(body).toContain("const token = parseConversationToken(conversationToken)");
+    expect(body).toContain("where: conversationWhere(mailbox.id, token)");
+    expect(body).toContain("if (conversation.rtTicketId != null)");
+    expect(body).toContain("fetchThreadMessages(conversation.gmailThreadId)");
+    expect(body).toContain("rtTicketId: conversation.rtTicketId");
+    expect(body).toContain("if (conversation.rtTicketId != null) {");
+  });
+
+  it("fetches Gmail-only conversation detail from All Mail and repairs articleCount", () => {
+    const source = readFileSync("src/app/api/mailbox-proxy/[...path]/route.ts", "utf8");
+    const body = functionBody(source, "handleGetConversation");
+
+    expect(body).toContain("fetchThreadMessages(conversation.gmailThreadId)");
+    expect(body).toContain("messageCount !== conversation.articleCount");
+    expect(body).toContain("articleCount: messageCount");
+    expect(body).toContain("displayType: message.fromEmail?.toLowerCase() === mailbox.email.toLowerCase() ? \"app_reply\" as const : \"email\" as const");
+    expect(body).not.toContain("body: link.rfcMessageId ? `Message-ID: ${link.rfcMessageId}`");
+  });
 });

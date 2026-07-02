@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildMonthlyResponseSummary,
+  buildResponseSummary,
   classifyResponseMetric,
   createResponseMetricService,
   durationMsBetween,
+  latestReplyAfterStart,
 } from "../src/lib/mailboxes/response-metrics";
 
 describe("mailbox response metrics", () => {
@@ -93,6 +95,20 @@ describe("mailbox response metrics", () => {
     }, now).overdue).toBe(false);
   });
 
+  it("ignores outbound messages that happened before the customer start", () => {
+    const startedAt = new Date("2026-06-24T23:52:55.000Z");
+    const result = latestReplyAfterStart(
+      [
+        new Date("2026-06-24T23:52:54.000Z"),
+        new Date("2026-06-24T23:53:10.000Z"),
+      ],
+      startedAt,
+    );
+
+    expect(result?.toISOString()).toBe("2026-06-24T23:53:10.000Z");
+    expect(latestReplyAfterStart([new Date("2026-06-24T23:52:54.000Z")], startedAt)).toBeNull();
+  });
+
   it("builds monthly summary by responseStartedAt month", () => {
     const summary = buildMonthlyResponseSummary([
       {
@@ -118,5 +134,26 @@ describe("mailbox response metrics", () => {
       }),
       expect.objectContaining({ reportMonth: "2026-06", totalConversations: 1, unrepliedConversations: 1 }),
     ]);
+  });
+
+  it("averages only conversations that have an admin reply", () => {
+    const summary = buildResponseSummary("range", [
+      {
+        responseStartedAt: new Date("2026-06-01T10:00:00Z"),
+        latestAdminReplyAt: new Date("2026-06-01T10:10:00Z"),
+        latestAdminReplyActorUserId: "user-1",
+        responseDurationMs: BigInt(600_000),
+      },
+      {
+        responseStartedAt: new Date("2026-06-02T10:00:00Z"),
+        latestAdminReplyAt: null,
+        latestAdminReplyActorUserId: null,
+        responseDurationMs: null,
+      },
+    ], new Date("2026-06-02T11:00:00Z"));
+
+    expect(summary.totalConversations).toBe(2);
+    expect(summary.repliedConversations).toBe(1);
+    expect(summary.averageResponseDurationMs).toBe(600_000);
   });
 });

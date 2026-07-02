@@ -13,8 +13,12 @@ export interface GmailMessageMetadata {
   subject?: string;
   fromEmail?: string;
   fromName?: string;
+  toEmail?: string;
+  toName?: string;
   flags: string[];
   labels: string[];
+  body?: string;
+  contentType?: string;
 }
 
 export interface GmailLabelDescriptor {
