@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import Redis from "ioredis";
 import type { Worker } from "bullmq";
 
 type ClosableWorker = Pick<Worker, "close" | "on">;
@@ -31,6 +32,8 @@ function loadStandaloneWorkerEnv() {
 }
 
 async function startWorkers() {
+  await assertRedisWritable();
+
   const [
     { startMockupCompositeWorker },
     { startPrintifyMockupPollWorker },
@@ -69,6 +72,29 @@ async function startWorkers() {
   gmailLabelOperationsWorker.on("ready", () => {
     console.log("Gmail label operations worker is ready and listening to queue.");
   });
+}
+
+async function assertRedisWritable() {
+  const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+  const redis = new Redis(redisUrl, {
+    lazyConnect: true,
+    enableOfflineQueue: false,
+    maxRetriesPerRequest: 1,
+  });
+  const key = `mockupai:worker:writable-check:${process.pid}`;
+  try {
+    await redis.connect();
+    await redis.set(key, "1", "PX", 10_000);
+    await redis.del(key);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("READONLY")) {
+      throw new Error("REDIS_URL points to a read-only replica; set it to the writable Redis primary.");
+    }
+    throw error;
+  } finally {
+    redis.disconnect();
+  }
 }
 
 async function shutdown() {
