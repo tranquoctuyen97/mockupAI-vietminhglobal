@@ -281,7 +281,7 @@ export async function syncMailbox(
       email: mailbox.email,
       appPassword,
       initialSyncAfter: mailbox.initialSyncAfter,
-      lastCommittedUid: BigInt(0),
+      lastCommittedUid: effectiveLastCommittedUid,
     });
     if (
       mailbox.syncCursor?.uidValidity
@@ -289,6 +289,12 @@ export async function syncMailbox(
       && mailbox.syncCursor.lastCommittedUid > BigInt(0)
     ) {
       effectiveLastCommittedUid = BigInt(0);
+      scan = await deps.scanInbox({
+        email: mailbox.email,
+        appPassword,
+        initialSyncAfter: mailbox.initialSyncAfter,
+        lastCommittedUid: effectiveLastCommittedUid,
+      });
     }
     const skippedSenders = deps.loadSkippedSenders
       ? await deps.loadSkippedSenders(mailbox.id)

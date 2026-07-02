@@ -19,4 +19,6 @@ test("mailbox sync reconnects orphan Gmail links to RT conversations", () => {
   assert.match(source, /committedUid && committedUid > lastCommittedUid/);
   assert.match(source, /!link\.conversationId \|\| !link\.rtTicketId \|\| !link\.rtTransactionId/);
   assert.match(source, /rtTransactionId:\s*mailgateIdentity\?\.transactionId/);
+  assert.match(source, /lastCommittedUid:\s*effectiveLastCommittedUid/);
+  assert.doesNotMatch(source, /lastCommittedUid:\s*BigInt\(0\),\n\s*\}\);\n\s*if \(/);
 });
