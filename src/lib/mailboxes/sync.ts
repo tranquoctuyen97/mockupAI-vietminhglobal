@@ -17,7 +17,8 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_RUNTIME_DIR = process.env.MAILBOX_RUNTIME_DIR ?? "/run/mockupai-mailboxes";
 const GETMAIL_TIMEOUT_MS = Number(process.env.MAILBOX_GETMAIL_TIMEOUT_MS ?? 600_000);
 const MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS = Number(process.env.MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS ?? 60_000);
-const RECENT_ORPHAN_BACKFILL_LIMIT = Number(process.env.MAILBOX_RECENT_ORPHAN_BACKFILL_LIMIT ?? 20_000);
+const RECENT_ORPHAN_BACKFILL_LIMIT = Number(process.env.MAILBOX_RECENT_ORPHAN_BACKFILL_LIMIT ?? 500);
+const ORPHAN_BACKFILL_FETCH_BATCH_SIZE = Number(process.env.MAILBOX_ORPHAN_BACKFILL_FETCH_BATCH_SIZE ?? 100);
 
 export interface MailboxSyncDeps {
   findMailbox(mailboxId: string): Promise<SyncMailboxRecord | null>;
@@ -156,10 +157,17 @@ export async function backfillRecentOrphanLinks(mailbox: SyncMailboxRecord, appP
       gmailInternalDate: true,
     },
   });
-  const gmailMessages = appPassword
-    ? await createGmailAdapter({ email: mailbox.email, appPassword }).fetchInboxByUids(links.map((link) => link.imapUid))
-    : { messages: [] };
-  const gmailMessageByUid = new Map(gmailMessages.messages.map((message) => [message.uid.toString(), message]));
+  const gmailMessageByUid = new Map<string, GmailMessageMetadata>();
+  if (appPassword) {
+    const gmail = createGmailAdapter({ email: mailbox.email, appPassword });
+    for (let index = 0; index < links.length; index += ORPHAN_BACKFILL_FETCH_BATCH_SIZE) {
+      const batch = links.slice(index, index + ORPHAN_BACKFILL_FETCH_BATCH_SIZE);
+      const gmailMessages = await gmail.fetchInboxByUids(batch.map((link) => link.imapUid));
+      for (const message of gmailMessages.messages) {
+        gmailMessageByUid.set(message.uid.toString(), message);
+      }
+    }
+  }
 
   for (const link of links) {
     if (!link.rfcMessageId) continue;
