@@ -853,6 +853,8 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
                 rtTicketId: conversation?.rtTicketId,
                 direction,
                 gmailInternalDate: message.internalDate,
+                body: message.body,
+                contentType: message.contentType,
               },
             });
             imported += 1;
@@ -884,6 +886,8 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
                 conversationId: conversation.id,
                 rtTicketId: conversation.rtTicketId,
                 rtTransactionId: link.rtTransactionId,
+                body: message.body,
+                contentType: message.contentType,
               },
             });
           } else {
@@ -891,7 +895,12 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
             if (link.direction !== direction && direction === "OUTBOUND") {
               link = await tx.gmailMessageLink.update({
                 where: { id: link.id },
-                data: { direction },
+                data: { direction, body: message.body, contentType: message.contentType },
+              });
+            } else if (message.body || message.contentType) {
+              link = await tx.gmailMessageLink.update({
+                where: { id: link.id },
+                data: { body: message.body, contentType: message.contentType },
               });
             }
           }

@@ -1241,6 +1241,8 @@ model GmailMessageLink {
   rtTransactionId Int?                  @map("rt_transaction_id")
   direction         GmailMessageDirection
   gmailInternalDate DateTime?             @map("gmail_internal_date")
+  body              String?
+  contentType       String?               @map("content_type")
   createdAt         DateTime              @default(now()) @map("created_at")
   updatedAt         DateTime              @updatedAt @map("updated_at")
   mailbox           Mailbox               @relation(fields: [mailboxId], references: [id], onDelete: Cascade)

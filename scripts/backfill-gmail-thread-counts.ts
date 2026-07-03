@@ -49,6 +49,7 @@ async function backfillMailbox(mailbox: { id: string; email: string }, limit: nu
   let unchanged = 0;
   let skipped = 0;
   let failed = 0;
+  let cachedBodies = 0;
 
   for (const conversation of conversations) {
     checked += 1;
@@ -62,6 +63,16 @@ async function backfillMailbox(mailbox: { id: string; email: string }, limit: nu
       const latestMessage = thread.messages.at(-1);
       const lastActivityAt = latestMessage?.internalDate ?? null;
       const latestMessagePreview = latestMessage ? summarizeMessagePreview(latestMessage) : null;
+      if (!dryRun) {
+        for (const message of thread.messages) {
+          if (!message.body && !message.contentType) continue;
+          const result = await prisma.gmailMessageLink.updateMany({
+            where: { mailboxId: mailbox.id, gmailMessageId: message.gmailMessageId },
+            data: { body: message.body, contentType: message.contentType },
+          });
+          cachedBodies += result.count;
+        }
+      }
       const needsUpdate =
         messageCount !== conversation.articleCount
         || lastActivityAt?.getTime() !== conversation.lastActivityAt?.getTime()
@@ -88,7 +99,7 @@ async function backfillMailbox(mailbox: { id: string; email: string }, limit: nu
     }
   }
 
-  console.log(`[backfill] mailboxId=${mailbox.id} checked=${checked} updated=${updated} unchanged=${unchanged} skipped=${skipped} failed=${failed} dryRun=${dryRun}`);
+  console.log(`[backfill] mailboxId=${mailbox.id} checked=${checked} updated=${updated} unchanged=${unchanged} skipped=${skipped} failed=${failed} cachedBodies=${cachedBodies} dryRun=${dryRun}`);
 }
 
 async function main() {

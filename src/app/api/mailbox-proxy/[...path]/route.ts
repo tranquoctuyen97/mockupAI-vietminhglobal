@@ -42,6 +42,22 @@ function errorJson(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
 }
 
+const GMAIL_DETAIL_TIMEOUT_MS = 12_000;
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 function summarizeMessagePreview(body: string | null | undefined, contentType?: string | null): string | null {
   const trimmed = body?.trim();
   if (!trimmed) return null;
@@ -98,6 +114,57 @@ function normalizeGmailThreadMessage(input: {
     attachments: [],
     createdAt: input.message.internalDate.toISOString(),
   };
+}
+
+function normalizeCachedGmailThreadMessage(input: {
+  link: {
+    gmailMessageId: string;
+    gmailInternalDate: Date | null;
+    createdAt: Date;
+    body: string | null;
+    contentType: string | null;
+    direction: "INBOUND" | "OUTBOUND";
+  };
+  conversationId: string | number;
+  fallbackSubject?: string | null;
+}) {
+  return {
+    id: `gmail-${input.link.gmailMessageId}`,
+    conversationId: input.conversationId,
+    subject: input.fallbackSubject ?? undefined,
+    body: input.link.body ?? "",
+    contentType: input.link.contentType ?? "text/plain",
+    from: undefined,
+    to: undefined,
+    cc: "",
+    type: input.link.direction === "OUTBOUND" ? "app_reply" : "email",
+    sender: undefined,
+    internal: false,
+    hidden: false,
+    displayType: input.link.direction === "OUTBOUND" ? "app_reply" as const : "email" as const,
+    attachments: [],
+    createdAt: (input.link.gmailInternalDate ?? input.link.createdAt).toISOString(),
+  };
+}
+
+async function cachedGmailThreadMessages(mailboxId: string, conversationId: string, expectedCount: number | null | undefined) {
+  const links = await prisma.gmailMessageLink.findMany({
+    where: {
+      mailboxId,
+      conversationId,
+      body: { not: null },
+    },
+    orderBy: [{ gmailInternalDate: "asc" }, { createdAt: "asc" }],
+    select: {
+      gmailMessageId: true,
+      gmailInternalDate: true,
+      createdAt: true,
+      body: true,
+      contentType: true,
+      direction: true,
+    },
+  });
+  return links.length > 0 && (!expectedCount || links.length >= expectedCount) ? links : null;
 }
 
 async function repairResponseMetricFromGmailThread(input: {
@@ -750,17 +817,65 @@ async function handleGetConversation(
   });
   if (!conversation) return errorJson("Conversation not found", 404);
   if (conversation.rtTicketId == null) {
-    const [threadResult, internalNotes] = await Promise.all([
-      createGmailAdapter({
-        email: mailbox.email,
-        appPassword: await getDecryptedAppPassword(mailbox.id),
-      }).fetchThreadMessages(conversation.gmailThreadId),
-      prisma.mailboxInternalNote.findMany({
-        where: { mailboxId: mailbox.id, conversationId: conversation.id },
-        orderBy: { createdAt: "asc" },
-        include: { actor: { select: { email: true } } },
-      }),
-    ]);
+    const cachedLinks = await cachedGmailThreadMessages(mailbox.id, conversation.id, conversation.articleCount);
+    if (cachedLinks) {
+      const id = `gmail:${conversation.id}`;
+      const [internalNotes] = await Promise.all([
+        prisma.mailboxInternalNote.findMany({
+          where: { mailboxId: mailbox.id, conversationId: conversation.id },
+          orderBy: { createdAt: "asc" },
+          include: { actor: { select: { email: true } } },
+        }),
+      ]);
+      const threads = [
+        ...cachedLinks.map((link) => normalizeCachedGmailThreadMessage({
+          link,
+          conversationId: id,
+          fallbackSubject: conversation.subject,
+        })),
+        ...internalNotes.map((note) => ({
+          id: `note-${note.id}`,
+          conversationId: id,
+          subject: "Internal note",
+          body: note.body,
+          contentType: "text/plain",
+          from: note.actor.email,
+          to: mailbox.email,
+          cc: "",
+          type: "comment",
+          sender: note.actor.email,
+          internal: true,
+          hidden: false,
+          displayType: "internal" as const,
+          attachments: [],
+          createdAt: note.createdAt.toISOString(),
+        })),
+      ].sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+
+      return json({
+        conversation: normalizeMailboxConversationListRow(conversation),
+        gmailThreadId: conversation.gmailThreadId,
+        threads,
+      });
+    }
+    let threadResult;
+    try {
+      threadResult = await withTimeout(
+        createGmailAdapter({
+          email: mailbox.email,
+          appPassword: await getDecryptedAppPassword(mailbox.id),
+        }).fetchThreadMessages(conversation.gmailThreadId),
+        GMAIL_DETAIL_TIMEOUT_MS,
+        "Gmail thread fetch timed out",
+      );
+    } catch {
+      return errorJson("Gmail thread fetch timed out", 504);
+    }
+    const internalNotes = await prisma.mailboxInternalNote.findMany({
+      where: { mailboxId: mailbox.id, conversationId: conversation.id },
+      orderBy: { createdAt: "asc" },
+      include: { actor: { select: { email: true } } },
+    });
     const messageCount = threadResult.messages.length;
     const latestMessageAt = threadResult.messages.at(-1)?.internalDate;
     await repairResponseMetricFromGmailThread({
@@ -828,14 +943,10 @@ async function handleGetConversation(
   }
   const ticketId = conversation.rtTicketId;
 
-  const [ticketResult, historyResult, attachmentResult, threadResult] = await Promise.all([
+  const [ticketResult, historyResult, attachmentResult] = await Promise.all([
     getTicket(ticketId),
     getTicketTransactions(ticketId),
     getTicketAttachmentDetails(ticketId),
-    createGmailAdapter({
-      email: mailbox.email,
-      appPassword: await getDecryptedAppPassword(mailbox.id),
-    }).fetchThreadMessages(conversation.gmailThreadId),
   ]);
   if (!ticketResult.ok || !ticketResult.data || !historyResult.ok || !historyResult.data) {
     return errorJson("Mailbox upstream unavailable", 502);
@@ -848,6 +959,7 @@ async function handleGetConversation(
   );
   if (ticketQueueId !== mailbox.rtQueueId) return errorJson("Conversation not found", 404);
 
+  const cachedLinks = await cachedGmailThreadMessages(mailbox.id, conversation.id, conversation.articleCount);
   const rtDisplayThreads = enrichThreadsForDisplay({
     threads: historyResult.data.items,
     attachments: attachmentResult.ok && attachmentResult.data ? attachmentResult.data : [],
@@ -855,23 +967,52 @@ async function handleGetConversation(
     customerEmail: conversation.senderEmail,
     fallbackSubject: ticket.Subject ?? null,
   });
-  const gmailThreads = threadResult.messages.map((message) => normalizeGmailThreadMessage({
-    message,
-    conversationId: ticketId,
-    fallbackSubject: ticket.Subject ?? conversation.subject,
-    mailboxEmail: mailbox.email,
-  }));
+  let threadResult: { messages: GmailMessageMetadata[] } = { messages: [] };
+  if (!cachedLinks) {
+    try {
+      threadResult = await withTimeout(
+        createGmailAdapter({
+          email: mailbox.email,
+          appPassword: await getDecryptedAppPassword(mailbox.id),
+        }).fetchThreadMessages(conversation.gmailThreadId),
+        GMAIL_DETAIL_TIMEOUT_MS,
+        "Gmail thread fetch timed out",
+      );
+    } catch (error) {
+      console.warn("[MailboxProxy] Gmail detail fetch timed out; falling back to RT history", {
+        conversationId: conversation.id,
+        gmailThreadId: conversation.gmailThreadId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  const gmailThreads = cachedLinks
+    ? cachedLinks.map((link) => normalizeCachedGmailThreadMessage({
+        link,
+        conversationId: ticketId,
+        fallbackSubject: ticket.Subject ?? conversation.subject,
+      }))
+    : threadResult.messages.map((message) => normalizeGmailThreadMessage({
+        message,
+        conversationId: ticketId,
+        fallbackSubject: ticket.Subject ?? conversation.subject,
+        mailboxEmail: mailbox.email,
+      }));
   const displayThreads = gmailThreads.length > 0 ? gmailThreads : rtDisplayThreads;
   const messageCount = gmailThreads.length;
-  const latestMessageAt = threadResult.messages.at(-1)?.internalDate;
-  await repairResponseMetricFromGmailThread({
-    tenantId: mailbox.tenantId,
-    storeId: mailbox.storeId,
-    mailboxId: mailbox.id,
-    mailboxEmail: mailbox.email,
-    conversationId: conversation.id,
-    messages: threadResult.messages,
-  });
+  const latestMessageAt = cachedLinks
+    ? cachedLinks.at(-1)?.gmailInternalDate ?? cachedLinks.at(-1)?.createdAt
+    : threadResult.messages.at(-1)?.internalDate;
+  if (threadResult.messages.length > 0) {
+    await repairResponseMetricFromGmailThread({
+      tenantId: mailbox.tenantId,
+      storeId: mailbox.storeId,
+      mailboxId: mailbox.id,
+      mailboxEmail: mailbox.email,
+      conversationId: conversation.id,
+      messages: threadResult.messages,
+    });
+  }
   if (
     messageCount > 0
     && (
@@ -1195,6 +1336,8 @@ async function handleReply(
       rtTicketId: conversation.rtTicketId,
       direction: "OUTBOUND",
       gmailInternalDate: sent.internalDate,
+      body: parsed.data.text,
+      contentType: "text/plain",
     },
   });
   if (composerAttachments.length > 0) {

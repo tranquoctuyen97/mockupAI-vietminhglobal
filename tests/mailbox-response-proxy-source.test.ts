@@ -1,17 +1,26 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+function functionBody(source: string, name: string) {
+  const start = source.indexOf(`async function ${name}`);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const next = source.indexOf("\nasync function ", start + 1);
+  return source.slice(start, next === -1 ? undefined : next);
+}
+
 describe("mailbox response proxy hooks", () => {
   const source = readFileSync("src/app/api/mailbox-proxy/[...path]/route.ts", "utf8");
 
   it("updates response metrics only after outbound Gmail link persistence", () => {
-    expect(source).toContain("mailboxResponseMetrics.recordAdminReply");
-    expect(source.indexOf("await prisma.gmailMessageLink.create")).toBeLessThan(
-      source.indexOf("mailboxResponseMetrics.recordAdminReply"),
+    const body = functionBody(source, "handleReply");
+
+    expect(body).toContain("mailboxResponseMetrics.recordAdminReply");
+    expect(body.indexOf("await prisma.gmailMessageLink.create")).toBeLessThan(
+      body.indexOf("mailboxResponseMetrics.recordAdminReply"),
     );
-    expect(source).toContain("actorUserId");
-    expect(source).toContain("const repliedAt = sent.internalDate");
-    expect(source).toContain("repliedAt,");
+    expect(body).toContain("actorUserId");
+    expect(body).toContain("const repliedAt = sent.internalDate");
+    expect(body).toContain("repliedAt,");
   });
 
   it("exposes summary and overdue response metric proxy routes", () => {

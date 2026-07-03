@@ -94,9 +94,12 @@ describe("mailbox proxy source", () => {
     const source = readFileSync("src/app/api/mailbox-proxy/[...path]/route.ts", "utf8");
     const body = functionBody(source, "handleGetConversation");
 
-    expect(body).toContain("threadResult] = await Promise.all");
+    expect(body).toContain("withTimeout(");
+    expect(body).toContain("Gmail detail fetch timed out; falling back to RT history");
+    expect(body).toContain("cachedGmailThreadMessages(mailbox.id, conversation.id, conversation.articleCount)");
+    expect(body).toContain("normalizeCachedGmailThreadMessage");
     expect(body).toContain("fetchThreadMessages(conversation.gmailThreadId)");
-    expect(body).toContain("const gmailThreads = threadResult.messages.map");
+    expect(body).toContain(": threadResult.messages.map");
     expect(body).toContain("const displayThreads = gmailThreads.length > 0 ? gmailThreads : rtDisplayThreads");
     expect(body).toContain("articleCount: messageCount > 0 ? messageCount : conversation.articleCount");
   });
