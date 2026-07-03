@@ -6,7 +6,7 @@ test("mailbox sync reconnects orphan Gmail links to RT conversations", () => {
   const source = readFileSync("src/lib/mailboxes/sync.ts", "utf8");
 
   assert.match(source, /findMailgateIdentity/);
-  assert.match(source, /RECENT_ORPHAN_BACKFILL_LIMIT.*500/);
+  assert.match(source, /RECENT_ORPHAN_BACKFILL_LIMIT.*0/);
   assert.match(source, /ORPHAN_BACKFILL_FETCH_BATCH_SIZE.*100/);
   assert.match(source, /function backfillRecentOrphanLinks/);
   assert.match(source, /parseEmailIdentity/);
@@ -19,6 +19,19 @@ test("mailbox sync reconnects orphan Gmail links to RT conversations", () => {
   assert.match(source, /Number\(right\.uid - left\.uid\)/);
   assert.match(source, /committedUid && committedUid > lastCommittedUid/);
   assert.match(source, /const observedNames = \[\.\.\.new Set\(\["inbox", \.\.\.message\.labels\.map\(normalizeObservedLabel\)\]\)\]/);
+  assert.match(source, /scanSent/);
+  assert.match(source, /\.\.\.scan\.messages, \.\.\.sentScan\.messages/);
+  assert.match(source, /function isOutboundGmailMessage/);
+  assert.match(source, /message\.labels\.map\(normalizeObservedLabel\)\.includes\("sent"\)/);
+  assert.match(source, /const direction = isOutboundGmailMessage\(message\) \? "OUTBOUND" : "INBOUND"/);
+  assert.match(source, /link\.direction !== direction && direction === "OUTBOUND"/);
+  assert.match(source, /adminReplyMetricInputs\.push/);
+  assert.match(source, /recordAdminReply/);
+  assert.match(source, /articleCount: messageCount/);
+  assert.match(source, /mailboxResponseMetric\.upsert/);
+  assert.match(source, /const inbound = links\.find\(\(link\) => link\.direction === "INBOUND"\)/);
+  assert.match(source, /const latestReply = responseStartedAt/);
+  assert.match(source, /durationMsBetween\(responseStartedAt, latestAdminReplyAt\)/);
   assert.match(source, /gmailOnly \+= 1/);
   assert.match(source, /return message\.uid/);
   assert.match(source, /lastCommittedUid:\s*effectiveLastCommittedUid/);

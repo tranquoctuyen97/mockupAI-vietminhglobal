@@ -1037,6 +1037,7 @@ enum MailboxSyncStatus {
 enum GmailLabelType {
   USER
   INBOX
+  SENT
   IMPORTANT
   STARRED
 }
@@ -1162,6 +1163,7 @@ model MailboxConversation {
   subject        String?               @map("subject")
   senderName     String?               @map("sender_name")
   senderEmail    String?               @map("sender_email")
+  latestMessagePreview String?         @map("latest_message_preview")
   status         String                @default("active")
   isUnread       Boolean               @default(false) @map("is_unread")
   articleCount   Int                   @default(0) @map("article_count")

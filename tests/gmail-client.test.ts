@@ -23,6 +23,12 @@ function mockClient(overrides: Record<string, unknown> = {}) {
       flags: new Set<string>(),
       labels: new Set(["\\Inbox", "Support/Test"]),
       headers: Buffer.from("Message-ID: <one@example.com>\r\n"),
+      source: Buffer.from([
+        "Message-ID: <one@example.com>",
+        "Content-Type: text/plain; charset=UTF-8",
+        "",
+        "Latest customer body",
+      ].join("\r\n")),
     }]),
     fetchOne: vi.fn()
       .mockResolvedValueOnce({ uid: 1, flags: new Set<string>(), labels: new Set(["\\Inbox", "Support/Test"]) })
@@ -52,7 +58,7 @@ describe("Gmail IMAP adapter", () => {
     }));
   });
 
-  it("scans Inbox metadata without reading the message", async () => {
+  it("scans Inbox metadata with source for list previews", async () => {
     const client = mockClient();
     const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, () => client as never);
 
@@ -60,8 +66,7 @@ describe("Gmail IMAP adapter", () => {
 
     expect(client.getMailboxLock).toHaveBeenCalledWith("INBOX");
     expect(client.search).toHaveBeenCalledWith({ since: new Date("2026-01-01") }, { uid: true });
-    expect(client.fetchAll).toHaveBeenCalledWith([1], expect.objectContaining({ flags: true, labels: true, threadId: true, headers: ["message-id"], internalDate: true, envelope: true }), { uid: true });
-    expect(client.fetchAll.mock.calls[0][1]).not.toHaveProperty("source");
+    expect(client.fetchAll).toHaveBeenCalledWith([1], expect.objectContaining({ flags: true, labels: true, threadId: true, headers: ["message-id"], internalDate: true, envelope: true, source: true }), { uid: true });
     expect(result.messages[0]).toMatchObject({
       gmailMessageId: "msg-1",
       gmailThreadId: "thread-1",
@@ -70,6 +75,8 @@ describe("Gmail IMAP adapter", () => {
       fromEmail: "customer@example.test",
       fromName: "Customer",
       flags: [],
+      body: "Latest customer body",
+      contentType: "text/plain",
     });
   });
 
@@ -82,6 +89,19 @@ describe("Gmail IMAP adapter", () => {
     expect(client.search).toHaveBeenCalledWith({ since: new Date("2026-01-01") }, { uid: true });
     expect(client.fetchAll).toHaveBeenCalledWith([1], expect.anything(), { uid: true });
     expect(client.fetchAll).not.toHaveBeenCalledWith("161:*", expect.anything(), { uid: true });
+  });
+
+  it("scans Sent metadata from the Gmail Sent mailbox", async () => {
+    const client = mockClient({
+      list: vi.fn().mockResolvedValue([{ path: "[Gmail]/Sent Mail", specialUse: "\\Sent" }]),
+    });
+    const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, () => client as never);
+
+    const result = await adapter.scanSent({ initialSyncAfter: new Date("2026-01-01") });
+
+    expect(client.getMailboxLock).toHaveBeenCalledWith("[Gmail]/Sent Mail");
+    expect(client.search).toHaveBeenCalledWith({ since: new Date("2026-01-01") }, { uid: true });
+    expect(result.messages[0]?.labels).toContain("sent");
   });
 
   it("skips Inbox messages with incomplete Gmail metadata instead of failing the sync", async () => {

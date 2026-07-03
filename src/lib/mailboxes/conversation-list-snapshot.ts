@@ -8,6 +8,7 @@ export type MailboxConversationListRow = {
   articleCount: number;
   senderName: string | null;
   senderEmail: string | null;
+  latestMessagePreview?: string | null;
   lastActivityAt: Date | null;
   rtCreatedAt: Date | null;
   rtLastUpdatedAt: Date | null;
@@ -17,7 +18,7 @@ export type MailboxConversationListRow = {
     label: {
       id: string;
       name: string;
-      type: "USER" | "INBOX" | "IMPORTANT" | "STARRED";
+      type: "USER" | "INBOX" | "SENT" | "IMPORTANT" | "STARRED";
       isMutable: boolean;
       state: string;
     };
@@ -38,6 +39,7 @@ export function normalizeMailboxConversationListRow(row: MailboxConversationList
   const updatedAt = row.lastActivityAt ?? row.rtLastUpdatedAt ?? row.updatedAt;
   const createdAt = row.rtCreatedAt ?? row.createdAt;
   const conversationId = row.rtTicketId == null ? `gmail:${row.id}` : String(row.rtTicketId);
+  const latestMessagePreview = row.latestMessagePreview?.trim() || null;
 
   return {
     id: conversationId,
@@ -50,6 +52,7 @@ export function normalizeMailboxConversationListRow(row: MailboxConversationList
     articleCount: row.articleCount,
     fromName: row.senderName?.trim() || row.senderEmail?.trim() || "Unknown sender",
     fromEmail: row.senderEmail?.trim() || "",
+    ...(latestMessagePreview ? { latestMessagePreview } : {}),
     labels: row.labels.map((join) => ({
       id: join.label.id,
       name: join.label.name,

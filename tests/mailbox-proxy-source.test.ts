@@ -85,7 +85,19 @@ describe("mailbox proxy source", () => {
     expect(body).toContain("fetchThreadMessages(conversation.gmailThreadId)");
     expect(body).toContain("messageCount !== conversation.articleCount");
     expect(body).toContain("articleCount: messageCount");
-    expect(body).toContain("displayType: message.fromEmail?.toLowerCase() === mailbox.email.toLowerCase() ? \"app_reply\" as const : \"email\" as const");
+    expect(source).toContain("function normalizeGmailThreadMessage");
+    expect(source).toContain("displayType: fromEmail === mailboxEmail ? \"app_reply\" as const : \"email\" as const");
     expect(body).not.toContain("body: link.rfcMessageId ? `Message-ID: ${link.rfcMessageId}`");
+  });
+
+  it("uses live Gmail thread messages for RT-backed conversation detail counts", () => {
+    const source = readFileSync("src/app/api/mailbox-proxy/[...path]/route.ts", "utf8");
+    const body = functionBody(source, "handleGetConversation");
+
+    expect(body).toContain("threadResult] = await Promise.all");
+    expect(body).toContain("fetchThreadMessages(conversation.gmailThreadId)");
+    expect(body).toContain("const gmailThreads = threadResult.messages.map");
+    expect(body).toContain("const displayThreads = gmailThreads.length > 0 ? gmailThreads : rtDisplayThreads");
+    expect(body).toContain("articleCount: messageCount > 0 ? messageCount : conversation.articleCount");
   });
 });

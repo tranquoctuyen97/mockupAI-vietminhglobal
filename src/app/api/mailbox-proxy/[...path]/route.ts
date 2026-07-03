@@ -5,12 +5,14 @@ import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { getDecryptedAppPassword } from "@/lib/mailboxes/credentials";
 import { normalizeMailboxConversationListRow } from "@/lib/mailboxes/conversation-list-snapshot";
+import { htmlToReadableText, isHtmlEmail } from "@/lib/mailboxes/email-body-renderer";
 import { createLabelOperation, normalizeGmailLabelName } from "@/lib/mailboxes/labels";
 import { createGmailAdapter } from "@/lib/mailboxes/gmail-client";
 import { parseEmailIdentity } from "@/lib/mailboxes/identity";
 import { sendGmailThreadReply } from "@/lib/mailboxes/gmail-reply";
 import { buildGmailReplyContext } from "@/lib/mailboxes/reply-context";
 import { buildMonthlyResponseSummary, buildResponseSummary, mailboxResponseMetrics } from "@/lib/mailboxes/response-metrics";
+import type { GmailMessageMetadata } from "@/lib/mailboxes/types";
 import {
   createLabelSchema,
   internalNoteSchema,
@@ -40,6 +42,16 @@ function errorJson(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
 }
 
+function summarizeMessagePreview(body: string | null | undefined, contentType?: string | null): string | null {
+  const trimmed = body?.trim();
+  if (!trimmed) return null;
+  const text = (isHtmlEmail(contentType, trimmed) ? htmlToReadableText(trimmed) : trimmed)
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return null;
+  return text.length > 180 ? `${text.slice(0, 180)}...` : text;
+}
+
 function parsePath(segments: string[]): string {
   return `/${segments.join("/")}`;
 }
@@ -59,6 +71,66 @@ function conversationWhere(mailboxId: string, token: ConversationToken) {
   return token.rtTicketId
     ? { mailboxId, rtTicketId: token.rtTicketId }
     : { mailboxId, id: token.conversationId };
+}
+
+function normalizeGmailThreadMessage(input: {
+  message: GmailMessageMetadata;
+  conversationId: string | number;
+  fallbackSubject?: string | null;
+  mailboxEmail: string;
+}) {
+  const mailboxEmail = input.mailboxEmail.toLowerCase();
+  const fromEmail = input.message.fromEmail?.toLowerCase();
+  return {
+    id: `gmail-${input.message.gmailMessageId}`,
+    conversationId: input.conversationId,
+    subject: input.message.subject ?? input.fallbackSubject ?? undefined,
+    body: input.message.body ?? "",
+    contentType: input.message.contentType ?? "text/plain",
+    from: input.message.fromName && input.message.fromEmail ? `${input.message.fromName} <${input.message.fromEmail}>` : input.message.fromEmail,
+    to: input.message.toName && input.message.toEmail ? `${input.message.toName} <${input.message.toEmail}>` : input.message.toEmail,
+    cc: "",
+    type: fromEmail === mailboxEmail ? "app_reply" : "email",
+    sender: input.message.fromEmail,
+    internal: false,
+    hidden: false,
+    displayType: fromEmail === mailboxEmail ? "app_reply" as const : "email" as const,
+    attachments: [],
+    createdAt: input.message.internalDate.toISOString(),
+  };
+}
+
+async function repairResponseMetricFromGmailThread(input: {
+  tenantId: string;
+  storeId: string;
+  mailboxId: string;
+  mailboxEmail: string;
+  conversationId: string;
+  messages: GmailMessageMetadata[];
+}) {
+  const mailboxEmail = input.mailboxEmail.trim().toLowerCase();
+  const ordered = [...input.messages].sort((left, right) => left.internalDate.getTime() - right.internalDate.getTime());
+  const inbound = ordered.find((message) => message.fromEmail?.trim().toLowerCase() !== mailboxEmail);
+  if (!inbound) return null;
+  await mailboxResponseMetrics.recordCustomerMessage({
+    tenantId: input.tenantId,
+    storeId: input.storeId,
+    mailboxId: input.mailboxId,
+    conversationId: input.conversationId,
+    messageAt: inbound.internalDate,
+  });
+  const latestReply = [...ordered].reverse().find((message) =>
+    message.fromEmail?.trim().toLowerCase() === mailboxEmail
+    && message.internalDate.getTime() >= inbound.internalDate.getTime()
+  );
+  if (latestReply) {
+    await mailboxResponseMetrics.recordAdminReply({
+      conversationId: input.conversationId,
+      actorUserId: null,
+      repliedAt: latestReply.internalDate,
+    });
+  }
+  return { responseStartedAt: inbound.internalDate, latestAdminReplyAt: latestReply?.internalDate ?? null };
 }
 
 async function resolveGmailConversation(
@@ -690,30 +762,40 @@ async function handleGetConversation(
       }),
     ]);
     const messageCount = threadResult.messages.length;
-    if (messageCount > 0 && messageCount !== conversation.articleCount) {
+    const latestMessageAt = threadResult.messages.at(-1)?.internalDate;
+    await repairResponseMetricFromGmailThread({
+      tenantId: mailbox.tenantId,
+      storeId: mailbox.storeId,
+      mailboxId: mailbox.id,
+      mailboxEmail: mailbox.email,
+      conversationId: conversation.id,
+      messages: threadResult.messages,
+    });
+    if (
+      messageCount > 0
+      && (
+        messageCount !== conversation.articleCount
+        || latestMessageAt?.getTime() !== conversation.lastActivityAt?.getTime()
+        || !conversation.latestMessagePreview
+      )
+    ) {
+      const latestMessage = threadResult.messages.at(-1);
       await prisma.mailboxConversation.update({
         where: { id: conversation.id },
-        data: { articleCount: messageCount },
+        data: {
+          articleCount: messageCount,
+          ...(latestMessageAt ? { lastActivityAt: latestMessageAt } : {}),
+          ...(latestMessage ? { latestMessagePreview: summarizeMessagePreview(latestMessage.body, latestMessage.contentType) } : {}),
+        },
       });
     }
     const id = `gmail:${conversation.id}`;
     const threads = [
-      ...threadResult.messages.map((message) => ({
-        id: `gmail-${message.gmailMessageId}`,
+      ...threadResult.messages.map((message) => normalizeGmailThreadMessage({
+        message,
         conversationId: id,
-        subject: message.subject ?? conversation.subject ?? undefined,
-        body: message.body ?? "",
-        contentType: message.contentType ?? "text/plain",
-        from: message.fromName && message.fromEmail ? `${message.fromName} <${message.fromEmail}>` : message.fromEmail,
-        to: message.toName && message.toEmail ? `${message.toName} <${message.toEmail}>` : message.toEmail,
-        cc: "",
-        type: message.fromEmail?.toLowerCase() === mailbox.email.toLowerCase() ? "app_reply" : "email",
-        sender: message.fromEmail,
-        internal: false,
-        hidden: false,
-        displayType: message.fromEmail?.toLowerCase() === mailbox.email.toLowerCase() ? "app_reply" as const : "email" as const,
-        attachments: [],
-        createdAt: message.internalDate.toISOString(),
+        fallbackSubject: conversation.subject,
+        mailboxEmail: mailbox.email,
       })),
       ...internalNotes.map((note) => ({
         id: `note-${note.id}`,
@@ -738,6 +820,7 @@ async function handleGetConversation(
       conversation: {
         ...normalizeMailboxConversationListRow(conversation),
         articleCount: messageCount > 0 ? messageCount : conversation.articleCount,
+        updatedAt: latestMessageAt?.toISOString() ?? normalizeMailboxConversationListRow(conversation).updatedAt,
       },
       gmailThreadId: conversation.gmailThreadId,
       threads,
@@ -745,28 +828,68 @@ async function handleGetConversation(
   }
   const ticketId = conversation.rtTicketId;
 
-  const [ticketResult, historyResult, attachmentResult] = await Promise.all([
+  const [ticketResult, historyResult, attachmentResult, threadResult] = await Promise.all([
     getTicket(ticketId),
     getTicketTransactions(ticketId),
     getTicketAttachmentDetails(ticketId),
+    createGmailAdapter({
+      email: mailbox.email,
+      appPassword: await getDecryptedAppPassword(mailbox.id),
+    }).fetchThreadMessages(conversation.gmailThreadId),
   ]);
   if (!ticketResult.ok || !ticketResult.data || !historyResult.ok || !historyResult.data) {
     return errorJson("Mailbox upstream unavailable", 502);
   }
+  const ticket = ticketResult.data;
   const ticketQueueId = Number(
-    typeof ticketResult.data.Queue === "object"
-      ? ticketResult.data.Queue?.id
-      : ticketResult.data.Queue,
+    typeof ticket.Queue === "object"
+      ? ticket.Queue?.id
+      : ticket.Queue,
   );
   if (ticketQueueId !== mailbox.rtQueueId) return errorJson("Conversation not found", 404);
 
-  const displayThreads = enrichThreadsForDisplay({
+  const rtDisplayThreads = enrichThreadsForDisplay({
     threads: historyResult.data.items,
     attachments: attachmentResult.ok && attachmentResult.data ? attachmentResult.data : [],
     mailboxEmail: mailbox.email,
     customerEmail: conversation.senderEmail,
-    fallbackSubject: ticketResult.data.Subject ?? null,
+    fallbackSubject: ticket.Subject ?? null,
   });
+  const gmailThreads = threadResult.messages.map((message) => normalizeGmailThreadMessage({
+    message,
+    conversationId: ticketId,
+    fallbackSubject: ticket.Subject ?? conversation.subject,
+    mailboxEmail: mailbox.email,
+  }));
+  const displayThreads = gmailThreads.length > 0 ? gmailThreads : rtDisplayThreads;
+  const messageCount = gmailThreads.length;
+  const latestMessageAt = threadResult.messages.at(-1)?.internalDate;
+  await repairResponseMetricFromGmailThread({
+    tenantId: mailbox.tenantId,
+    storeId: mailbox.storeId,
+    mailboxId: mailbox.id,
+    mailboxEmail: mailbox.email,
+    conversationId: conversation.id,
+    messages: threadResult.messages,
+  });
+  if (
+    messageCount > 0
+    && (
+      messageCount !== conversation.articleCount
+      || latestMessageAt?.getTime() !== conversation.lastActivityAt?.getTime()
+      || !conversation.latestMessagePreview
+    )
+  ) {
+    const latestMessage = threadResult.messages.at(-1);
+    await prisma.mailboxConversation.update({
+      where: { id: conversation.id },
+      data: {
+        articleCount: messageCount,
+        ...(latestMessageAt ? { lastActivityAt: latestMessageAt } : {}),
+        ...(latestMessage ? { latestMessagePreview: summarizeMessagePreview(latestMessage.body, latestMessage.contentType) } : {}),
+      },
+    });
+  }
   const internalNotes = await prisma.mailboxInternalNote.findMany({
     where: { mailboxId: mailbox.id, conversationId: conversation.id },
     orderBy: { createdAt: "asc" },
@@ -814,7 +937,7 @@ async function handleGetConversation(
   return json({
     conversation: {
       ...normalizeRtTicket(
-        ticketResult.data,
+        ticket,
         mailbox.id,
         mailbox.labels.map((label) => ({
           id: label.id,
@@ -824,8 +947,9 @@ async function handleGetConversation(
       ),
       fromName: sender.name || conversation.senderName || undefined,
       fromEmail: sender.email || conversation.senderEmail || undefined,
+      articleCount: messageCount > 0 ? messageCount : conversation.articleCount,
       unread: conversation.isUnread,
-      updatedAt: conversation.lastActivityAt?.toISOString() ?? conversation.updatedAt.toISOString(),
+      updatedAt: latestMessageAt?.toISOString() ?? conversation.lastActivityAt?.toISOString() ?? conversation.updatedAt.toISOString(),
     },
     gmailThreadId: conversation.gmailThreadId,
     threads: mergedThreads,
@@ -1109,6 +1233,7 @@ async function handleReply(
       articleCount: { increment: 1 },
       rtLastUpdatedAt: repliedAt,
       lastActivityAt: repliedAt,
+      latestMessagePreview: summarizeMessagePreview(parsed.data.text, "text/plain"),
     },
   });
 

@@ -29,7 +29,7 @@ export type GmailImapFactory = (options: ImapFlowOptions) => GmailImapClient;
 
 const DEFAULT_ALL_MAIL = "[Gmail]/All Mail";
 const PROTECTED_NAMES = new Set(["inbox", "important", "starred"]);
-const HIDDEN_SPECIAL_USES = new Set(["\\All", "\\Junk", "\\Trash", "\\Sent", "\\Drafts", "\\Archive"]);
+const HIDDEN_SPECIAL_USES = new Set(["\\All", "\\Junk", "\\Trash", "\\Drafts", "\\Archive"]);
 const FETCH_METADATA: FetchQueryObject = {
   uid: true,
   flags: true,
@@ -175,6 +175,8 @@ function parseBody(source?: Buffer): { body: string; contentType: string } {
 function toMetadata(message: FetchMessageObject, uidValidity: bigint): GmailMessageMetadata {
   if (!message.emailId || !message.threadId) throw new Error("gmail_metadata_incomplete");
   const sender = message.envelope?.from?.[0];
+  const recipient = message.envelope?.to?.[0];
+  const parsed = message.source ? parseBody(message.source) : null;
   return {
     uid: BigInt(message.uid),
     uidValidity,
@@ -185,8 +187,11 @@ function toMetadata(message: FetchMessageObject, uidValidity: bigint): GmailMess
     subject: message.envelope?.subject || undefined,
     fromEmail: sender?.address || undefined,
     fromName: sender?.name || undefined,
+    toEmail: recipient?.address || undefined,
+    toName: recipient?.name || undefined,
     flags: [...(message.flags ?? [])],
     labels: [...(message.labels ?? [])],
+    ...(parsed ? { body: parsed.body, contentType: parsed.contentType } : {}),
   };
 }
 
@@ -209,6 +214,7 @@ function compactMetadata(messages: FetchMessageObject[], uidValidity: bigint): G
 function systemDescriptor(mailbox: Pick<ListResponse, "path" | "specialUse">): GmailLabelDescriptor | null {
   const lowerPath = mailbox.path.toLocaleLowerCase("en-US");
   if (mailbox.specialUse === "\\Inbox" || lowerPath === "inbox") return { name: "INBOX", normalizedName: "inbox", type: "INBOX", mutable: false };
+  if (mailbox.specialUse === "\\Sent" || lowerPath.endsWith("/sent") || lowerPath === "sent") return { name: "SENT", normalizedName: "sent", type: "SENT", mutable: false };
   if (mailbox.specialUse === "\\Important" || lowerPath.endsWith("/important")) return { name: "IMPORTANT", normalizedName: "important", type: "IMPORTANT", mutable: false };
   if (mailbox.specialUse === "\\Flagged" || lowerPath.endsWith("/starred")) return { name: "STARRED", normalizedName: "starred", type: "STARRED", mutable: false };
   return null;
@@ -254,7 +260,7 @@ export function createGmailAdapter(
     try {
       const uidValidity = connection.mailbox && connection.mailbox.uidValidity;
       if (!uidValidity) throw new Error("gmail_uidvalidity_missing");
-      const fetched = await connection.fetchAll(range, FETCH_METADATA, { uid: true });
+      const fetched = await connection.fetchAll(range, FETCH_THREAD_MESSAGE, { uid: true });
       return {
         uidValidity,
         messages: compactMetadata(fetched, uidValidity).sort((a, b) => Number(a.uid - b.uid)),
@@ -333,8 +339,28 @@ export function createGmailAdapter(
         const uidValidity = connection.mailbox && connection.mailbox.uidValidity;
         if (!uidValidity) throw new Error("gmail_uidvalidity_missing");
         if (!uids || uids.length === 0) return { uidValidity, messages: [] };
-        const messages = await connection.fetchAll(uids, FETCH_METADATA, { uid: true });
+        const messages = await connection.fetchAll(uids, FETCH_THREAD_MESSAGE, { uid: true });
         return { uidValidity, messages: compactMetadata(messages, uidValidity).sort((a, b) => Number(a.uid - b.uid)) };
+      } finally {
+        lock.release();
+      }
+    }),
+
+    scanSent: (input: { initialSyncAfter: Date }) => withClient(async (connection) => {
+      const sentPath = (await connection.list()).find((mailbox) => mailbox.specialUse === "\\Sent")?.path ?? "[Gmail]/Sent Mail";
+      const lock = await connection.getMailboxLock(sentPath);
+      try {
+        const uids = await connection.search({ since: input.initialSyncAfter }, { uid: true });
+        const uidValidity = connection.mailbox && connection.mailbox.uidValidity;
+        if (!uidValidity) throw new Error("gmail_uidvalidity_missing");
+        if (!uids || uids.length === 0) return { uidValidity, messages: [] };
+        const messages = await connection.fetchAll(uids, FETCH_THREAD_MESSAGE, { uid: true });
+        return {
+          uidValidity,
+          messages: compactMetadata(messages, uidValidity)
+            .map((message) => ({ ...message, labels: [...new Set([...message.labels, "sent"])] }))
+            .sort((a, b) => Number(a.uid - b.uid)),
+        };
       } finally {
         lock.release();
       }
@@ -358,7 +384,7 @@ export function createGmailAdapter(
           continue;
         }
       }
-      return (["INBOX", "IMPORTANT", "STARRED"] as const)
+      return (["INBOX", "SENT", "IMPORTANT", "STARRED"] as const)
         .map((type) => system.get(type))
         .filter((label): label is GmailLabelDescriptor => Boolean(label))
         .concat(user.sort((a, b) => a.name.localeCompare(b.name)));

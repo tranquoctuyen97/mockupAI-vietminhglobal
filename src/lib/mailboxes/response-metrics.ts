@@ -32,7 +32,7 @@ export interface ResponseMetricRepository {
   updateAdminReply(input: {
     conversationId: string;
     latestAdminReplyAt: Date;
-    latestAdminReplyActorUserId: string;
+    latestAdminReplyActorUserId: string | null;
     responseDurationMs: bigint;
   }): Promise<void>;
   listForSummary(input: {
@@ -146,7 +146,7 @@ export function createResponseMetricService(repository: ResponseMetricRepository
         responseStartedAt: input.messageAt,
       });
     },
-    async recordAdminReply(input: { conversationId: string; actorUserId: string; repliedAt: Date }) {
+    async recordAdminReply(input: { conversationId: string; actorUserId: string | null; repliedAt: Date }) {
       const metric = await repository.findByConversationId(input.conversationId);
       if (!metric) throw new Error("response_metric_missing");
       await repository.updateAdminReply({
@@ -276,11 +276,25 @@ async function rebuildMailboxResponseMetrics(
 
 export const mailboxResponseMetrics = createResponseMetricService({
   async createIfMissing(input) {
-    await prisma.mailboxResponseMetric.upsert({
+    const existing = await prisma.mailboxResponseMetric.findUnique({
       where: { conversationId: input.conversationId },
-      create: input,
-      update: {},
+      select: { responseStartedAt: true, latestAdminReplyAt: true },
     });
+    if (!existing) {
+      await prisma.mailboxResponseMetric.create({ data: input });
+      return { created: true };
+    }
+    if (input.responseStartedAt.getTime() < existing.responseStartedAt.getTime()) {
+      await prisma.mailboxResponseMetric.update({
+        where: { conversationId: input.conversationId },
+        data: {
+          responseStartedAt: input.responseStartedAt,
+          responseDurationMs: existing.latestAdminReplyAt
+            ? durationMsBetween(input.responseStartedAt, existing.latestAdminReplyAt)
+            : null,
+        },
+      });
+    }
     return { created: true };
   },
   async findByConversationId(conversationId) {
