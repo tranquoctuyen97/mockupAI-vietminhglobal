@@ -52,9 +52,10 @@ describe("mailbox sync state machine", () => {
       persistLabelCatalog: vi.fn().mockResolvedValue(undefined),
       reconcileInboxState: vi.fn().mockResolvedValue(undefined),
       persist: vi.fn()
-        .mockResolvedValueOnce({ imported: 1, inherited: 0, lastCommittedUid: BigInt(41), responseMetricInputs: [] })
-        .mockResolvedValueOnce({ imported: 0, inherited: 0, lastCommittedUid: BigInt(42), responseMetricInputs: [] }),
+        .mockResolvedValueOnce({ imported: 1, inherited: 0, lastCommittedUid: BigInt(41), responseMetricInputs: [], adminReplyMetricInputs: [] })
+        .mockResolvedValueOnce({ imported: 0, inherited: 0, lastCommittedUid: BigInt(42), responseMetricInputs: [], adminReplyMetricInputs: [] }),
       recordCustomerMessage: vi.fn().mockResolvedValue(undefined),
+      recordAdminReply: vi.fn().mockResolvedValue(undefined),
       materializeConfig: vi.fn().mockResolvedValue("/runtime/configs/mailbox-1.getmailrc"),
       runGetmail: vi.fn().mockResolvedValue(undefined),
       acquireLease: vi.fn().mockResolvedValue(true),
@@ -105,6 +106,7 @@ describe("mailbox sync state machine", () => {
       reconcileInboxState: vi.fn(),
       persist: vi.fn(),
       recordCustomerMessage: vi.fn(),
+      recordAdminReply: vi.fn().mockResolvedValue(undefined),
       materializeConfig: vi.fn(),
       runGetmail: vi.fn(),
       acquireLease: vi.fn().mockResolvedValue(true),
@@ -144,9 +146,10 @@ describe("mailbox sync state machine", () => {
       persistLabelCatalog: vi.fn().mockResolvedValue(undefined),
       reconcileInboxState: vi.fn().mockResolvedValue(undefined),
       persist: vi.fn()
-        .mockResolvedValueOnce({ imported: 1, inherited: 0, lastCommittedUid: BigInt(0), responseMetricInputs: [] })
-        .mockResolvedValueOnce({ imported: 0, inherited: 0, lastCommittedUid: BigInt(11), responseMetricInputs: [] }),
+        .mockResolvedValueOnce({ imported: 1, inherited: 0, lastCommittedUid: BigInt(0), responseMetricInputs: [], adminReplyMetricInputs: [] })
+        .mockResolvedValueOnce({ imported: 0, inherited: 0, lastCommittedUid: BigInt(11), responseMetricInputs: [], adminReplyMetricInputs: [] }),
       recordCustomerMessage: vi.fn().mockResolvedValue(undefined),
+      recordAdminReply: vi.fn().mockResolvedValue(undefined),
       materializeConfig: vi.fn().mockResolvedValue("/runtime/configs/mailbox-1.getmailrc"),
       runGetmail: vi.fn().mockResolvedValue(undefined),
       acquireLease: vi.fn().mockResolvedValue(true),
@@ -192,6 +195,7 @@ describe("mailbox sync state machine", () => {
       reconcileInboxState: vi.fn().mockResolvedValue(undefined),
       persist: vi.fn(),
       recordCustomerMessage: vi.fn().mockResolvedValue(undefined),
+      recordAdminReply: vi.fn().mockResolvedValue(undefined),
       materializeConfig: vi.fn(),
       runGetmail: vi.fn(),
       acquireLease: vi.fn().mockResolvedValue(true),
@@ -225,8 +229,9 @@ describe("mailbox sync state machine", () => {
       discoverLabels: vi.fn().mockResolvedValue([]),
       persistLabelCatalog: vi.fn().mockResolvedValue(undefined),
       reconcileInboxState: vi.fn().mockResolvedValue(undefined),
-      persist: vi.fn().mockResolvedValue({ imported: 0, inherited: 0, lastCommittedUid: BigInt(0), responseMetricInputs: [] }),
+      persist: vi.fn().mockResolvedValue({ imported: 0, inherited: 0, lastCommittedUid: BigInt(0), responseMetricInputs: [], adminReplyMetricInputs: [] }),
       recordCustomerMessage: vi.fn().mockResolvedValue(undefined),
+      recordAdminReply: vi.fn().mockResolvedValue(undefined),
       materializeConfig: vi.fn(),
       runGetmail: vi.fn(),
       acquireLease: vi.fn().mockResolvedValue(true),
@@ -266,6 +271,7 @@ describe("mailbox sync state machine", () => {
       reconcileInboxState: vi.fn(),
       persist: vi.fn(),
       recordCustomerMessage: vi.fn(),
+      recordAdminReply: vi.fn().mockResolvedValue(undefined),
       materializeConfig: vi.fn(),
       runGetmail: vi.fn(),
       acquireLease: vi.fn().mockResolvedValue(false),
@@ -314,8 +320,9 @@ describe("mailbox sync state machine", () => {
           labels: ["\\Inbox"],
         }],
       }),
-      persist: vi.fn().mockResolvedValue({ imported: 1, inherited: 0, lastCommittedUid: BigInt(0), responseMetricInputs: [] }),
+      persist: vi.fn().mockResolvedValue({ imported: 1, inherited: 0, lastCommittedUid: BigInt(0), responseMetricInputs: [], adminReplyMetricInputs: [] }),
       recordCustomerMessage: vi.fn().mockResolvedValue(undefined),
+      recordAdminReply: vi.fn().mockResolvedValue(undefined),
       materializeConfig: vi.fn().mockResolvedValue("/runtime/configs/mailbox-1.getmailrc"),
       runGetmail: vi.fn().mockRejectedValue(new Error("getmail_delivery_failed")),
       acquireLease: vi.fn().mockResolvedValue(true),
@@ -362,6 +369,7 @@ describe("mailbox sync state machine", () => {
       persistLabelCatalog: vi.fn().mockResolvedValue(undefined),
       reconcileInboxState: vi.fn().mockResolvedValue(undefined),
       recordCustomerMessage,
+      recordAdminReply: vi.fn().mockResolvedValue(undefined),
       persist: vi.fn()
         .mockResolvedValueOnce({
           imported: 1,
@@ -374,8 +382,9 @@ describe("mailbox sync state machine", () => {
             conversationId: "conversation-1",
             messageAt: new Date("2026-01-02T10:00:00Z"),
           }],
+          adminReplyMetricInputs: [],
         })
-        .mockResolvedValueOnce({ imported: 0, inherited: 0, lastCommittedUid: BigInt(42), responseMetricInputs: [] }),
+        .mockResolvedValueOnce({ imported: 0, inherited: 0, lastCommittedUid: BigInt(42), responseMetricInputs: [], adminReplyMetricInputs: [] }),
       materializeConfig: vi.fn().mockResolvedValue("/runtime/configs/mailbox-1.getmailrc"),
       runGetmail: vi.fn().mockResolvedValue(undefined),
       acquireLease: vi.fn().mockResolvedValue(true),

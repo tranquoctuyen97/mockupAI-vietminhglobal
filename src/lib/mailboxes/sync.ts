@@ -6,9 +6,10 @@ import { prisma } from "@/lib/db";
 import { findMailgateIdentity, getTicket, setTicketGmailLabels } from "@/lib/rt/client";
 import { provisionMailbox } from "@/lib/rt/provisioning";
 import { getDecryptedAppPassword } from "./credentials";
+import { htmlToReadableText, isHtmlEmail } from "./email-body-renderer";
 import { createGmailAdapter } from "./gmail-client";
 import { parseEmailIdentity } from "./identity";
-import { mailboxResponseMetrics } from "./response-metrics";
+import { durationMsBetween, mailboxResponseMetrics } from "./response-metrics";
 import { enqueueGmailLabelOperation } from "./queue";
 import { writeRuntimeMailboxConfig } from "./runtime-config";
 import type { GmailLabelDescriptor, GmailMessageMetadata } from "./types";
@@ -17,7 +18,8 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_RUNTIME_DIR = process.env.MAILBOX_RUNTIME_DIR ?? "/run/mockupai-mailboxes";
 const GETMAIL_TIMEOUT_MS = Number(process.env.MAILBOX_GETMAIL_TIMEOUT_MS ?? 600_000);
 const MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS = Number(process.env.MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS ?? 60_000);
-const RECENT_ORPHAN_BACKFILL_LIMIT = Number(process.env.MAILBOX_RECENT_ORPHAN_BACKFILL_LIMIT ?? 500);
+const MAILBOX_SYNC_LEASE_MS = Number(process.env.MAILBOX_SYNC_LEASE_MS ?? 90_000);
+const RECENT_ORPHAN_BACKFILL_LIMIT = Number(process.env.MAILBOX_RECENT_ORPHAN_BACKFILL_LIMIT ?? 0);
 const ORPHAN_BACKFILL_FETCH_BATCH_SIZE = Number(process.env.MAILBOX_ORPHAN_BACKFILL_FETCH_BATCH_SIZE ?? 100);
 
 export interface MailboxSyncDeps {
@@ -28,6 +30,11 @@ export interface MailboxSyncDeps {
     appPassword: string;
     initialSyncAfter: Date;
     lastCommittedUid: bigint;
+  }): Promise<{ uidValidity: bigint; messages: GmailMessageMetadata[] }>;
+  scanSent?(input: {
+    email: string;
+    appPassword: string;
+    initialSyncAfter: Date;
   }): Promise<{ uidValidity: bigint; messages: GmailMessageMetadata[] }>;
   loadSkippedSenders?(mailboxId: string): Promise<Set<string>>;
   moveInboxMessagesToSpam?(input: {
@@ -56,6 +63,11 @@ export interface MailboxSyncDeps {
       conversationId: string;
       messageAt: Date;
     }>;
+    adminReplyMetricInputs: Array<{
+      conversationId: string;
+      actorUserId: string | null;
+      repliedAt: Date;
+    }>;
   }>;
   recordCustomerMessage(input: {
     tenantId: string;
@@ -64,6 +76,7 @@ export interface MailboxSyncDeps {
     conversationId: string;
     messageAt: Date;
   }): Promise<unknown>;
+  recordAdminReply(input: { conversationId: string; actorUserId: string | null; repliedAt: Date }): Promise<unknown>;
   provisionMailbox(mailboxId: string): Promise<
     { status: "ACTIVE"; queueId: number } | { status: "DEGRADED"; errorCode: string }
   >;
@@ -106,6 +119,20 @@ function normalizeObservedLabel(name: string): string {
 
 function isUnreadInboxMessage(message: GmailMessageMetadata): boolean {
   return !message.flags.includes("\\Seen");
+}
+
+function isOutboundGmailMessage(message: GmailMessageMetadata): boolean {
+  return message.labels.map(normalizeObservedLabel).includes("sent");
+}
+
+function summarizeMessagePreview(message: Pick<GmailMessageMetadata, "body" | "contentType">): string | null {
+  const body = message.body?.trim();
+  if (!body) return null;
+  const text = (isHtmlEmail(message.contentType, body) ? htmlToReadableText(body) : body)
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return null;
+  return text.length > 180 ? `${text.slice(0, 180)}...` : text;
 }
 
 function normalizedSenderEmail(message: GmailMessageMetadata): string {
@@ -291,7 +318,7 @@ export async function syncMailbox(
   const acquired = await deps.acquireLease(
     mailbox.id,
     leaseOwner,
-    new Date(Date.now() + 5 * 60_000),
+    new Date(Date.now() + MAILBOX_SYNC_LEASE_MS),
   );
   if (!acquired) {
     console.log(`[MailboxSync] skip mailboxId=${mailbox.id} reason=lease_active`);
@@ -350,6 +377,10 @@ export async function syncMailbox(
         `[MailboxSync] inbox_rescanned mailboxId=${mailbox.id} reason=uid_validity_changed messages=${scan.messages.length} uidValidity=${scan.uidValidity}`,
       );
     }
+    const sentScan = deps.scanSent
+      ? await deps.scanSent({ email: mailbox.email, appPassword, initialSyncAfter: mailbox.initialSyncAfter })
+      : { uidValidity: scan.uidValidity, messages: [] };
+    console.log(`[MailboxSync] sent_scanned mailboxId=${mailbox.id} messages=${sentScan.messages.length}`);
     const skippedSenders = deps.loadSkippedSenders
       ? await deps.loadSkippedSenders(mailbox.id)
       : new Set<string>();
@@ -381,7 +412,7 @@ export async function syncMailbox(
     const indexed = await deps.persist({
       mailbox: mailboxAtEffectiveCursor,
       uidValidity: scan.uidValidity,
-      messages: scan.messages,
+      messages: [...scan.messages, ...sentScan.messages],
     });
     console.log(
       `[MailboxSync] persisted mailboxId=${mailbox.id} imported=${indexed.imported} inherited=${indexed.inherited} lastCommittedUid=${indexed.lastCommittedUid}`,
@@ -407,7 +438,7 @@ export async function syncMailbox(
     const reconciled = await deps.persist({
       mailbox: mailboxAtEffectiveCursor,
       uidValidity: scan.uidValidity,
-      messages: scan.messages,
+      messages: [...scan.messages, ...sentScan.messages],
     });
     await Promise.all(reconciled.responseMetricInputs.map((input) => deps.recordCustomerMessage(input)));
     await deps.reconcileInboxState({
@@ -472,9 +503,13 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
   getAppPassword: getDecryptedAppPassword,
   provisionMailbox: (mailboxId) => provisionMailbox(mailboxId),
   recordCustomerMessage: mailboxResponseMetrics.recordCustomerMessage,
+  recordAdminReply: mailboxResponseMetrics.recordAdminReply,
 
   scanInbox: ({ email, appPassword, initialSyncAfter, lastCommittedUid }) =>
     createGmailAdapter({ email, appPassword }).scanInbox({ initialSyncAfter, lastCommittedUid }),
+
+  scanSent: ({ email, appPassword, initialSyncAfter }) =>
+    createGmailAdapter({ email, appPassword }).scanSent({ initialSyncAfter }),
 
   discoverLabels: ({ email, appPassword }) =>
     createGmailAdapter({ email, appPassword }).listVisibleLabels(),
@@ -739,6 +774,7 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
         inherited: 0,
         lastCommittedUid: mailbox.syncCursor?.lastCommittedUid ?? BigInt(0),
         responseMetricInputs: [],
+        adminReplyMetricInputs: [],
       };
     }
 
@@ -758,6 +794,12 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
       conversationId: string;
       messageAt: Date;
     }> = [];
+    const adminReplyMetricInputs: Array<{
+      conversationId: string;
+      actorUserId: string | null;
+      repliedAt: Date;
+    }> = [];
+    const latestScannedMessageByConversation = new Map<string, GmailMessageMetadata>();
 
     console.log(
       `[MailboxSync] persist_start mailboxId=${mailbox.id} messages=${messages.length} cursor=${lastCommittedUid}`,
@@ -779,6 +821,7 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
             include: { labels: { include: { label: true } } },
           });
           if (!conversation) {
+            const latestMessagePreview = summarizeMessagePreview(message);
             conversation = await tx.mailboxConversation.create({
               data: {
                 mailboxId: mailbox.id,
@@ -786,6 +829,7 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
                 subject: message.subject?.trim() || null,
                 senderName: message.fromName,
                 senderEmail: message.fromEmail,
+                latestMessagePreview,
                 isUnread: isUnreadInboxMessage(message),
                 articleCount: 1,
                 lastActivityAt: message.internalDate,
@@ -796,6 +840,7 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
           }
 
           if (!link) {
+            const direction = isOutboundGmailMessage(message) ? "OUTBOUND" : "INBOUND";
             link = await tx.gmailMessageLink.create({
               data: {
                 mailboxId: mailbox.id,
@@ -806,8 +851,10 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
                 imapUid: message.uid,
                 uidValidity: message.uidValidity,
                 rtTicketId: conversation?.rtTicketId,
-                direction: "INBOUND",
+                direction,
                 gmailInternalDate: message.internalDate,
+                body: message.body,
+                contentType: message.contentType,
               },
             });
             imported += 1;
@@ -839,20 +886,48 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
                 conversationId: conversation.id,
                 rtTicketId: conversation.rtTicketId,
                 rtTransactionId: link.rtTransactionId,
+                body: message.body,
+                contentType: message.contentType,
               },
             });
+          } else {
+            const direction = isOutboundGmailMessage(message) ? "OUTBOUND" : "INBOUND";
+            if (link.direction !== direction && direction === "OUTBOUND") {
+              link = await tx.gmailMessageLink.update({
+                where: { id: link.id },
+                data: { direction, body: message.body, contentType: message.contentType },
+              });
+            } else if (message.body || message.contentType) {
+              link = await tx.gmailMessageLink.update({
+                where: { id: link.id },
+                data: { body: message.body, contentType: message.contentType },
+              });
+            }
           }
 
           if (!link.conversationId) return null;
           if (link.conversationId) {
             touchedConversationIds.add(link.conversationId);
+            const scannedLatest = latestScannedMessageByConversation.get(link.conversationId);
+            if (!scannedLatest || message.internalDate.getTime() > scannedLatest.internalDate.getTime()) {
+              latestScannedMessageByConversation.set(link.conversationId, message);
+            }
             const currentConversation = await tx.mailboxConversation.findUnique({
               where: { id: link.conversationId },
-              select: { subject: true, articleCount: true, rtLastUpdatedAt: true },
+              select: { subject: true, articleCount: true, rtLastUpdatedAt: true, lastActivityAt: true },
             });
+            const latestMessagePreview = summarizeMessagePreview(message);
+            const isLatestMessage = message.internalDate.getTime()
+              >= (currentConversation?.lastActivityAt?.getTime() ?? 0);
             const senderEmail = message.fromEmail?.trim().toLowerCase();
             const mailboxEmail = mailbox.email.trim().toLowerCase();
-            if (senderEmail && senderEmail !== mailboxEmail) {
+            if (isOutboundGmailMessage(message)) {
+              adminReplyMetricInputs.push({
+                conversationId: link.conversationId,
+                actorUserId: null,
+                repliedAt: message.internalDate,
+              });
+            } else if (senderEmail && senderEmail !== mailboxEmail) {
               responseMetricInputs.push({
                 tenantId: mailbox.tenantId,
                 storeId: mailbox.storeId,
@@ -864,15 +939,16 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
             await tx.mailboxConversation.update({
               where: { id: link.conversationId },
               data: {
-                subject: message.subject?.trim() || currentConversation?.subject,
-                ...(message.fromName ? { senderName: message.fromName } : {}),
-                ...(message.fromEmail ? { senderEmail: message.fromEmail } : {}),
-                isUnread: isUnreadInboxMessage(message),
+                ...(isLatestMessage ? { subject: message.subject?.trim() || currentConversation?.subject } : {}),
+                ...(isLatestMessage && message.fromName ? { senderName: message.fromName } : {}),
+                ...(isLatestMessage && message.fromEmail ? { senderEmail: message.fromEmail } : {}),
+                ...(isLatestMessage ? { isUnread: isUnreadInboxMessage(message) } : {}),
                 articleCount: currentConversation && currentConversation.articleCount > 0
                   ? currentConversation.articleCount
                   : 1,
                 rtLastUpdatedAt: currentConversation?.rtLastUpdatedAt ?? message.internalDate,
-                lastActivityAt: message.internalDate,
+                ...(isLatestMessage ? { lastActivityAt: message.internalDate } : {}),
+                ...(latestMessagePreview && isLatestMessage ? { latestMessagePreview } : {}),
               },
             });
             const observedNames = [...new Set(["inbox", ...message.labels.map(normalizeObservedLabel)])];
@@ -903,6 +979,55 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
       );
       if (committedUid && committedUid > lastCommittedUid) lastCommittedUid = committedUid;
       processed += 1;
+    }
+
+    for (const conversationId of touchedConversationIds) {
+      const links = await prisma.gmailMessageLink.findMany({
+        where: { mailboxId: mailbox.id, conversationId },
+        orderBy: { gmailInternalDate: "asc" },
+        select: { direction: true, gmailInternalDate: true, createdAt: true },
+      });
+      const messageCount = links.length;
+      const inbound = links.find((link) => link.direction === "INBOUND");
+      const responseStartedAt = inbound?.gmailInternalDate ?? inbound?.createdAt ?? null;
+      const latestReply = responseStartedAt
+        ? [...links].reverse().find((link) =>
+            link.direction === "OUTBOUND"
+            && (link.gmailInternalDate ?? link.createdAt).getTime() >= responseStartedAt.getTime()
+          )
+        : null;
+      const latestAdminReplyAt = latestReply ? latestReply.gmailInternalDate ?? latestReply.createdAt : null;
+      const latestMessage = [...links].reverse()[0];
+      const latestScannedMessage = latestScannedMessageByConversation.get(conversationId);
+      const latestMessagePreview = latestScannedMessage ? summarizeMessagePreview(latestScannedMessage) : null;
+      if (responseStartedAt) {
+        await prisma.mailboxResponseMetric.upsert({
+          where: { conversationId },
+          create: {
+            tenantId: mailbox.tenantId,
+            storeId: mailbox.storeId,
+            mailboxId: mailbox.id,
+            conversationId,
+            responseStartedAt,
+            latestAdminReplyAt,
+            responseDurationMs: latestAdminReplyAt ? durationMsBetween(responseStartedAt, latestAdminReplyAt) : null,
+          },
+          update: {
+            responseStartedAt,
+            latestAdminReplyAt,
+            latestAdminReplyActorUserId: null,
+            responseDurationMs: latestAdminReplyAt ? durationMsBetween(responseStartedAt, latestAdminReplyAt) : null,
+          },
+        });
+      }
+      await prisma.mailboxConversation.update({
+        where: { id: conversationId },
+        data: {
+          articleCount: messageCount,
+          ...(latestMessage ? { lastActivityAt: latestMessage.gmailInternalDate ?? latestMessage.createdAt } : {}),
+          ...(latestMessagePreview ? { latestMessagePreview } : {}),
+        },
+      });
     }
 
     await prisma.mailbox.update({
@@ -945,7 +1070,7 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
     console.log(
       `[MailboxSync] persist_done mailboxId=${mailbox.id} processed=${processed}/${messages.length} imported=${imported} inherited=${inherited} existingLinked=${existingLinked} gmailOnly=${gmailOnly} touchedConversations=${touchedConversationIds.size} lastCommittedUid=${lastCommittedUid} elapsedMs=${Date.now() - persistStartedAt}`,
     );
-    return { imported, inherited, lastCommittedUid, responseMetricInputs };
+    return { imported, inherited, lastCommittedUid, responseMetricInputs, adminReplyMetricInputs };
   },
 
   markError: (mailboxId, code, degraded) =>

@@ -361,9 +361,11 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
       }
       const tagsForShopify = selectTagsForShopify(printifyTagsForShopify, listing.tags);
 
-      // Pick a random primary color (rotates thumbnails) and order the upload so
-      // its media is first; the colors array order is preserved for the dropdown.
+      // Pick a random primary color (rotates thumbnails) and order Shopify color
+      // options/variants/media so the storefront default matches the thumbnail.
       const primaryColorName = pickPrimaryColorName(mockupImages);
+      colorsForShopify = orderColorsByPrimary(colorsForShopify, primaryColorName);
+      variantsForShopify = orderVariantsByPrimary(variantsForShopify, primaryColorName);
       const orderedMockupImages = orderMockupImagesByPrimary(
         mockupImages,
         colorsForShopify.map((c) => c.name),
@@ -1242,6 +1244,38 @@ export function orderMockupImagesByPrimary(
       return a.index - b.index; // stable within a color group
     })
     .map((entry) => entry.img);
+}
+
+export function orderColorsByPrimary<T extends { name: string }>(
+  colors: T[],
+  primaryColorName: string | null,
+): T[] {
+  if (!primaryColorName) return colors;
+  const primaryKey = normalizeColorName(primaryColorName);
+  return colors
+    .map((color, index) => ({ color, index }))
+    .sort((a, b) => {
+      const ar = normalizeColorName(a.color.name) === primaryKey ? -1 : a.index;
+      const br = normalizeColorName(b.color.name) === primaryKey ? -1 : b.index;
+      return ar - br;
+    })
+    .map((entry) => entry.color);
+}
+
+export function orderVariantsByPrimary<T extends { colorName: string }>(
+  variants: T[] | undefined,
+  primaryColorName: string | null,
+): T[] | undefined {
+  if (!variants || !primaryColorName) return variants;
+  const primaryKey = normalizeColorName(primaryColorName);
+  return variants
+    .map((variant, index) => ({ variant, index }))
+    .sort((a, b) => {
+      const ar = normalizeColorName(a.variant.colorName) === primaryKey ? -1 : a.index;
+      const br = normalizeColorName(b.variant.colorName) === primaryKey ? -1 : b.index;
+      return ar - br;
+    })
+    .map((entry) => entry.variant);
 }
 
 /**

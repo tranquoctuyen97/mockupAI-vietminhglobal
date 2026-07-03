@@ -30,6 +30,30 @@ describe("email body rendering helpers", () => {
     expect(text).toMatch(/Security alert\n+Review/);
   });
 
+  it("does not include email CSS in readable text snippets", () => {
+    const text = htmlToReadableText(
+      '<html><head><style>* { font-family:Roboto, Arial; }</style></head><body><p>Address not found</p></body></html>',
+    );
+
+    expect(text).toBe("Address not found");
+  });
+
+  it("excludes Gmail quoted replies from readable snippets", () => {
+    const text = htmlToReadableText(
+      '<div dir="ltr">ferfre</div><br><div class="gmail_quote gmail_quote_container"><div>On Fri, someone wrote:</div><blockquote>old</blockquote></div>',
+    );
+
+    expect(text).toBe("ferfre");
+  });
+
+  it("keeps body text when Gmail wraps the only content in a quote container", () => {
+    const text = htmlToReadableText(
+      '<div dir="ltr"><div class="gmail_quote gmail_quote_container"><blockquote><br>OK</blockquote></div></div>',
+    );
+
+    expect(text).toBe("OK");
+  });
+
   it("opens external links safely", () => {
     const html = sanitizeEmailHtml('<a href="https://example.com/path">open</a>', false);
 

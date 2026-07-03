@@ -24,7 +24,7 @@ export interface GmailMessageMetadata {
 export interface GmailLabelDescriptor {
   name: string;
   normalizedName: string;
-  type: "USER" | "INBOX" | "IMPORTANT" | "STARRED";
+  type: "USER" | "INBOX" | "SENT" | "IMPORTANT" | "STARRED";
   mutable: boolean;
 }
 

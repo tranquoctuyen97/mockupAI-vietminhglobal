@@ -15,7 +15,11 @@ export function isHtmlEmail(contentType: string | null | undefined, body: string
 }
 
 export function htmlToReadableText(html: string): string {
-  return html
+  const withoutBoilerplate = html.replace(/<(script|style|head)\b[\s\S]*?<\/\1>/gi, "");
+  const withoutQuote = withoutBoilerplate
+    .replace(/<(div|blockquote)\b[^>]*class=["'][^"']*\bgmail_quote\b[^"']*["'][\s\S]*$/i, "")
+    .trim();
+  const toText = (value: string) => value
     .replace(BLOCK_TAG_PATTERN, "\n")
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
@@ -28,6 +32,7 @@ export function htmlToReadableText(html: string): string {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  return toText(withoutQuote) || toText(withoutBoilerplate);
 }
 
 export function sanitizeEmailHtml(html: string, showImages = true): string {

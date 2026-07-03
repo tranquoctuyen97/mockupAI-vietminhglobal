@@ -4,7 +4,9 @@ import { describe, it } from "node:test";
 import type { ShopifyMockupImage } from "./shopify";
 import {
   normalizeExternalTags,
+  orderColorsByPrimary,
   orderMockupImagesByPrimary,
+  orderVariantsByPrimary,
   pickPrimaryColorName,
   resolvePrintifyTagsForShopify,
   resolvePublishVariantIds,
@@ -379,6 +381,36 @@ describe("orderMockupImagesByPrimary", () => {
   it("returns the input unchanged when there is no primary color", () => {
     const images = [img("Black", "b1"), img("White", "w1")];
     assert.deepEqual(orderMockupImagesByPrimary(images, ["Black", "White"], null), images);
+  });
+});
+
+describe("orderColorsByPrimary and orderVariantsByPrimary", () => {
+  it("moves the thumbnail color first for Shopify color options and variants", () => {
+    assert.deepEqual(
+      orderColorsByPrimary(
+        [
+          { name: "Black", hex: "#000" },
+          { name: "White", hex: "#fff" },
+          { name: "Navy", hex: "#001f3f" },
+        ],
+        "White",
+      ).map((color) => color.name),
+      ["White", "Black", "Navy"],
+    );
+
+    assert.deepEqual(
+      orderVariantsByPrimary(
+        [
+          { colorName: "Black", size: "S" },
+          { colorName: "Black", size: "M" },
+          { colorName: "White", size: "S" },
+          { colorName: "White", size: "M" },
+          { colorName: "Navy", size: "S" },
+        ],
+        "White",
+      )?.map((variant) => `${variant.colorName}/${variant.size}`),
+      ["White/S", "White/M", "Black/S", "Black/M", "Navy/S"],
+    );
   });
 });
 

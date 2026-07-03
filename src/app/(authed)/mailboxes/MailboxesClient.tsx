@@ -44,7 +44,7 @@ interface Mailbox {
 interface MailboxLabel {
   id: string;
   name: string;
-  type: "USER" | "INBOX" | "IMPORTANT" | "STARRED";
+  type: "USER" | "INBOX" | "SENT" | "IMPORTANT" | "STARRED";
   mutable: boolean;
   state: string;
   conversationCount?: number;
@@ -63,6 +63,7 @@ interface Conversation {
   articleCount: number;
   fromName?: string;
   fromEmail?: string;
+  latestMessagePreview?: string | null;
   labels?: MailboxLabel[];
   internalNotes?: InternalNotePreview[];
   responseMetric?: {
@@ -237,6 +238,8 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
   const isInboxView = selectedLabel?.type === "INBOX";
   const conversationListTitle = selectedLabel?.type === "INBOX"
     ? "Inbox"
+    : selectedLabel?.type === "SENT"
+      ? "Sent"
     : selectedLabel?.name ?? "All conversations";
   const readingConversation = Boolean(selectedConv);
   const inboxGridStyle = readingConversation
@@ -1433,6 +1436,7 @@ function FilterRail({
   onDeleteLabel: (label: MailboxLabel) => void;
 }) {
   const inboxLabel = labels.find((label) => label.type === "INBOX" && label.state === "ACTIVE") ?? null;
+  const sentLabel = labels.find((label) => label.type === "SENT" && label.state === "ACTIVE") ?? null;
   const userLabels = labels.filter((label) => label.type === "USER" && label.name !== "[Gmail]");
 
   if (collapsed) {
@@ -1460,6 +1464,19 @@ function FilterRail({
         >
           <Inbox size={16} />
         </button>
+        {sentLabel ? (
+          <button
+            type="button"
+            style={{
+              ...railIconButton,
+              ...(selectedLabelId === sentLabel.id ? railIconButtonActive : {}),
+            }}
+            title="Sent"
+            onClick={() => onLabel(sentLabel.id)}
+          >
+            <Send size={16} />
+          </button>
+        ) : null}
         {userLabels.map((label) => (
           <button
             key={label.id}
@@ -1508,6 +1525,15 @@ function FilterRail({
         count={inboxUnreadCount ?? undefined}
         onClick={inboxLabel ? () => onLabel(inboxLabel.id) : undefined}
       />
+      {sentLabel ? (
+        <RailButton
+          active={selectedLabelId === sentLabel.id}
+          dot="#7c3aed"
+          label="Sent"
+          count={sentLabel.conversationCount}
+          onClick={() => onLabel(sentLabel.id)}
+        />
+      ) : null}
       <RailHeader title="Response labels" />
       {userLabels.map((label) => (
         <LabelListRow
@@ -1988,6 +2014,11 @@ function ConversationRow({
         <div style={{ ...rowSubject, fontWeight: unread ? 800 : 500, color: unread ? "#101828" : "#667085" }}>
           {conversation.subject || "(no subject)"}
         </div>
+        {conversation.latestMessagePreview ? (
+          <div style={{ ...rowSnippet, fontWeight: unread ? 700 : 500 }}>
+            {conversation.latestMessagePreview}
+          </div>
+        ) : null}
         <div style={rowMeta}>
           {messageCount > 1 ? (
             <span style={messageCountBadge} title={`${messageCount} messages`}>

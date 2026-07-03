@@ -1,7 +1,9 @@
 import "dotenv/config";
 import { prisma } from "@/lib/db";
 import { getDecryptedAppPassword } from "@/lib/mailboxes/credentials";
+import { htmlToReadableText, isHtmlEmail } from "@/lib/mailboxes/email-body-renderer";
 import { createGmailAdapter } from "@/lib/mailboxes/gmail-client";
+import type { GmailMessageMetadata } from "@/lib/mailboxes/types";
 
 function argValue(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -13,12 +15,28 @@ function hasFlag(name: string): boolean {
   return process.argv.includes(name);
 }
 
+function summarizeMessagePreview(message: Pick<GmailMessageMetadata, "body" | "contentType">): string | null {
+  const body = message.body?.trim();
+  if (!body) return null;
+  const text = (isHtmlEmail(message.contentType, body) ? htmlToReadableText(body) : body)
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return null;
+  return text.length > 180 ? `${text.slice(0, 180)}...` : text;
+}
+
 async function backfillMailbox(mailbox: { id: string; email: string }, limit: number, dryRun: boolean) {
   const conversations = await prisma.mailboxConversation.findMany({
     where: { mailboxId: mailbox.id, gmailThreadId: { not: "" } },
     orderBy: { updatedAt: "desc" },
     take: limit,
-    select: { id: true, gmailThreadId: true, articleCount: true },
+    select: {
+      id: true,
+      gmailThreadId: true,
+      articleCount: true,
+      lastActivityAt: true,
+      latestMessagePreview: true,
+    },
   });
 
   const gmail = createGmailAdapter({
@@ -31,6 +49,7 @@ async function backfillMailbox(mailbox: { id: string; email: string }, limit: nu
   let unchanged = 0;
   let skipped = 0;
   let failed = 0;
+  let cachedBodies = 0;
 
   for (const conversation of conversations) {
     checked += 1;
@@ -41,12 +60,33 @@ async function backfillMailbox(mailbox: { id: string; email: string }, limit: nu
         skipped += 1;
         continue;
       }
-      if (messageCount !== conversation.articleCount) {
+      const latestMessage = thread.messages.at(-1);
+      const lastActivityAt = latestMessage?.internalDate ?? null;
+      const latestMessagePreview = latestMessage ? summarizeMessagePreview(latestMessage) : null;
+      if (!dryRun) {
+        for (const message of thread.messages) {
+          if (!message.body && !message.contentType) continue;
+          const result = await prisma.gmailMessageLink.updateMany({
+            where: { mailboxId: mailbox.id, gmailMessageId: message.gmailMessageId },
+            data: { body: message.body, contentType: message.contentType },
+          });
+          cachedBodies += result.count;
+        }
+      }
+      const needsUpdate =
+        messageCount !== conversation.articleCount
+        || lastActivityAt?.getTime() !== conversation.lastActivityAt?.getTime()
+        || Boolean(latestMessagePreview && latestMessagePreview !== conversation.latestMessagePreview);
+      if (needsUpdate) {
         updated += 1;
         if (!dryRun) {
           await prisma.mailboxConversation.update({
             where: { id: conversation.id },
-            data: { articleCount: messageCount },
+            data: {
+              articleCount: messageCount,
+              ...(lastActivityAt ? { lastActivityAt } : {}),
+              ...(latestMessagePreview ? { latestMessagePreview } : {}),
+            },
           });
         }
       } else {
@@ -59,7 +99,7 @@ async function backfillMailbox(mailbox: { id: string; email: string }, limit: nu
     }
   }
 
-  console.log(`[backfill] mailboxId=${mailbox.id} checked=${checked} updated=${updated} unchanged=${unchanged} skipped=${skipped} failed=${failed} dryRun=${dryRun}`);
+  console.log(`[backfill] mailboxId=${mailbox.id} checked=${checked} updated=${updated} unchanged=${unchanged} skipped=${skipped} failed=${failed} cachedBodies=${cachedBodies} dryRun=${dryRun}`);
 }
 
 async function main() {
