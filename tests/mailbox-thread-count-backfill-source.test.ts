@@ -7,6 +7,7 @@ describe("gmail thread count backfill script source", () => {
     expect(source).toContain("--mailbox-id");
     expect(source).toContain("--dry-run");
     expect(source).toContain("--limit");
+    expect(source).toContain("--sleep-ms");
     expect(source).toContain("where: mailboxId ? { id: mailboxId, isActive: true } : { isActive: true }");
     expect(source).toContain("mailboxes.length === 0");
     expect(source).not.toContain("mailboxId required");
@@ -16,12 +17,15 @@ describe("gmail thread count backfill script source", () => {
     expect(source).toContain("fetchThreadMessages(conversation.gmailThreadId)");
     expect(source).toContain("messageCount !== conversation.articleCount");
     expect(source).toContain("articleCount: messageCount");
+    expect(source).toContain("messages: { some: { body: null } }");
     expect(source).toContain("dryRun");
   });
 
   it("continues after per-thread failures and prints a summary", () => {
     expect(source).toContain("failed += 1");
     expect(source).toContain("continue");
+    expect(source).toContain("isGmailRateLimitError(error)");
+    expect(source).toContain("GMAIL_RATE_LIMIT_ERROR_CODE");
     expect(source).toContain("checked=");
     expect(source).toContain("updated=");
     expect(source).toContain("unchanged=");

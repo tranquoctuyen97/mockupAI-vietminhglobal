@@ -35,5 +35,8 @@ test("mailbox sync reconnects orphan Gmail links to RT conversations", () => {
   assert.match(source, /gmailOnly \+= 1/);
   assert.match(source, /return message\.uid/);
   assert.match(source, /lastCommittedUid:\s*effectiveLastCommittedUid/);
+  assert.match(source, /GMAIL_RATE_LIMIT_ERROR_CODE/);
+  assert.match(source, /isGmailRateLimitError/);
+  assert.match(source, /code === GMAIL_RATE_LIMIT_ERROR_CODE/);
   assert.doesNotMatch(source, /lastCommittedUid:\s*BigInt\(0\),\n\s*\}\);\n\s*if \(/);
 });

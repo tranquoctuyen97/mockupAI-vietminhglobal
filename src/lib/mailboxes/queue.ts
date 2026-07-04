@@ -5,6 +5,7 @@ import {
   getMailboxSyncQueue,
   MAILBOX_SYNC_QUEUE_NAME,
 } from "@/lib/queue/queue";
+import { GMAIL_RATE_LIMIT_ERROR_CODE } from "./gmail-errors";
 
 export interface MailboxSyncJobPayload {
   mailboxId: string;
@@ -16,6 +17,7 @@ export interface GmailLabelOperationJobPayload {
 
 export const MAILBOX_SYNC_SCHEDULER_JOB_ID = "mailbox-sync-scheduler";
 export const MAILBOX_SYNC_POLL_INTERVAL_MS = Number(process.env.MAILBOX_SYNC_POLL_INTERVAL_MS ?? 60_000);
+export const MAILBOX_SYNC_RATE_LIMIT_BACKOFF_MS = Number(process.env.MAILBOX_SYNC_RATE_LIMIT_BACKOFF_MS ?? 60 * 60_000);
 
 export async function enqueueMailboxSync(
   mailboxId: string,
@@ -69,7 +71,14 @@ export async function scheduleMailboxSyncDispatcher(
 export async function dispatchActiveMailboxSyncs() {
   const [mailboxes, pendingLabelOperations] = await Promise.all([
     prisma.mailbox.findMany({
-      where: { isActive: true, syncStatus: { in: ["PROVISIONING", "ACTIVE", "DEGRADED"] } },
+      where: {
+        isActive: true,
+        syncStatus: { in: ["PROVISIONING", "ACTIVE", "DEGRADED"] },
+        NOT: {
+          lastSyncErrorCode: GMAIL_RATE_LIMIT_ERROR_CODE,
+          updatedAt: { gt: new Date(Date.now() - MAILBOX_SYNC_RATE_LIMIT_BACKOFF_MS) },
+        },
+      },
       select: { id: true },
     }),
     prisma.gmailLabelOperation.findMany({

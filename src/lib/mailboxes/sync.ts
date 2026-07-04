@@ -7,6 +7,7 @@ import { findMailgateIdentity, getTicket, setTicketGmailLabels } from "@/lib/rt/
 import { provisionMailbox } from "@/lib/rt/provisioning";
 import { getDecryptedAppPassword } from "./credentials";
 import { htmlToReadableText, isHtmlEmail } from "./email-body-renderer";
+import { GMAIL_RATE_LIMIT_ERROR_CODE, gmailErrorDetails, isGmailRateLimitError } from "./gmail-errors";
 import { createGmailAdapter } from "./gmail-client";
 import { parseEmailIdentity } from "./identity";
 import { durationMsBetween, mailboxResponseMetrics } from "./response-metrics";
@@ -457,8 +458,20 @@ export async function syncMailbox(
     };
   } catch (error) {
     const code = safeSyncErrorCode(error);
-    console.log(`[MailboxSync] failed mailboxId=${mailboxId} code=${code} elapsedMs=${Date.now() - startedAt}`);
+    const details = gmailErrorDetails(error);
+    console.log(
+      `[MailboxSync] failed mailboxId=${mailboxId} code=${code} errorCode=${details.code ?? ""} reason=${details.reason ?? ""} message=${details.message} elapsedMs=${Date.now() - startedAt}`,
+    );
     await deps.markError(mailboxId, code, isPermanentSyncError(code));
+    if (code === GMAIL_RATE_LIMIT_ERROR_CODE) {
+      return {
+        mailboxId,
+        skipped: true,
+        imported: 0,
+        inherited: 0,
+        lastCommittedUid: mailbox?.syncCursor?.lastCommittedUid ?? BigInt(0),
+      };
+    }
     throw error;
   } finally {
     if (mailbox) await deps.releaseLease(mailbox.id, leaseOwner).catch(() => undefined);
@@ -466,6 +479,7 @@ export async function syncMailbox(
 }
 
 function safeSyncErrorCode(error: unknown): string {
+  if (isGmailRateLimitError(error)) return GMAIL_RATE_LIMIT_ERROR_CODE;
   if (error instanceof Error && error.message && /^[a-z0-9_:-]+$/i.test(error.message)) {
     return error.message.slice(0, 120);
   }

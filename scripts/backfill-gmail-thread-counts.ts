@@ -2,6 +2,7 @@ import "dotenv/config";
 import { prisma } from "@/lib/db";
 import { getDecryptedAppPassword } from "@/lib/mailboxes/credentials";
 import { htmlToReadableText, isHtmlEmail } from "@/lib/mailboxes/email-body-renderer";
+import { GMAIL_RATE_LIMIT_ERROR_CODE, isGmailRateLimitError } from "@/lib/mailboxes/gmail-errors";
 import { createGmailAdapter } from "@/lib/mailboxes/gmail-client";
 import type { GmailMessageMetadata } from "@/lib/mailboxes/types";
 
@@ -15,6 +16,10 @@ function hasFlag(name: string): boolean {
   return process.argv.includes(name);
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function summarizeMessagePreview(message: Pick<GmailMessageMetadata, "body" | "contentType">): string | null {
   const body = message.body?.trim();
   if (!body) return null;
@@ -25,9 +30,13 @@ function summarizeMessagePreview(message: Pick<GmailMessageMetadata, "body" | "c
   return text.length > 180 ? `${text.slice(0, 180)}...` : text;
 }
 
-async function backfillMailbox(mailbox: { id: string; email: string }, limit: number, dryRun: boolean) {
+async function backfillMailbox(mailbox: { id: string; email: string }, limit: number, sleepMs: number, dryRun: boolean) {
   const conversations = await prisma.mailboxConversation.findMany({
-    where: { mailboxId: mailbox.id, gmailThreadId: { not: "" } },
+    where: {
+      mailboxId: mailbox.id,
+      gmailThreadId: { not: "" },
+      messages: { some: { body: null } },
+    },
     orderBy: { updatedAt: "desc" },
     take: limit,
     select: {
@@ -94,8 +103,14 @@ async function backfillMailbox(mailbox: { id: string; email: string }, limit: nu
       }
     } catch (error) {
       failed += 1;
+      if (isGmailRateLimitError(error)) {
+        console.error(`[backfill] ${GMAIL_RATE_LIMIT_ERROR_CODE} mailboxId=${mailbox.id} conversationId=${conversation.id} gmailThreadId=${conversation.gmailThreadId}`, error);
+        break;
+      }
       console.error(`[backfill] failed conversationId=${conversation.id} gmailThreadId=${conversation.gmailThreadId}`, error);
       continue;
+    } finally {
+      if (sleepMs > 0 && checked < conversations.length) await sleep(sleepMs);
     }
   }
 
@@ -107,6 +122,9 @@ async function main() {
   const limitValue = argValue("--limit");
   const limit = limitValue ? Number.parseInt(limitValue, 10) : 100;
   if (!Number.isInteger(limit) || limit < 1) throw new Error("limit must be a positive integer");
+  const sleepValue = argValue("--sleep-ms");
+  const sleepMs = sleepValue ? Number.parseInt(sleepValue, 10) : 30_000;
+  if (!Number.isInteger(sleepMs) || sleepMs < 0) throw new Error("sleep-ms must be a non-negative integer");
   const dryRun = hasFlag("--dry-run");
 
   const mailboxes = await prisma.mailbox.findMany({
@@ -119,7 +137,7 @@ async function main() {
   }
 
   for (const mailbox of mailboxes) {
-    await backfillMailbox(mailbox, limit, dryRun);
+    await backfillMailbox(mailbox, limit, sleepMs, dryRun);
   }
 }
 
