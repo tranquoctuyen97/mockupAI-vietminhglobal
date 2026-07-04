@@ -4,7 +4,7 @@ services:
     container_name: mockupai-postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: mockupai
       POSTGRES_PASSWORD: MockupAI_DB_2024!
@@ -22,8 +22,8 @@ services:
     container_name: mockupai-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
-    command: redis-server --save 60 1 --loglevel warning
+      - "127.0.0.1:6379:6379"
+    command: redis-server --save 60 1 --loglevel warning --protected-mode yes
     volumes:
       - redisdata:/data
     healthcheck:
