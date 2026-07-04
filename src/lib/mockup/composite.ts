@@ -5,6 +5,7 @@
  */
 
 import sharp from "sharp";
+import { SHARP_OPTIONS } from "../images/probe";
 import type { Placement } from "../placement/types";
 
 export interface CompositeImageOptions {
@@ -29,7 +30,7 @@ export interface CustomCompositeRegion {
 export async function compositeImage(options: CompositeImageOptions): Promise<void> {
   const { mockupBuffer, designBuffer, placement, outputPath } = options;
 
-  const baseImage = sharp(mockupBuffer);
+  const baseImage = sharp(mockupBuffer, SHARP_OPTIONS);
   const outputWidth = 1200; // Resvg fitTo.value is 1200
 
   // Map LivePreview logic:
@@ -69,7 +70,7 @@ export async function compositeImage(options: CompositeImageOptions): Promise<vo
   const left = Math.round(designSvgX * scale);
   const top = Math.round(designSvgY * scale);
 
-  const resizedDesign = await sharp(designBuffer)
+  const resizedDesign = await sharp(designBuffer, SHARP_OPTIONS)
     .resize(designW, designH, {
       fit: "inside",
       withoutEnlargement: false,
@@ -96,7 +97,7 @@ export async function compositeImageOnCustomMockup(
   outputPath: string,
 ): Promise<void> {
   // Get actual mockup dimensions to clamp region safely
-  const { width: mockupW = 9999, height: mockupH = 9999 } = await sharp(mockupBuffer).metadata();
+  const { width: mockupW = 9999, height: mockupH = 9999 } = await sharp(mockupBuffer, SHARP_OPTIONS).metadata();
 
   const left = Math.max(0, Math.min(Math.round(region.x), mockupW - 1));
   const top  = Math.max(0, Math.min(Math.round(region.y), mockupH - 1));
@@ -104,7 +105,7 @@ export async function compositeImageOnCustomMockup(
   const designWidth  = Math.max(1, Math.min(Math.round(region.width),  mockupW - left));
   const designHeight = Math.max(1, Math.min(Math.round(region.height), mockupH - top));
 
-  let design = sharp(designBuffer)
+  let design = sharp(designBuffer, SHARP_OPTIONS)
     .resize(designWidth, designHeight, {
       fit: "contain",
       withoutEnlargement: false,
@@ -120,7 +121,7 @@ export async function compositeImageOnCustomMockup(
 
   const overlay = await design.toBuffer();
 
-  await sharp(mockupBuffer)
+  await sharp(mockupBuffer, SHARP_OPTIONS)
     .composite([{ input: overlay, left, top }])
     .webp({ quality: 90 })
     .toFile(outputPath);

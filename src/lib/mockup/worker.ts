@@ -4,6 +4,7 @@ import { type Job, Worker } from "bullmq";
 import sharp from "sharp";
 import { redisConnection } from "@/lib/queue/queue";
 import { prisma } from "../db";
+import { SHARP_OPTIONS } from "../images/probe";
 import { DEFAULT_PLACEMENT, type Placement } from "../placement/types";
 import { sseChannels } from "../sse/channel";
 import { getStorage } from "../storage/local-disk";
@@ -119,7 +120,7 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
           // then use stored value if valid, else Smart Fit.
           // Extracts real print-area mm from template, computes pixel bounds from
           // actual mockup image dimensions (no more hardcoded 1000px).
-          const sourceMeta = await sharp(sourceBuffer).metadata();
+          const sourceMeta = await sharp(sourceBuffer, SHARP_OPTIONS).metadata();
           const imgW = sourceMeta.width ?? 1000;
           const imgH = sourceMeta.height ?? 1000;
 
@@ -141,7 +142,7 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
             if (!isBadCompositeRegion(stored, printAreaPx)) {
               region = stored;
             } else {
-              const designMeta = await sharp(designBuffer).metadata();
+              const designMeta = await sharp(designBuffer, SHARP_OPTIONS).metadata();
               const dw = designMeta.width ?? 1024;
               const dh = designMeta.height ?? 1024;
               const smart = computeListingReadyRegion(printAreaPx, dw, dh);
@@ -152,7 +153,7 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
               );
             }
           } else {
-            const designMeta = await sharp(designBuffer).metadata();
+            const designMeta = await sharp(designBuffer, SHARP_OPTIONS).metadata();
             const dw = designMeta.width ?? 1024;
             const dh = designMeta.height ?? 1024;
             const smart = computeListingReadyRegion(printAreaPx, dw, dh);

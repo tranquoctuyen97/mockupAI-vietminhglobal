@@ -19,7 +19,7 @@ const PREVIEW_MAX_WIDTH = 512;
 const PREVIEW_QUALITY = 80;
 const MAX_SIDE = 30_000;
 const MAX_INPUT_PIXELS = MAX_SIDE * MAX_SIDE;
-const SHARP_OPTIONS = { limitInputPixels: MAX_INPUT_PIXELS };
+export const SHARP_OPTIONS = { limitInputPixels: MAX_INPUT_PIXELS };
 
 /**
  * Probe image metadata and generate preview
