@@ -45,6 +45,7 @@ const FETCH_THREAD_MESSAGE: FetchQueryObject = {
 };
 const GMAIL_CONNECTION_TIMEOUT_MS = 30_000;
 const GMAIL_SOCKET_TIMEOUT_MS = 120_000;
+export const GMAIL_OPERATION_TIMEOUT_MS = Number(process.env.GMAIL_OPERATION_TIMEOUT_MS ?? 180_000);
 
 function headerSearch(field: string, value: string): SearchObject {
   return { header: [field, value] } as unknown as SearchObject;
@@ -239,12 +240,19 @@ export function createGmailAdapter(
 
   async function withClient<T>(operation: (connection: GmailImapClient) => Promise<T>): Promise<T> {
     const connection = client();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     connection.on("error", () => undefined);
     try {
       await connection.connect();
       if (!connection.capabilities.has("X-GM-EXT-1")) throw new Error("gmail_extension_missing");
-      return await operation(connection);
+      return await Promise.race([
+        operation(connection),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("gmail_operation_timeout")), GMAIL_OPERATION_TIMEOUT_MS);
+        }),
+      ]);
     } finally {
+      if (timeout) clearTimeout(timeout);
       if (connection.usable || connection.authenticated) {
         try { await connection.logout(); } catch { /* connection may already be closed */ }
       }

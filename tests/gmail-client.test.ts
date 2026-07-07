@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { createGmailAdapter } from "../src/lib/mailboxes/gmail-client";
+import { createGmailAdapter, GMAIL_OPERATION_TIMEOUT_MS } from "../src/lib/mailboxes/gmail-client";
 
 function mockClient(overrides: Record<string, unknown> = {}) {
   const release = vi.fn();
   return {
     capabilities: new Map([["X-GM-EXT-1", true]]),
     mailbox: { uidValidity: BigInt(55) },
+    authenticated: true,
+    usable: true,
     connect: vi.fn(),
     logout: vi.fn(),
     on: vi.fn(),
@@ -56,6 +58,20 @@ describe("Gmail IMAP adapter", () => {
       greetingTimeout: 30_000,
       socketTimeout: 120_000,
     }));
+  });
+
+  it("times out stuck Gmail operations and logs out the client", async () => {
+    vi.useFakeTimers();
+    const client = mockClient({ search: vi.fn(() => new Promise(() => undefined)) });
+    const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, () => client as never);
+
+    const result = adapter.scanInbox({ initialSyncAfter: new Date("2026-01-01"), lastCommittedUid: BigInt(0) });
+    const assertion = expect(result).rejects.toThrow("gmail_operation_timeout");
+    await vi.advanceTimersByTimeAsync(GMAIL_OPERATION_TIMEOUT_MS);
+
+    await assertion;
+    expect(client.logout).toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   it("scans Inbox metadata with source for list previews", async () => {

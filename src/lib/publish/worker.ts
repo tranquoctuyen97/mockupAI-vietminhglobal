@@ -373,7 +373,7 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
       );
 
       // Track product ID across retries to prevent duplicate creation
-      let createdProductId: string | null = null;
+      let createdProductId: string | null = listing.shopifyProductId;
 
       shopifyResult = await retryWithBackoff(
         async () => {
@@ -392,6 +392,19 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
             mockupImages: orderedMockupImages,
             organizationCollections: listing.organizationCollections ?? [],
             existingProductId: createdProductId, // reuse if created in previous attempt
+            onProductCreated: async (productId, variantNodes) => {
+              createdProductId = productId;
+              await prisma.listing.update({
+                where: { id: listingId },
+                data: { shopifyProductId: productId },
+              });
+              for (let i = 0; i < listing.variants.length && i < variantNodes.length; i++) {
+                await prisma.listingVariant.update({
+                  where: { id: listing.variants[i].id },
+                  data: { shopifyVariantId: variantNodes[i].id },
+                });
+              }
+            },
           });
           createdProductId = result.shopifyProductId; // save for next retry
           return {
@@ -1063,12 +1076,12 @@ async function publishExistingPrintifyDraftProduct(input: {
     }
     return { printifyProductId: product.productId };
   } catch (err) {
-    // Draft product was deleted or corrupted on Printify — clear stale ref and CREATE new
+    // Draft product was deleted on Printify — clear stale ref and CREATE new.
+    // 5xx can happen after Printify creates a product, so retrying CREATE would duplicate.
     const isNotFound = err instanceof PrintifyNotFoundError;
-    const isServerError = err instanceof PrintifyApiError && /\(5\d{2}\)/.test(err.message);
-    if (isNotFound || isServerError) {
+    if (isNotFound) {
       console.warn(
-        `[PublishWorker] Draft product ${input.productId} ${isNotFound ? "not found (404)" : "server error (5xx)"}. Clearing stale ref and creating new product.`,
+        `[PublishWorker] Draft product ${input.productId} not found (404). Clearing stale ref and creating new product.`,
       );
       if (input.draftDesignId) {
         await prisma.wizardDraftDesign.update({

@@ -40,6 +40,10 @@ export interface ShopifyPublishInput {
   mockupImages?: ShopifyMockupImage[];
   organizationCollections?: string[];
   existingProductId?: string | null; // for retry idempotency
+  onProductCreated?: (
+    productId: string,
+    variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }>; inventoryItem?: { id: string } | null }>,
+  ) => Promise<void>;
 }
 
 export interface ShopifyPublishResult {
@@ -184,6 +188,7 @@ export async function publishToShopify(
     productId = productResult.productId;
     variantNodes = productResult.variantNodes;
     variantIds = variantNodes.map((v) => v.id);
+    await input.onProductCreated?.(productId, variantNodes);
 
     // Enable inventory tracking — Shopify defaults tracked=false,
     // so without this the 999 quantity we set is invisible.

@@ -22,6 +22,17 @@ describe("runPublishWorker organization collections source", () => {
     assert.match(source, /organizationCollections:\s*listing\.organizationCollections\s*\?\?\s*\[\]/);
   });
 
+  it("persists Shopify product id during productSet before later retryable steps", () => {
+    assert.match(source, /onProductCreated:\s*async\s*\(productId,\s*variantNodes\)/);
+    assert.match(source, /data:\s*\{\s*shopifyProductId:\s*productId\s*\}/);
+    assert.match(source, /let createdProductId:\s*string\s*\|\s*null\s*=\s*listing\.shopifyProductId/);
+  });
+
+  it("does not force-create a new Printify product after 5xx", () => {
+    assert.match(source, /5xx can happen after Printify creates a product/);
+    assert.doesNotMatch(source, /isServerError/);
+  });
+
   it("uses template pricing defaults for Printify and Shopify variant plans", () => {
     assert.match(source, /resolveBaseTemplatePrice/);
     assert.match(source, /mergeDraftAndTemplatePriceMaps/);
