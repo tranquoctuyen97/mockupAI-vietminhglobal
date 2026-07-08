@@ -1,8 +1,8 @@
 export const LIGHT_TOKENS = ["sang", "light", "bright"];
 export const DARK_TOKENS = ["toi", "dark"];
-const SEPARATORS = /[\s_\-–—·]+/;
 const BRACKET_STRIP = /^[[(]|[)\]]$/g;
 const FILE_EXT = /\.[^.]+$/;
+const TOKEN_MATCH = /[^\s_\-–—·]+/g;
 
 export type DesignVariantType = "LIGHT" | "DARK";
 
@@ -30,6 +30,12 @@ export interface PairingResult {
   hasPairIntent: boolean;
 }
 
+type NameToken = {
+  raw: string;
+  start: number;
+  end: number;
+};
+
 /**
  * Strip Vietnamese diacritics via NFD decomposition.
  * "sáng" → "sang", "tối" → "toi"
@@ -46,6 +52,13 @@ function normalizeToken(value: string): string {
   return stripDiacritics(value.trim().toLocaleLowerCase("vi-VN"));
 }
 
+function markerType(value: string): DesignVariantType | null {
+  const normalized = normalizeToken(value);
+  if (LIGHT_TOKENS.includes(normalized)) return "LIGHT";
+  if (DARK_TOKENS.includes(normalized)) return "DARK";
+  return null;
+}
+
 /**
  * Strip file extension from a design name.
  * "Cat - Sáng.png" → "Cat - Sáng"
@@ -54,11 +67,26 @@ function stripFileExtension(name: string): string {
   return name.replace(FILE_EXT, "").trim();
 }
 
+function tokenizeName(name: string): NameToken[] {
+  return Array.from(name.matchAll(TOKEN_MATCH), (match) => {
+    const start = match.index ?? 0;
+    const raw = match[0].replace(BRACKET_STRIP, "");
+    return raw ? { raw, start, end: start + match[0].length } : null;
+  }).filter((token): token is NameToken => Boolean(token));
+}
+
+function baseNameWithoutToken(name: string, token: NameToken): string {
+  return `${name.slice(0, token.start)} ${name.slice(token.end)}`
+    .replace(/[\s_\-–—·()[\]]+/g, " ")
+    .trim();
+}
+
 /**
  * Parse a design name to detect light/dark pair markers.
  *
  * Supports:
  * - Suffixes after separators: "1 - sáng", "1_toi", "1·light"
+ * - Prefix/internal markers: "sáng 1", "ver sáng 1", "ver_sang_1"
  * - Bracketed suffixes: "1 (sáng)", "1 [tối]"
  * - File extensions are stripped first: "1 - sáng.png" → baseName "1", LIGHT
  * - Vietnamese diacritics are normalized: "Sáng" ≈ "sang"
@@ -69,54 +97,20 @@ export function parseDesignName(rawName: string): ParsedDesignName | null {
   const name = stripFileExtension(rawName.trim());
   if (!name) return null;
 
-  // Tokenize by separators, stripping brackets from each token
-  const tokens = name
-    .split(SEPARATORS)
-    .map((t) => t.replace(BRACKET_STRIP, ""))
-    .filter(Boolean);
+  const tokens = tokenizeName(name);
 
   if (tokens.length < 2) return null;
 
-  // Check the last token as a potential suffix
-  const lastToken = tokens[tokens.length - 1];
-  const normalizedLast = normalizeToken(lastToken);
-  const lightType = LIGHT_TOKENS.includes(normalizedLast);
-  const darkType = DARK_TOKENS.includes(normalizedLast);
-  const type = lightType ? "LIGHT" : darkType ? "DARK" : null;
+  const orderedTokens = [tokens[tokens.length - 1], ...tokens.slice(0, -1)];
+  for (const token of orderedTokens) {
+    const type = markerType(token.raw);
+    if (!type) continue;
 
-  if (!type) return null;
-
-  // Reconstruct baseName from the original name up to the suffix
-  // Find the suffix's position in the original (case-insensitive, accent-insensitive)
-  const suffixStart = findSuffixPosition(name, lastToken);
-  const baseName = name.slice(0, suffixStart).replace(/[\s_\-–—·]+$/g, "").trim();
-
-  return baseName ? { baseName, type, originalSuffix: lastToken } : null;
-}
-
-/**
- * Find where the suffix token starts in the original name string.
- * Looks backwards past any bracket chars and separators so
- * "1 (sáng)" → baseName slice starts before the '('.
- */
-function findSuffixPosition(name: string, suffixToken: string): number {
-  const lower = stripDiacritics(name.toLocaleLowerCase("vi-VN"));
-  const suffixLower = stripDiacritics(suffixToken.toLocaleLowerCase("vi-VN"));
-  const suffixIdx = lower.lastIndexOf(suffixLower);
-  if (suffixIdx < 0) return name.length - suffixToken.length;
-
-  // Walk backwards from the suffix to consume brackets and separators
-  let start = suffixIdx;
-  while (start > 0) {
-    const prev = name[start - 1];
-    if (prev === " " || prev === "_" || prev === "-" || prev === "–" || prev === "—" || prev === "·" ||
-        prev === "(" || prev === "[" || prev === ")" || prev === "]") {
-      start--;
-    } else {
-      break;
-    }
+    const baseName = baseNameWithoutToken(name, token);
+    if (baseName) return { baseName, type, originalSuffix: token.raw };
   }
-  return start;
+
+  return null;
 }
 
 /**

@@ -45,6 +45,45 @@ test("parseDesignName supports bracketed suffixes", () => {
   });
 });
 
+test("parseDesignName detects internal Vietnamese markers", () => {
+  assert.deepEqual(parseDesignName("ver sáng 1"), {
+    baseName: "ver 1",
+    type: "LIGHT",
+    originalSuffix: "sáng",
+  });
+  assert.deepEqual(parseDesignName("ver tối 1"), {
+    baseName: "ver 1",
+    type: "DARK",
+    originalSuffix: "tối",
+  });
+});
+
+test("parseDesignName detects underscore customer format", () => {
+  assert.deepEqual(parseDesignName("ver_sang_tên mẫu.png"), {
+    baseName: "ver tên mẫu",
+    type: "LIGHT",
+    originalSuffix: "sang",
+  });
+  assert.deepEqual(parseDesignName("ver_toi_tên mẫu.png"), {
+    baseName: "ver tên mẫu",
+    type: "DARK",
+    originalSuffix: "toi",
+  });
+});
+
+test("parseDesignName detects prefix markers", () => {
+  assert.deepEqual(parseDesignName("sáng tên mẫu"), {
+    baseName: "tên mẫu",
+    type: "LIGHT",
+    originalSuffix: "sáng",
+  });
+  assert.deepEqual(parseDesignName("tối tên mẫu"), {
+    baseName: "tên mẫu",
+    type: "DARK",
+    originalSuffix: "tối",
+  });
+});
+
 test("pairDesigns pairs exact light+dark matches", () => {
   const result = pairDesigns([
     { id: "1", name: "1 - sáng" },
@@ -55,6 +94,19 @@ test("pairDesigns pairs exact light+dark matches", () => {
   assert.deepEqual(result.unpaired, []);
   assert.deepEqual(result.independent, []);
   assert.equal(result.hasPairIntent, true);
+});
+
+test("pairDesigns pairs internal and underscore marker names", () => {
+  const result = pairDesigns([
+    { id: "light-1", name: "ver sáng 1" },
+    { id: "dark-1", name: "ver tối 1" },
+    { id: "light-2", name: "ver_sang_tên mẫu" },
+    { id: "dark-2", name: "ver_toi_tên mẫu" },
+  ]);
+
+  assert.deepEqual(result.pairs.map((pair) => pair.baseName), ["ver 1", "ver tên mẫu"]);
+  assert.deepEqual(result.unpaired, []);
+  assert.deepEqual(result.independent, []);
 });
 
 test("pairDesigns creates sorted light dark pairs, reports unpaired pair-intent, and separates independent designs", () => {

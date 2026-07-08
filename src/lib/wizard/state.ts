@@ -90,41 +90,109 @@ export async function createDraft(tenantId: string) {
   });
 }
 
-export async function getDraft(id: string, tenantId: string) {
-  return prisma.wizardDraft.findFirst({
-    relationLoadStrategy: "join", // PostgreSQL LATERAL JOIN — 1 query instead of N+1
-    where: { id, tenantId },
-    include: {
-      design: true,
-      store: {
-        include: {
-          colors: {
-            orderBy: { sortOrder: "asc" },
-          },
-          templates: {
-            orderBy: { sortOrder: "asc" },
-          },
-        },
-      },
-      template: true,
-      designPairs: {
-        orderBy: { sortOrder: "asc" },
-        include: {
-          lightDesign: { include: { design: true } },
-          darkDesign: { include: { design: true } },
-          listing: true,
-        },
-      },
-      draftDesigns: draftDesignsWithRelationsInclude,
-      mockupJobs: {
-        orderBy: { createdAt: "asc" },
-        include: {
-          images: {
-            orderBy: { sortOrder: "asc" },
-          },
-        },
-      },
+async function syncDraftDesignPairs(tx: Prisma.TransactionClient, draftId: string) {
+  const selectedDraftDesigns = await tx.wizardDraftDesign.findMany({
+    where: { draftId },
+    orderBy: { sortOrder: "asc" },
+    select: {
+      id: true,
+      designId: true,
+      design: { select: { id: true, name: true } },
     },
+  });
+  const pairing = pairDesigns(
+    selectedDraftDesigns.map((draftDesign) => ({
+      id: draftDesign.design.id,
+      name: draftDesign.design.name,
+    })),
+  );
+  const pairRows = buildPairRowsFromDraftDesigns({
+    pairing,
+    draftDesigns: selectedDraftDesigns.map((draftDesign) => ({
+      id: draftDesign.id,
+      designId: draftDesign.designId,
+    })),
+  });
+  const existingPairs = await tx.wizardDraftDesignPair.findMany({
+    where: { draftId },
+  });
+  const existingByStableKey = new Map(
+    existingPairs.map((pair) => [stablePairKey(pair), pair]),
+  );
+  const nextPairIds: string[] = [];
+  const pairRowsToCreate: typeof pairRows = [];
+
+  for (const pairRow of pairRows) {
+    const existing = existingByStableKey.get(stablePairKey(pairRow));
+    if (existing) {
+      const saved = await tx.wizardDraftDesignPair.update({
+        where: { id: existing.id },
+        data: { sortOrder: pairRow.sortOrder },
+      });
+      nextPairIds.push(saved.id);
+    } else {
+      pairRowsToCreate.push(pairRow);
+    }
+  }
+
+  await tx.wizardDraftDesignPair.deleteMany({
+    where: {
+      draftId,
+      ...(nextPairIds.length > 0 ? { id: { notIn: nextPairIds } } : {}),
+    },
+  });
+
+  for (const pairRow of pairRowsToCreate) {
+    const saved = await tx.wizardDraftDesignPair.create({
+      data: {
+        draftId,
+        ...pairRow,
+      },
+    });
+
+    nextPairIds.push(saved.id);
+  }
+}
+
+export async function getDraft(id: string, tenantId: string) {
+  return prisma.$transaction(async (tx) => {
+    await syncDraftDesignPairs(tx, id);
+
+    return tx.wizardDraft.findFirst({
+      relationLoadStrategy: "join", // PostgreSQL LATERAL JOIN — 1 query instead of N+1
+      where: { id, tenantId },
+      include: {
+        design: true,
+        store: {
+          include: {
+            colors: {
+              orderBy: { sortOrder: "asc" },
+            },
+            templates: {
+              orderBy: { sortOrder: "asc" },
+            },
+          },
+        },
+        template: true,
+        designPairs: {
+          orderBy: { sortOrder: "asc" },
+          include: {
+            lightDesign: { include: { design: true } },
+            darkDesign: { include: { design: true } },
+            listing: true,
+          },
+        },
+        draftDesigns: draftDesignsWithRelationsInclude,
+        mockupJobs: {
+          orderBy: { createdAt: "asc" },
+          include: {
+            images: {
+              orderBy: { sortOrder: "asc" },
+            },
+          },
+        },
+      },
+    });
   });
 }
 
@@ -285,67 +353,7 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
         });
       }
 
-      const selectedDraftDesigns = await tx.wizardDraftDesign.findMany({
-        where: { draftId: id },
-        orderBy: { sortOrder: "asc" },
-        select: {
-          id: true,
-          designId: true,
-          design: { select: { id: true, name: true } },
-        },
-      });
-      const pairing = pairDesigns(
-        selectedDraftDesigns.map((draftDesign) => ({
-          id: draftDesign.design.id,
-          name: draftDesign.design.name,
-        })),
-      );
-      const pairRows = buildPairRowsFromDraftDesigns({
-        pairing,
-        draftDesigns: selectedDraftDesigns.map((draftDesign) => ({
-          id: draftDesign.id,
-          designId: draftDesign.designId,
-        })),
-      });
-      const existingPairs = await tx.wizardDraftDesignPair.findMany({
-        where: { draftId: id },
-      });
-      const existingByStableKey = new Map(
-        existingPairs.map((pair) => [stablePairKey(pair), pair]),
-      );
-      const nextPairIds: string[] = [];
-      const pairRowsToCreate: typeof pairRows = [];
-
-      for (const pairRow of pairRows) {
-        const existing = existingByStableKey.get(stablePairKey(pairRow));
-        if (existing) {
-          const saved = await tx.wizardDraftDesignPair.update({
-            where: { id: existing.id },
-            data: { sortOrder: pairRow.sortOrder },
-          });
-          nextPairIds.push(saved.id);
-        } else {
-          pairRowsToCreate.push(pairRow);
-        }
-      }
-
-      await tx.wizardDraftDesignPair.deleteMany({
-        where: {
-          draftId: id,
-          ...(nextPairIds.length > 0 ? { id: { notIn: nextPairIds } } : {}),
-        },
-      });
-
-      for (const pairRow of pairRowsToCreate) {
-        const saved = await tx.wizardDraftDesignPair.create({
-          data: {
-            draftId: id,
-            ...pairRow,
-          },
-        });
-
-        nextPairIds.push(saved.id);
-      }
+      await syncDraftDesignPairs(tx, id);
     }
 
     // ── Đồng bộ mockup library picks khi enabledColorIds thay đổi ──

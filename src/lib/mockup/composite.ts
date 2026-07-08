@@ -8,6 +8,8 @@ import sharp from "sharp";
 import { SHARP_OPTIONS } from "../images/probe";
 import type { Placement } from "../placement/types";
 
+const STORED_DESIGN_SHARP_OPTIONS = { ...SHARP_OPTIONS, limitInputPixels: false };
+
 export interface CompositeImageOptions {
   mockupBuffer: Buffer;
   designBuffer: Buffer;
@@ -70,7 +72,7 @@ export async function compositeImage(options: CompositeImageOptions): Promise<vo
   const left = Math.round(designSvgX * scale);
   const top = Math.round(designSvgY * scale);
 
-  const resizedDesign = await sharp(designBuffer, SHARP_OPTIONS)
+  const resizedDesign = await sharp(designBuffer, STORED_DESIGN_SHARP_OPTIONS)
     .resize(designW, designH, {
       fit: "inside",
       withoutEnlargement: false,
@@ -105,7 +107,7 @@ export async function compositeImageOnCustomMockup(
   const designWidth  = Math.max(1, Math.min(Math.round(region.width),  mockupW - left));
   const designHeight = Math.max(1, Math.min(Math.round(region.height), mockupH - top));
 
-  let design = sharp(designBuffer, SHARP_OPTIONS)
+  let design = sharp(designBuffer, STORED_DESIGN_SHARP_OPTIONS)
     .resize(designWidth, designHeight, {
       fit: "contain",
       withoutEnlargement: false,

@@ -360,6 +360,17 @@ test("ColorMockupCardGrid maps cards from the active pair or active independent 
   assert.doesNotMatch(source, /if \(pairs\.length > 0\)/);
 });
 
+test("step-3 gallery filters paired mockups by color group mapped design", () => {
+  const source = read("src/app/(authed)/wizard/[draftId]/step-3/page.tsx");
+
+  assert.match(source, /function shouldShowMockupImageForSelectedColor/);
+  assert.match(source, /pair\.lightDraftDesignId/);
+  assert.match(source, /pair\.darkDraftDesignId/);
+  assert.match(source, /effectiveColorGroups\.get\(color\.id\) === "light"/);
+  assert.match(source, /img\.draftDesignId === expectedDraftDesignId/);
+  assert.match(source, /shouldShowMockupImageForSelectedColor\(\s*img,\s*c,\s*\(draft as any\)\?\.designPairs \?\? \[\],\s*effectiveColorGroups,/);
+});
+
 test("mockup preview modal uses user-facing publish labels instead of renderer labels", () => {
   const source = read("src/components/mockup/ColorMockupCard.tsx");
 

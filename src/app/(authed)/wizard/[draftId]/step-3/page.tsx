@@ -132,6 +132,35 @@ type DesignJobState = {
 
 const FALLBACK_PRINT_AREA = { ...DEFAULT_PRINT_AREA, safeMarginMm: 12.7 };
 
+function shouldShowMockupImageForSelectedColor(
+  img: any,
+  color: { id: string; name: string },
+  designPairs: Array<{ lightDraftDesignId: string; darkDraftDesignId: string }>,
+  effectiveColorGroups: Map<string, string>,
+  mockupSourceMode: "PRINTIFY" | "CUSTOM",
+) {
+  const normalizedColorName = img.colorName.trim().toLowerCase();
+  if (
+    !shouldShowInOfficialGallery(img, mockupSourceMode) ||
+    color.name.trim().toLowerCase() !== normalizedColorName
+  ) {
+    return false;
+  }
+
+  const pair = designPairs.find(
+    (entry) =>
+      entry.lightDraftDesignId === img.draftDesignId ||
+      entry.darkDraftDesignId === img.draftDesignId,
+  );
+  if (!pair) return true;
+
+  const expectedDraftDesignId =
+    effectiveColorGroups.get(color.id) === "light"
+      ? pair.lightDraftDesignId
+      : pair.darkDraftDesignId;
+  return img.draftDesignId === expectedDraftDesignId;
+}
+
 export default function Step3PreviewPage() {
   const { draftId } = useParams<{ draftId: string }>();
   const router = useRouter();
@@ -1694,14 +1723,16 @@ export default function Step3PreviewPage() {
                     <MockupGallery
                       draftId={draftId as string}
                       images={allMockupImages.filter((img) => {
-                        const normalizedColorName = img.colorName.trim().toLowerCase();
-                        return shouldShowInOfficialGallery(
-                          img,
-                          selectedTemplate?.defaultMockupSource ?? "PRINTIFY",
-                        ) && storeColors.some(
+                        return storeColors.some(
                           (c) =>
                             selectedColorIds.has(c.id) &&
-                            c.name.trim().toLowerCase() === normalizedColorName,
+                            shouldShowMockupImageForSelectedColor(
+                              img,
+                              c,
+                              (draft as any)?.designPairs ?? [],
+                              effectiveColorGroups,
+                              selectedTemplate?.defaultMockupSource ?? "PRINTIFY",
+                            ),
                         );
                       })}
                       isPolling={isGenerating}
