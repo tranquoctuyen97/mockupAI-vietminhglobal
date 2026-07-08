@@ -103,8 +103,34 @@ describe("Gmail IMAP adapter", () => {
     await adapter.scanInbox({ initialSyncAfter: new Date("2026-01-01"), lastCommittedUid: BigInt(160) });
 
     expect(client.search).toHaveBeenCalledWith({ since: new Date("2026-01-01") }, { uid: true });
-    expect(client.fetchAll).toHaveBeenCalledWith([1], expect.anything(), { uid: true });
+    expect(client.fetchAll).not.toHaveBeenCalled();
     expect(client.fetchAll).not.toHaveBeenCalledWith("161:*", expect.anything(), { uid: true });
+  });
+
+  it("fetches large Inbox scans in UID batches after the cursor", async () => {
+    const uids = Array.from({ length: 45 }, (_, index) => index + 1);
+    const client = mockClient({
+      search: vi.fn().mockResolvedValue(uids),
+      fetchAll: vi.fn(async (batch: number[]) => batch.map((uid) => ({
+        uid,
+        emailId: `msg-${uid}`,
+        threadId: `thread-${uid}`,
+        internalDate: new Date("2026-06-01"),
+        envelope: { subject: `Message ${uid}` },
+        flags: new Set<string>(),
+        labels: new Set(["\\Inbox"]),
+        headers: Buffer.from(`Message-ID: <${uid}@example.com>\r\n`),
+        source: Buffer.from("Content-Type: text/plain\r\n\r\nBody"),
+      }))),
+    });
+    const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, () => client as never);
+
+    const result = await adapter.scanInbox({ initialSyncAfter: new Date("2026-01-01"), lastCommittedUid: BigInt(5) });
+
+    expect(client.fetchAll).toHaveBeenCalledTimes(1);
+    expect(client.fetchAll).toHaveBeenCalledWith(uids.slice(25), expect.anything(), { uid: true });
+    expect(result.messages).toHaveLength(20);
+    expect(result.messages[0].uid).toBe(BigInt(26));
   });
 
   it("scans Sent metadata from the Gmail Sent mailbox", async () => {

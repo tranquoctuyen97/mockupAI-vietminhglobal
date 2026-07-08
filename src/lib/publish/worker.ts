@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { isPublishDryRun, PRODUCT_DEFAULTS } from "@/lib/config/runtime-controls";
 import { decrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
+import { classifyColorHex, resolveColorGroups } from "@/lib/designs/color-classifier";
 import { getLatestJobByDraftDesignId } from "@/lib/mockup/multi-design";
 import { resolveEffectivePlacementData } from "@/lib/mockup/plan";
 import {
@@ -26,6 +27,7 @@ import {
 } from "@/lib/pricing/template-pricing";
 import { getClientForStore } from "@/lib/printify/account";
 import { PrintifyApiError, PrintifyNotFoundError } from "@/lib/printify/client";
+import { extractEnabledPrintifyVariantMatrix } from "@/lib/printify/product-matrix";
 import { createOrUpdatePrintifyProduct, ensurePrintifyImage } from "@/lib/printify/product";
 import {
   buildVariantPayload,
@@ -39,7 +41,9 @@ import { ShopifyAuthError, ShopifyClient } from "@/lib/shopify/client";
 import { sseChannels } from "@/lib/sse/channel";
 import { getStorage } from "@/lib/storage/local-disk";
 import { publishToPrintify } from "./printify";
+import { waitForShopifyProductSync, type ShopifySyncMatch } from "./shopify-sync";
 import { publishToShopify, type ShopifyMockupImage, type ShopifyVariantInput } from "./shopify";
+import { resolvePublishStrategy } from "./strategy";
 
 const MAX_RETRIES = 5;
 const BACKOFF_BASE_MS = 2000;
@@ -155,6 +159,7 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
     // Load store
     const store = await prisma.store.findUnique({
       where: { id: listing.storeId! },
+      include: { printifyShop: true },
     });
     if (!store) {
       // Store was deleted — mark all jobs as FAILED gracefully
@@ -277,6 +282,20 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
       throw new Error(
         `Thiếu mockup Printify thật cho màu: ${missingColorNames.join(", ")}. Vui lòng tạo lại mockup trước khi publish.`,
       );
+    }
+
+    const publishStrategy = resolvePublishStrategy(store);
+    if (publishStrategy === "PRINTIFY_SHOPIFY_CHANNEL") {
+      await runPrintifyShopifyChannelPublish({
+        listingId,
+        listing,
+        draft,
+        store,
+        shopifyAccessToken,
+        isDryRun,
+        emitEvent,
+      });
+      return;
     }
 
     // ─── Stage 1: Shopify ───────────────────────────────
@@ -715,7 +734,6 @@ export async function runPrintifyStage(
         colorNameToId.set(c.name.trim().toLowerCase(), c.id);
       }
 
-      const { resolveColorGroups, classifyColorHex } = await import("@/lib/designs/color-classifier");
       const colorGroups = resolveColorGroups(store.colors ?? []);
 
       const lightVariantIds: number[] = [];
@@ -916,6 +934,325 @@ export async function runPrintifyStage(
   }
 }
 
+async function runPrintifyShopifyChannelPublish(input: {
+  listingId: string;
+  listing: any;
+  draft: any;
+  store: any;
+  shopifyAccessToken: string;
+  isDryRun: boolean;
+  emitEvent: (type: string, data?: Record<string, unknown>) => void;
+}): Promise<void> {
+  const { listingId, listing, draft, store, shopifyAccessToken, isDryRun, emitEvent } = input;
+  const printifyJob = listing.publishJobs.find((job: any) => job.stage === "PRINTIFY");
+  const shopifyJob = listing.publishJobs.find((job: any) => job.stage === "SHOPIFY");
+
+  if (!printifyJob) throw new Error("Printify publish job not found");
+  if (!shopifyJob) throw new Error("Shopify publish job not found");
+
+  await prisma.publishJob.update({
+    where: { id: printifyJob.id },
+    data: { status: "RUNNING" },
+  });
+  await prisma.publishJob.update({
+    where: { id: shopifyJob.id },
+    data: { status: "PENDING", lastError: "Waiting for Printify Shopify-channel sync" },
+  });
+  emitEvent("publish.printify.start", { stage: "PRINTIFY" });
+
+  if (isDryRun) {
+    await prisma.listing.update({
+      where: { id: listingId },
+      data: {
+        printifyProductId: `dry-run-printify-${Date.now()}`,
+        shopifyProductId: `gid://shopify/Product/dry-run-${Date.now()}`,
+        status: "ACTIVE",
+        publishedAt: new Date(),
+      },
+    });
+    await prisma.publishJob.update({
+      where: { id: printifyJob.id },
+      data: { status: "SUCCEEDED", completedAt: new Date(), lastError: null },
+    });
+    await prisma.publishJob.update({
+      where: { id: shopifyJob.id },
+      data: { status: "SUCCEEDED", completedAt: new Date(), lastError: null },
+    });
+    emitEvent("publish.complete", { status: "ACTIVE" });
+    return;
+  }
+
+  const startedAtIso = new Date().toISOString();
+  const { client: printifyClient, externalShopId } = await getClientForStore(store.id);
+  const draftDesign = listing.wizardDraftDesignId
+    ? (draft.draftDesigns?.find((entry: any) => entry.id === listing.wizardDraftDesignId) ?? null)
+    : null;
+  const publishInput = await resolvePrintifyProductPublishInput({
+    listing,
+    draft,
+    draftDesign,
+    printifyClient,
+    externalShopId,
+    productId:
+      draftDesign?.printifyDraftProductId ??
+      draft.printifyDraftProductId ??
+      listing.printifyProductId ??
+      null,
+  });
+
+  let productIdForAttempt = publishInput.productId;
+  const printifyProductResult = await retryWithBackoff(
+    async () => {
+      try {
+        return await createOrUpdatePrintifyProduct({
+          client: printifyClient,
+          shopId: externalShopId,
+          productId: productIdForAttempt,
+          blueprintId: publishInput.blueprintId,
+          printProviderId: publishInput.printProviderId,
+          variantIds: publishInput.variantIds,
+          variants: publishInput.variants,
+          imageId: publishInput.imageId,
+          imageGroups: publishInput.imageGroups,
+          placementData: publishInput.placementData,
+          title: listing.title,
+          description: listing.descriptionHtml,
+          tags: normalizeExternalTags(listing.tags),
+        });
+      } catch (err) {
+        if (isTransientPrintifyCreateError(err) && !productIdForAttempt) {
+          const candidate = await findRecentPrintifyProductCandidate({
+            client: printifyClient,
+            shopId: externalShopId,
+            title: listing.title,
+            blueprintId: publishInput.blueprintId,
+            printProviderId: publishInput.printProviderId,
+          });
+          if (candidate) {
+            productIdForAttempt = candidate.id;
+            return createOrUpdatePrintifyProduct({
+              client: printifyClient,
+              shopId: externalShopId,
+              productId: candidate.id,
+              blueprintId: publishInput.blueprintId,
+              printProviderId: publishInput.printProviderId,
+              variantIds: publishInput.variantIds,
+              variants: publishInput.variants,
+              imageId: publishInput.imageId,
+              imageGroups: publishInput.imageGroups,
+              placementData: publishInput.placementData,
+              title: listing.title,
+              description: listing.descriptionHtml,
+              tags: normalizeExternalTags(listing.tags),
+            });
+          }
+        }
+        throw err;
+      }
+    },
+    printifyJob.id,
+    "PRINTIFY",
+  );
+
+  if (!printifyProductResult) {
+    await prisma.listing.update({ where: { id: listingId }, data: { status: "FAILED" } });
+    emitEvent("publish.failed", {
+      stage: "PRINTIFY",
+      error: "Printify product create/update failed",
+    });
+    return;
+  }
+
+  await persistPrintifyProductRefs({
+    listingId,
+    draftId: draft.id,
+    draftDesignId: draftDesign?.id ?? null,
+    productId: printifyProductResult.productId,
+  });
+
+  let printifyRows: ReturnType<typeof extractEnabledPrintifyVariantMatrix>;
+  try {
+    const printifyProduct = await printifyClient.getProduct(
+      externalShopId,
+      printifyProductResult.productId,
+    );
+    printifyRows = extractEnabledPrintifyVariantMatrix(printifyProduct);
+    await printifyClient.publishProduct(externalShopId, printifyProductResult.productId, {
+      title: true,
+      description: true,
+      images: true,
+      variants: true,
+      tags: true,
+      keyFeatures: true,
+      shipping_template: true,
+    });
+  } catch (err) {
+    const error = err instanceof Error ? err.message : "Printify publish failed";
+    await prisma.publishJob.update({
+      where: { id: printifyJob.id },
+      data: { status: "FAILED", lastError: error, completedAt: new Date() },
+    });
+    await prisma.listing.update({ where: { id: listingId }, data: { status: "FAILED" } });
+    emitEvent("publish.failed", { stage: "PRINTIFY", error });
+    return;
+  }
+
+  await prisma.listing.update({
+    where: { id: listingId },
+    data: { printifyProductId: printifyProductResult.productId },
+  });
+  await prisma.publishJob.update({
+    where: { id: printifyJob.id },
+    data: { status: "SUCCEEDED", completedAt: new Date(), lastError: null },
+  });
+  emitEvent("publish.printify.done", { printifyProductId: printifyProductResult.productId });
+
+  emitEvent("publish.shopify.start", { stage: "SHOPIFY" });
+  await prisma.publishJob.update({
+    where: { id: shopifyJob.id },
+    data: { status: "RUNNING", lastError: null },
+  });
+
+  let syncMatch: ShopifySyncMatch;
+  try {
+    syncMatch = await waitForShopifyProductSync({
+      client: new ShopifyClient(store.shopifyDomain!, shopifyAccessToken),
+      printifyRows,
+      updatedAfterIso: startedAtIso,
+      title: listing.title,
+      timeoutMs: 120_000,
+      intervalMs: 5_000,
+    });
+  } catch (err) {
+    const message = "Printify published but Shopify sync was not confirmed";
+    await prisma.publishJob.update({
+      where: { id: shopifyJob.id },
+      data: {
+        status: "FAILED",
+        lastError: err instanceof Error ? `${message}: ${err.message}` : message,
+        completedAt: new Date(),
+      },
+    });
+    await prisma.listing.update({ where: { id: listingId }, data: { status: "PARTIAL_FAILURE" } });
+    emitEvent("publish.complete", { status: "PARTIAL_FAILURE", reason: message });
+    return;
+  }
+
+  await persistPrintifyShopifyVariantMapping({
+    listingId,
+    shopifyProductId: syncMatch.shopifyProductId,
+    printifyProductId: printifyProductResult.productId,
+    printifyRows,
+    variantsBySku: syncMatch.variantsBySku,
+  });
+
+  await prisma.publishJob.update({
+    where: { id: shopifyJob.id },
+    data: { status: "SUCCEEDED", completedAt: new Date(), lastError: null },
+  });
+  await prisma.listing.update({
+    where: { id: listingId },
+    data: { status: "ACTIVE", publishedAt: new Date() },
+  });
+  emitEvent("publish.shopify.done", { shopifyProductId: syncMatch.shopifyProductId });
+  emitEvent("publish.complete", {
+    status: "ACTIVE",
+    printifyProductId: printifyProductResult.productId,
+    shopifyProductId: syncMatch.shopifyProductId,
+  });
+}
+
+async function persistPrintifyProductRefs(input: {
+  listingId: string;
+  draftId: string;
+  draftDesignId: string | null;
+  productId: string;
+}): Promise<void> {
+  await prisma.listing.update({
+    where: { id: input.listingId },
+    data: { printifyProductId: input.productId },
+  });
+
+  if (input.draftDesignId) {
+    await prisma.wizardDraftDesign.update({
+      where: { id: input.draftDesignId },
+      data: { printifyDraftProductId: input.productId, lastError: null },
+    });
+    return;
+  }
+
+  await prisma.wizardDraft.update({
+    where: { id: input.draftId },
+    data: { printifyDraftProductId: input.productId },
+  });
+}
+
+async function persistPrintifyShopifyVariantMapping(input: {
+  listingId: string;
+  shopifyProductId: string;
+  printifyProductId: string;
+  printifyRows: Array<{
+    printifyVariantId: number;
+    sku: string;
+    colorName: string;
+    colorHex: string | null;
+    size: string;
+  }>;
+  variantsBySku: Map<string, { shopifyVariantId: string }>;
+}): Promise<void> {
+  const rows = input.printifyRows.map((row) => {
+    const shopify = input.variantsBySku.get(row.sku);
+    if (!shopify) throw new Error(`Missing Shopify variant for SKU ${row.sku}`);
+    return {
+      listingId: input.listingId,
+      colorName: row.colorName,
+      colorHex: row.colorHex ?? "",
+      size: row.size,
+      sku: row.sku,
+      printifyVariantId: String(row.printifyVariantId),
+      shopifyVariantId: shopify.shopifyVariantId,
+    };
+  });
+
+  await prisma.$transaction([
+    prisma.listingVariant.deleteMany({ where: { listingId: input.listingId } }),
+    prisma.listingVariant.createMany({ data: rows }),
+    prisma.listing.update({
+      where: { id: input.listingId },
+      data: {
+        shopifyProductId: input.shopifyProductId,
+        printifyProductId: input.printifyProductId,
+      },
+    }),
+  ]);
+}
+
+function isTransientPrintifyCreateError(error: unknown): boolean {
+  return error instanceof PrintifyApiError && error.status >= 500 && error.status < 600;
+}
+
+async function findRecentPrintifyProductCandidate(input: {
+  client: Awaited<ReturnType<typeof getClientForStore>>["client"];
+  shopId: number;
+  title: string;
+  blueprintId: number;
+  printProviderId: number;
+}): Promise<{ id: string } | null> {
+  for (let page = 1; page <= 3; page += 1) {
+    const result = await input.client.getProducts(input.shopId, page);
+    const candidate = (result.data ?? []).find((product) => {
+      const title = product.title?.trim();
+      return (
+        (title === input.title || title === `Copy of ${input.title}`) &&
+        Number(product.blueprint_id) === input.blueprintId &&
+        Number(product.print_provider_id) === input.printProviderId
+      );
+    });
+    if (candidate) return { id: candidate.id };
+  }
+  return null;
+}
+
 /**
  * Retry with exponential backoff
  */
@@ -1000,6 +1337,198 @@ export function resolvePublishVariantIds(
     draft.store?.template?.enabledVariantIds ??
     [];
   return templateVariantIds.length > 0 ? templateVariantIds : [1];
+}
+
+async function resolvePrintifyProductPublishInput(input: {
+  listing: any;
+  draft: any;
+  draftDesign: any;
+  printifyClient: Awaited<ReturnType<typeof getClientForStore>>["client"];
+  externalShopId: number;
+  productId: string | null;
+}): Promise<{
+  productId: string | null;
+  blueprintId: number;
+  printProviderId: number;
+  variantIds: number[];
+  variants?: Array<{
+    id: number;
+    price: number;
+    is_enabled: boolean;
+    sku?: string;
+    is_default?: boolean;
+  }>;
+  imageId: string;
+  imageGroups?: Array<{ imageId: string; variantIds: number[] }>;
+  placementData: PlacementData;
+}> {
+  const pair =
+    input.listing.wizardDraftDesignPair ??
+    (input.listing.wizardDraftDesignPairId
+      ? await prisma.wizardDraftDesignPair.findUnique({
+          where: { id: input.listing.wizardDraftDesignPairId },
+        })
+      : null);
+  const template =
+    input.draft.template ??
+    (input.draft.storeId
+      ? await prisma.storeMockupTemplate.findFirst({
+          where: { storeId: input.draft.storeId, isDefault: true },
+        })
+      : null);
+
+  if (!template?.printifyBlueprintId || !template?.printifyPrintProviderId) {
+    throw new Error("Printify template is not configured for this store");
+  }
+
+  const cachedVariants = await ensureVariantCostCache({
+    client: input.printifyClient,
+    shopId: input.externalShopId,
+    blueprintId: template.printifyBlueprintId,
+    printProviderId: template.printifyPrintProviderId,
+  });
+
+  const enabledColorIdSet = new Set(input.draft.enabledColorIds ?? []);
+  const storeColors = (input.draft.store as any)?.colors ?? [];
+  const selectedColorNames =
+    storeColors.length > 0
+      ? storeColors
+          .filter((color: any) => enabledColorIdSet.has(color.id))
+          .map((color: any) => color.name)
+      : Array.from(new Set((input.listing.variants ?? []).map((variant: any) => variant.colorName)));
+  if (selectedColorNames.length === 0) {
+    throw new Error("No selected colors for Printify publish");
+  }
+
+  const { effectiveVariantIds, effectiveSizesForPayload } = computeEnabledVariantSelection(
+    cachedVariants,
+    selectedColorNames,
+    input.draft.enabledSizesByColor as Record<string, string[]> | null,
+    input.draft.enabledSizes ?? [],
+  );
+  if (effectiveVariantIds.length === 0) {
+    throw new Error("No selected Printify variants for publish");
+  }
+
+  const baseRetailPriceUSD = resolveBaseTemplatePrice({
+    templateBasePriceUsd: template.basePriceUsd,
+    storeDefaultPriceUsd: (input.draft.store as any)?.defaultPriceUsd,
+  });
+  const priceBySizeOverride = mergeDraftAndTemplatePriceMaps({
+    draftPriceBySizeOverride: input.draft.priceBySizeOverride,
+    templatePriceBySizeDefault: template.priceBySizeDefault,
+  });
+  const enabledSet = new Set(effectiveVariantIds);
+  const variants = buildVariantPayload(
+    cachedVariants,
+    selectedColorNames,
+    effectiveSizesForPayload,
+    baseRetailPriceUSD,
+    priceBySizeOverride,
+  ).map((variant) => ({
+    ...variant,
+    is_enabled: enabledSet.has(variant.id),
+  }));
+
+  const targetDesign = input.draftDesign?.design ?? input.draft.design ?? null;
+  let imageId = "";
+  let imageGroups: Array<{ imageId: string; variantIds: number[] }> | undefined;
+
+  if (pair) {
+    const lightDraftDesign = input.draft.draftDesigns.find(
+      (entry: any) => entry.id === pair.lightDraftDesignId,
+    );
+    const darkDraftDesign = input.draft.draftDesigns.find(
+      (entry: any) => entry.id === pair.darkDraftDesignId,
+    );
+    if (!lightDraftDesign?.design || !darkDraftDesign?.design) {
+      throw new Error("Pair design files not found in draft");
+    }
+
+    const lightImageId = await ensurePrintifyImage({
+      client: input.printifyClient,
+      designStoragePath: lightDraftDesign.design.storagePath,
+      cachedImageId: lightDraftDesign.printifyImageId,
+    });
+    const darkImageId = await ensurePrintifyImage({
+      client: input.printifyClient,
+      designStoragePath: darkDraftDesign.design.storagePath,
+      cachedImageId: darkDraftDesign.printifyImageId,
+    });
+
+    await prisma.wizardDraftDesign.update({
+      where: { id: lightDraftDesign.id },
+      data: { printifyImageId: lightImageId },
+    });
+    await prisma.wizardDraftDesign.update({
+      where: { id: darkDraftDesign.id },
+      data: { printifyImageId: darkImageId },
+    });
+
+    const colorNameToId = new Map<string, string>();
+    for (const color of storeColors) {
+      colorNameToId.set(color.name.trim().toLowerCase(), color.id);
+    }
+    const colorGroups = resolveColorGroups(storeColors);
+    const lightVariantIds: number[] = [];
+    const darkVariantIds: number[] = [];
+
+    for (const variant of cachedVariants) {
+      if (!enabledSet.has(variant.variantId)) continue;
+      const colorId = colorNameToId.get(variant.colorName.trim().toLowerCase());
+      const group = (() => {
+        if (colorId) return colorGroups.get(colorId);
+        const hex = variant.colorHex ?? "";
+        if (/^#[0-9a-fA-F]{6}$/.test(hex.trim())) {
+          try {
+            return classifyColorHex(hex);
+          } catch {
+            return "light";
+          }
+        }
+        return "light";
+      })();
+
+      if (group === "dark") darkVariantIds.push(variant.variantId);
+      else lightVariantIds.push(variant.variantId);
+    }
+
+    imageGroups = [
+      { imageId: lightImageId, variantIds: lightVariantIds },
+      { imageId: darkImageId, variantIds: darkVariantIds },
+    ];
+  } else if (targetDesign?.storagePath) {
+    imageId = await ensurePrintifyImage({
+      client: input.printifyClient,
+      designStoragePath: targetDesign.storagePath,
+      cachedImageId: input.draftDesign?.printifyImageId ?? input.draft.printifyImageId,
+    });
+  } else {
+    throw new Error("Design file not found");
+  }
+
+  return {
+    productId: input.productId,
+    blueprintId: template.printifyBlueprintId,
+    printProviderId: template.printifyPrintProviderId,
+    variantIds: effectiveVariantIds,
+    variants,
+    imageId,
+    imageGroups,
+    placementData:
+      resolveEffectivePlacementData(input.draft.placementOverride, template.defaultPlacement) ??
+      (targetDesign
+        ? buildListingReadyPlacementData({
+            design: { widthPx: targetDesign.width, heightPx: targetDesign.height },
+            printArea: DEFAULT_PRINT_AREA,
+            template: {
+              productType: input.draft.productType,
+              blueprintTitle: template.blueprintTitle,
+              blueprintBrand: template.blueprintBrand,
+            },
+          })
+        : defaultPlacementData()),
+  };
 }
 
 async function publishExistingPrintifyDraftProduct(input: {

@@ -41,6 +41,62 @@ describe("runPublishWorker organization collections source", () => {
   });
 });
 
+describe("Printify Shopify-channel publish branch", () => {
+  const source = readFileSync(new URL("./worker.ts", import.meta.url), "utf8");
+
+  it("loads the store Printify shop for strategy resolution", () => {
+    assert.match(source, /include:\s*\{\s*printifyShop:\s*true\s*\}/);
+  });
+
+  it("resolves publish strategy before the Shopify productSet stage", () => {
+    const strategyIndex = source.indexOf("resolvePublishStrategy");
+    const shopifyStageIndex = source.indexOf("Stage 1: Shopify");
+    assert.ok(strategyIndex > -1, "resolvePublishStrategy should be used in worker");
+    assert.ok(shopifyStageIndex > -1, "Shopify stage marker should remain present");
+    assert.ok(strategyIndex < shopifyStageIndex, "strategy must be resolved before Shopify stage");
+  });
+
+  it("returns from Printify-first branch before publishToShopify can run", () => {
+    assert.match(source, /PRINTIFY_SHOPIFY_CHANNEL/);
+    assert.match(source, /runPrintifyShopifyChannelPublish/);
+  });
+});
+
+describe("runPrintifyShopifyChannelPublish invariants", () => {
+  const source = readFileSync(new URL("./worker.ts", import.meta.url), "utf8");
+
+  it("publishes through Printify publishProduct before Shopify sync", () => {
+    const publishIndex = source.indexOf("await printifyClient.publishProduct(");
+    const syncIndex = source.indexOf("await waitForShopifyProductSync(");
+    assert.ok(publishIndex > -1, "Printify publishProduct should be called");
+    assert.ok(syncIndex > -1, "Shopify sync should be called");
+    assert.ok(publishIndex < syncIndex, "Printify publish must happen before Shopify sync");
+  });
+
+  it("extracts enabled Printify matrix and persists listing variants", () => {
+    assert.match(source, /extractEnabledPrintifyVariantMatrix/);
+    assert.match(source, /listingVariant\.deleteMany/);
+    assert.match(source, /listingVariant\.createMany/);
+  });
+
+  it("marks Shopify sync timeout as partial failure without Shopify productSet fallback", () => {
+    assert.match(source, /Printify published but Shopify sync was not confirmed/);
+    assert.doesNotMatch(source, /catch[\s\S]{0,400}publishToShopify/);
+  });
+});
+
+describe("retry Printify route source contract", () => {
+  it("routes Printify Shopify-channel retries through the full publish worker", () => {
+    const retryRoute = readFileSync(
+      new URL("../../app/api/listings/[id]/retry-printify/route.ts", import.meta.url),
+      "utf8",
+    );
+    assert.match(retryRoute, /resolvePublishStrategy/);
+    assert.match(retryRoute, /runPublishWorker/);
+    assert.match(retryRoute, /PRINTIFY_SHOPIFY_CHANNEL/);
+  });
+});
+
 describe("normalizeExternalTags", () => {
   it("trims, drops blank/nullish tags, deduplicates case-insensitively, and preserves first casing", () => {
     assert.deepEqual(

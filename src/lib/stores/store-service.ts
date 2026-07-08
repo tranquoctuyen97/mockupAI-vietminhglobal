@@ -18,7 +18,10 @@ import {
   type TemplateReadinessInput,
   type TemplateMissing,
 } from "@/lib/stores/template-readiness";
-import { normalizeTags } from "@/lib/wizard/product-organization";
+import {
+  normalizeOrganizationCollections,
+  normalizeTags,
+} from "@/lib/wizard/product-organization";
 import { Prisma } from "@prisma/client";
 
 export class TemplateNotReadyError extends Error {
@@ -85,6 +88,37 @@ async function updateTemplateDefaultTags(
   await client.$executeRaw`
     UPDATE "store_mockup_templates"
     SET "default_tags" = ${normalizeTags(defaultTags)}
+    WHERE "id" = ${templateId}
+  `;
+}
+
+export async function loadTemplateDefaultCollections(
+  templateIds: string[],
+  client: Pick<TemplateDefaultTagsClient, "$queryRaw"> = prisma,
+): Promise<Map<string, string[]>> {
+  if (templateIds.length === 0) return new Map();
+
+  const rows = await client.$queryRaw<Array<{ id: string; default_collections: string[] | null }>>(
+    Prisma.sql`
+      SELECT id, default_collections
+      FROM "store_mockup_templates"
+      WHERE id IN (${Prisma.join(templateIds)})
+    `,
+  );
+
+  return new Map(
+    rows.map((row) => [row.id, normalizeOrganizationCollections(row.default_collections ?? [])]),
+  );
+}
+
+async function updateTemplateDefaultCollections(
+  templateId: string,
+  defaultCollections: unknown,
+  client: Pick<TemplateDefaultTagsClient, "$executeRaw">,
+): Promise<void> {
+  await client.$executeRaw`
+    UPDATE "store_mockup_templates"
+    SET "default_collections" = ${normalizeOrganizationCollections(defaultCollections)}
     WHERE "id" = ${templateId}
   `;
 }
@@ -396,6 +430,7 @@ export async function createTemplate(
     basePriceUsd?: number | string | null;
     priceBySizeDefault?: Record<string, unknown> | null;
     defaultTags?: unknown;
+    defaultCollections?: unknown;
   },
 ) {
   const existingCount = await prisma.storeMockupTemplate.count({ where: { storeId } });
@@ -404,11 +439,12 @@ export async function createTemplate(
     printifyPrintProviderId: data.printifyPrintProviderId,
     enabledVariantIds: data.enabledVariantIds ?? [],
     defaultPlacement: data.defaultPlacement,
+    defaultMockupSource: data.defaultMockupSource ?? "PRINTIFY",
     colors: data.colorIds ?? [],
   };
   const isDefault = shouldCreateTemplateAsDefault(existingCount, draftTemplateForReadiness);
 
-  return prisma.$transaction(async (tx) => {
+  const template = await prisma.$transaction(async (tx) => {
     const template = await tx.storeMockupTemplate.create({
       data: {
         storeId,
@@ -439,6 +475,7 @@ export async function createTemplate(
     });
 
     await updateTemplateDefaultTags(template.id, data.defaultTags, tx);
+    await updateTemplateDefaultCollections(template.id, data.defaultCollections, tx);
 
     if (data.colorIds && data.colorIds.length > 0) {
       await tx.templateColor.createMany({
@@ -452,6 +489,9 @@ export async function createTemplate(
 
     return template;
   });
+
+  await promoteReadyTemplateIfNoDefault(storeId);
+  return template;
 }
 
 /**
@@ -480,9 +520,10 @@ export async function updateTemplate(
     basePriceUsd?: number | string | null;
     priceBySizeDefault?: Record<string, unknown> | null;
     defaultTags?: unknown;
+    defaultCollections?: unknown;
   },
 ) {
-  return prisma.$transaction(async (tx) => {
+  const template = await prisma.$transaction(async (tx) => {
     const template = await tx.storeMockupTemplate.update({
       where: { id: templateId },
       data: {
@@ -516,6 +557,9 @@ export async function updateTemplate(
     if (data.defaultTags !== undefined) {
       await updateTemplateDefaultTags(templateId, data.defaultTags, tx);
     }
+    if (data.defaultCollections !== undefined) {
+      await updateTemplateDefaultCollections(templateId, data.defaultCollections, tx);
+    }
 
     if (data.colorIds !== undefined) {
       await tx.templateColor.deleteMany({ where: { templateId } });
@@ -531,6 +575,30 @@ export async function updateTemplate(
     }
 
     return template;
+  });
+
+  await promoteReadyTemplateIfNoDefault(template.storeId);
+  return template;
+}
+
+export async function promoteReadyTemplateIfNoDefault(storeId: string) {
+  const defaultTemplate = await prisma.storeMockupTemplate.findFirst({
+    where: { storeId, isDefault: true },
+    select: { id: true },
+  });
+  if (defaultTemplate) return null;
+
+  const templates = await prisma.storeMockupTemplate.findMany({
+    where: { storeId },
+    orderBy: { sortOrder: "asc" },
+    include: { colors: true, mockupItems: { include: { mockup: true } } },
+  });
+  const nextTemplate = pickNextReadyDefaultTemplate(templates);
+  if (!nextTemplate) return null;
+
+  return prisma.storeMockupTemplate.update({
+    where: { id: nextTemplate.id },
+    data: { isDefault: true },
   });
 }
 
@@ -611,6 +679,7 @@ export async function duplicateTemplate(templateId: string) {
     where: { storeId: original.storeId },
   });
   const originalDefaultTags = (await loadTemplateDefaultTags([templateId])).get(templateId) ?? [];
+  const originalDefaultCollections = (await loadTemplateDefaultCollections([templateId])).get(templateId) ?? [];
 
   return prisma.$transaction(async (tx) => {
     const copy = await tx.storeMockupTemplate.create({
@@ -640,6 +709,7 @@ export async function duplicateTemplate(templateId: string) {
     });
 
     await updateTemplateDefaultTags(copy.id, originalDefaultTags, tx);
+    await updateTemplateDefaultCollections(copy.id, originalDefaultCollections, tx);
 
     if (original.colors.length > 0) {
       await tx.templateColor.createMany({

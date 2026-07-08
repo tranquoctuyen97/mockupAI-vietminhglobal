@@ -116,13 +116,18 @@ export default function Step5ContentPage() {
   const initialTags = existingTags.length > 0 ? existingTags : templateDefaultTags;
   const existingTagsKey = existingTags.join("\u0000");
   const templateDefaultTagsKey = templateDefaultTags.join("\u0000");
+  const templateDefaultCollections = normalizeOrganizationCollections(draft?.template?.defaultCollections);
+  const existingCollections = normalizeOrganizationCollections(existing?.collections || []);
+  const initialCollections = existingCollections.length > 0 ? existingCollections : templateDefaultCollections;
+  const existingCollectionsKey = existingCollections.join("\u0000");
+  const templateDefaultCollectionsKey = templateDefaultCollections.join("\u0000");
 
   const [state, setState] = useState<ContentState>(existing?.title ? "ready" : "empty");
   const [content, setContent] = useState<AiContent>({
     title: existing?.title || "",
     description: existing?.description || "",
     tags: initialTags,
-    collections: normalizeOrganizationCollections(existing?.collections || []),
+    collections: initialCollections,
     altText: existing?.altText || "",
   });
 
@@ -164,11 +169,11 @@ export default function Step5ContentPage() {
       title: existing?.title || "",
       description: existing?.description || "",
       tags: initialTags,
-      collections: normalizeOrganizationCollections(existing?.collections || []),
+      collections: initialCollections,
       altText: existing?.altText || "",
     });
     setState(existing?.title ? "ready" : "empty");
-  }, [activeTabKey, draft?.id, existing?.title, existingTagsKey, templateDefaultTagsKey]);
+  }, [activeTabKey, draft?.id, existing?.title, existingTagsKey, templateDefaultTagsKey, existingCollectionsKey, templateDefaultCollectionsKey]);
 
   useEffect(() => {
     let cancelled = false;

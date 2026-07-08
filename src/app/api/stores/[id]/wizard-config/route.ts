@@ -17,7 +17,10 @@ import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { enrichColorHex } from "@/lib/printify/color-hex";
-import { loadTemplateDefaultTags } from "@/lib/stores/store-service";
+import {
+  loadTemplateDefaultCollections,
+  loadTemplateDefaultTags,
+} from "@/lib/stores/store-service";
 import {
   getTemplateReadiness,
   getTemplateReadinessLabel,
@@ -85,6 +88,9 @@ export async function GET(
   const defaultTagsByTemplateId = await loadTemplateDefaultTags(
     store.templates.map((template) => template.id),
   );
+  const defaultCollectionsByTemplateId = await loadTemplateDefaultCollections(
+    store.templates.map((template) => template.id),
+  );
 
   // Shape templates
   const templates = store.templates.map((template) => {
@@ -116,6 +122,7 @@ export async function GET(
       basePriceUsd: template.basePriceUsd ? Number(template.basePriceUsd) : null,
       priceBySizeDefault: template.priceBySizeDefault ?? null,
       defaultTags: defaultTagsByTemplateId.get(template.id) ?? [],
+      defaultCollections: defaultCollectionsByTemplateId.get(template.id) ?? [],
 
       enabledVariantIds: template.enabledVariantIds,
       enabledSizes: template.enabledSizes,

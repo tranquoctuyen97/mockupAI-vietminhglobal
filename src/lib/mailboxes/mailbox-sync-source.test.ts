@@ -22,6 +22,7 @@ test("mailbox sync reconnects orphan Gmail links to RT conversations", () => {
   assert.match(source, /scanSent/);
   assert.match(source, /\.\.\.scan\.messages, \.\.\.sentScan\.messages/);
   assert.match(source, /function isOutboundGmailMessage/);
+  assert.match(source, /return !message\.flags\.includes\("\\\\Seen"\) && !isOutboundGmailMessage\(message\)/);
   assert.match(source, /message\.labels\.map\(normalizeObservedLabel\)\.includes\("sent"\)/);
   assert.match(source, /const direction = isOutboundGmailMessage\(message\) \? "OUTBOUND" : "INBOUND"/);
   assert.match(source, /link\.direction !== direction && direction === "OUTBOUND"/);
@@ -35,8 +36,15 @@ test("mailbox sync reconnects orphan Gmail links to RT conversations", () => {
   assert.match(source, /gmailOnly \+= 1/);
   assert.match(source, /return message\.uid/);
   assert.match(source, /lastCommittedUid:\s*effectiveLastCommittedUid/);
+  assert.match(source, /runtime scans are bounded batches, not full Inbox snapshots/);
+  assert.doesNotMatch(source, /conversationId:\s*\{\s*notIn:\s*inboxIds\s*\}/);
   assert.match(source, /GMAIL_RATE_LIMIT_ERROR_CODE/);
   assert.match(source, /isGmailRateLimitError/);
   assert.match(source, /code === GMAIL_RATE_LIMIT_ERROR_CODE/);
+  assert.match(source, /MAILBOX_BACKFILL_CHUNK_SIZE/);
+  assert.match(source, /oldestFirst:\s*true/);
+  assert.match(source, /folder === "SENT"/);
+  assert.match(source, /backfillNext/);
+  assert.doesNotMatch(source, /limit:\s*null/);
   assert.doesNotMatch(source, /lastCommittedUid:\s*BigInt\(0\),\n\s*\}\);\n\s*if \(/);
 });

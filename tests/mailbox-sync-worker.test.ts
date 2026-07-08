@@ -14,7 +14,8 @@ describe("mailbox sync worker", () => {
       imported: 1,
       inherited: 0,
       lastCommittedUid: BigInt(42),
-    });
+      nested: { uid: BigInt(101) },
+    } as Parameters<typeof serializeSyncMailboxResult>[0] & { nested: { uid: bigint } });
 
     expect(result).toEqual({
       mailboxId: "mailbox-1",
@@ -22,6 +23,7 @@ describe("mailbox sync worker", () => {
       imported: 1,
       inherited: 0,
       lastCommittedUid: "42",
+      nested: { uid: "101" },
     });
     expect(() => JSON.stringify(result)).not.toThrow();
   });

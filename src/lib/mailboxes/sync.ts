@@ -20,8 +20,15 @@ const DEFAULT_RUNTIME_DIR = process.env.MAILBOX_RUNTIME_DIR ?? "/run/mockupai-ma
 const GETMAIL_TIMEOUT_MS = Number(process.env.MAILBOX_GETMAIL_TIMEOUT_MS ?? 600_000);
 const MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS = Number(process.env.MAILBOX_PERSIST_TRANSACTION_TIMEOUT_MS ?? 60_000);
 const MAILBOX_SYNC_LEASE_MS = Number(process.env.MAILBOX_SYNC_LEASE_MS ?? 90_000);
+const MAILBOX_BACKFILL_CHUNK_SIZE = Number(process.env.MAILBOX_BACKFILL_CHUNK_SIZE ?? 20);
 const RECENT_ORPHAN_BACKFILL_LIMIT = Number(process.env.MAILBOX_RECENT_ORPHAN_BACKFILL_LIMIT ?? 0);
 const ORPHAN_BACKFILL_FETCH_BATCH_SIZE = Number(process.env.MAILBOX_ORPHAN_BACKFILL_FETCH_BATCH_SIZE ?? 100);
+
+export interface MailboxBackfillCursor {
+  mailboxId: string;
+  folder?: "INBOX" | "SENT";
+  lastCommittedUid?: string;
+}
 
 export interface MailboxSyncDeps {
   findMailbox(mailboxId: string): Promise<SyncMailboxRecord | null>;
@@ -31,11 +38,16 @@ export interface MailboxSyncDeps {
     appPassword: string;
     initialSyncAfter: Date;
     lastCommittedUid: bigint;
+    limit?: number | null;
+    oldestFirst?: boolean;
   }): Promise<{ uidValidity: bigint; messages: GmailMessageMetadata[] }>;
   scanSent?(input: {
     email: string;
     appPassword: string;
     initialSyncAfter: Date;
+    lastCommittedUid?: bigint;
+    limit?: number | null;
+    oldestFirst?: boolean;
   }): Promise<{ uidValidity: bigint; messages: GmailMessageMetadata[] }>;
   loadSkippedSenders?(mailboxId: string): Promise<Set<string>>;
   moveInboxMessagesToSpam?(input: {
@@ -108,6 +120,8 @@ export interface SyncMailboxResult {
   imported: number;
   inherited: number;
   lastCommittedUid: bigint;
+  backfillNext?: MailboxBackfillCursor;
+  backfillDone?: boolean;
 }
 
 function normalizeObservedLabel(name: string): string {
@@ -119,7 +133,7 @@ function normalizeObservedLabel(name: string): string {
 }
 
 function isUnreadInboxMessage(message: GmailMessageMetadata): boolean {
-  return !message.flags.includes("\\Seen");
+  return !message.flags.includes("\\Seen") && !isOutboundGmailMessage(message);
 }
 
 function isOutboundGmailMessage(message: GmailMessageMetadata): boolean {
@@ -142,6 +156,32 @@ function normalizedSenderEmail(message: GmailMessageMetadata): string {
 
 function maxMessageUid(messages: GmailMessageMetadata[]): bigint {
   return messages.reduce((max, message) => message.uid > max ? message.uid : max, BigInt(0));
+}
+
+async function recordResponseMetrics(
+  deps: MailboxSyncDeps,
+  input: {
+    mailboxId: string;
+    responseMetricInputs: Awaited<ReturnType<MailboxSyncDeps["persist"]>>["responseMetricInputs"];
+    adminReplyMetricInputs: Awaited<ReturnType<MailboxSyncDeps["persist"]>>["adminReplyMetricInputs"];
+  },
+) {
+  await Promise.all(input.responseMetricInputs.map((metric) => deps.recordCustomerMessage(metric)));
+  for (const metric of input.adminReplyMetricInputs) {
+    try {
+      await deps.recordAdminReply(metric);
+    } catch (error) {
+      if (
+        error instanceof Error
+        && (error.message === "response_metric_missing" || error.message === "negative_response_duration")
+      ) {
+        // ponytail: historical outbound-only chunks can lack the original customer row; rebuild fills old gaps.
+        console.warn(`[MailboxSync] response_metric_skipped mailboxId=${input.mailboxId} conversationId=${metric.conversationId} reason=${error.message}`);
+        continue;
+      }
+      throw error;
+    }
+  }
 }
 
 function ticketSenderIdentity(ticket: Awaited<ReturnType<typeof getTicket>>) {
@@ -378,9 +418,18 @@ export async function syncMailbox(
         `[MailboxSync] inbox_rescanned mailboxId=${mailbox.id} reason=uid_validity_changed messages=${scan.messages.length} uidValidity=${scan.uidValidity}`,
       );
     }
-    const sentScan = deps.scanSent
-      ? await deps.scanSent({ email: mailbox.email, appPassword, initialSyncAfter: mailbox.initialSyncAfter })
-      : { uidValidity: scan.uidValidity, messages: [] };
+    let sentScan: { uidValidity: bigint; messages: GmailMessageMetadata[] } = {
+      uidValidity: scan.uidValidity,
+      messages: [],
+    };
+    if (deps.scanSent) {
+      try {
+        sentScan = await deps.scanSent({ email: mailbox.email, appPassword, initialSyncAfter: mailbox.initialSyncAfter });
+      } catch (error) {
+        // ponytail: Sent scan is best-effort; never drop already-scanned Inbox messages because Gmail closed this connection.
+        console.warn(`[MailboxSync] sent_scan_failed mailboxId=${mailbox.id} message=${gmailErrorDetails(error).message}`);
+      }
+    }
     console.log(`[MailboxSync] sent_scanned mailboxId=${mailbox.id} messages=${sentScan.messages.length}`);
     const skippedSenders = deps.loadSkippedSenders
       ? await deps.loadSkippedSenders(mailbox.id)
@@ -418,7 +467,7 @@ export async function syncMailbox(
     console.log(
       `[MailboxSync] persisted mailboxId=${mailbox.id} imported=${indexed.imported} inherited=${indexed.inherited} lastCommittedUid=${indexed.lastCommittedUid}`,
     );
-    await Promise.all(indexed.responseMetricInputs.map((input) => deps.recordCustomerMessage(input)));
+    await recordResponseMetrics(deps, { mailboxId: mailbox.id, ...indexed });
     await deps.reconcileInboxState({
       mailbox: mailboxAtEffectiveCursor,
       messages: scan.messages,
@@ -441,7 +490,7 @@ export async function syncMailbox(
       uidValidity: scan.uidValidity,
       messages: [...scan.messages, ...sentScan.messages],
     });
-    await Promise.all(reconciled.responseMetricInputs.map((input) => deps.recordCustomerMessage(input)));
+    await recordResponseMetrics(deps, { mailboxId: mailbox.id, ...reconciled });
     await deps.reconcileInboxState({
       mailbox: mailboxAtEffectiveCursor,
       messages: scan.messages,
@@ -475,6 +524,108 @@ export async function syncMailbox(
     throw error;
   } finally {
     if (mailbox) await deps.releaseLease(mailbox.id, leaseOwner).catch(() => undefined);
+  }
+}
+
+export async function backfillMailbox(
+  input: string | MailboxBackfillCursor,
+  deps: MailboxSyncDeps = prismaMailboxSyncDeps,
+): Promise<SyncMailboxResult> {
+  const startedAt = Date.now();
+  const mailboxId = typeof input === "string" ? input : input.mailboxId;
+  const folder = typeof input === "string" ? "INBOX" : input.folder ?? "INBOX";
+  const cursor = BigInt(typeof input === "string" ? "0" : input.lastCommittedUid ?? "0");
+  const mailbox = await deps.findMailbox(mailboxId);
+  if (!mailbox || !mailbox.isActive) {
+    console.log(`[MailboxBackfill] skip mailboxId=${mailboxId} reason=${mailbox ? "inactive" : "missing"}`);
+    return { mailboxId, skipped: true, imported: 0, inherited: 0, lastCommittedUid: BigInt(0) };
+  }
+
+  const leaseOwner = `backfill:${randomUUID()}`;
+  const acquired = await deps.acquireLease(
+    mailbox.id,
+    leaseOwner,
+    new Date(Date.now() + MAILBOX_SYNC_LEASE_MS),
+  );
+  if (!acquired) {
+    console.log(`[MailboxBackfill] skip mailboxId=${mailbox.id} folder=${folder} cursor=${cursor} reason=lease_active`);
+    throw new Error("mailbox_backfill_lease_active");
+  }
+
+  try {
+    const appPassword = await deps.getAppPassword(mailbox.id);
+    if (folder === "INBOX" && cursor === BigInt(0)) {
+      const discoveredLabels = await deps.discoverLabels({ email: mailbox.email, appPassword });
+      await deps.persistLabelCatalog(mailbox.id, discoveredLabels);
+    }
+
+    if (folder === "SENT" && !deps.scanSent) {
+      return {
+        mailboxId,
+        skipped: false,
+        imported: 0,
+        inherited: 0,
+        lastCommittedUid: mailbox.syncCursor?.lastCommittedUid ?? BigInt(0),
+        backfillDone: true,
+      };
+    }
+
+    const scan = folder === "SENT" && deps.scanSent
+      ? await deps.scanSent({
+          email: mailbox.email,
+          appPassword,
+          initialSyncAfter: mailbox.initialSyncAfter,
+          lastCommittedUid: cursor,
+          limit: MAILBOX_BACKFILL_CHUNK_SIZE,
+          oldestFirst: true,
+        })
+      : await deps.scanInbox({
+        email: mailbox.email,
+        appPassword,
+        initialSyncAfter: mailbox.initialSyncAfter,
+        lastCommittedUid: cursor,
+        limit: MAILBOX_BACKFILL_CHUNK_SIZE,
+        oldestFirst: true,
+      });
+    console.log(
+      `[MailboxBackfill] scanned mailboxId=${mailbox.id} folder=${folder} cursor=${cursor} messages=${scan.messages.length}`,
+    );
+    const nextCursor = scan.messages.length > 0 ? maxMessageUid(scan.messages) : cursor;
+    const mailboxAtEffectiveCursor: SyncMailboxRecord = {
+      ...mailbox,
+      syncCursor: mailbox.syncCursor || cursor > BigInt(0)
+        ? { uidValidity: mailbox.syncCursor?.uidValidity ?? null, lastCommittedUid: cursor }
+        : null,
+    };
+    const persisted = await deps.persist({
+      mailbox: mailboxAtEffectiveCursor,
+      uidValidity: scan.uidValidity,
+      messages: scan.messages,
+    });
+    await recordResponseMetrics(deps, { mailboxId: mailbox.id, ...persisted });
+    if (folder === "INBOX") {
+      await deps.reconcileInboxState({ mailbox: mailboxAtEffectiveCursor, messages: scan.messages });
+    }
+    const hasMore = scan.messages.length >= MAILBOX_BACKFILL_CHUNK_SIZE;
+    const backfillNext = hasMore
+      ? { mailboxId, folder, lastCommittedUid: nextCursor.toString() }
+      : folder === "INBOX"
+        ? { mailboxId, folder: "SENT" as const, lastCommittedUid: "0" }
+        : undefined;
+    console.log(
+      `[MailboxBackfill] chunk_done mailboxId=${mailbox.id} folder=${folder} messages=${scan.messages.length} next=${backfillNext ? `${backfillNext.folder}:${backfillNext.lastCommittedUid}` : "done"} imported=${persisted.imported} inherited=${persisted.inherited} lastCommittedUid=${persisted.lastCommittedUid} elapsedMs=${Date.now() - startedAt}`,
+    );
+    return { mailboxId, skipped: false, ...persisted, backfillNext, backfillDone: !backfillNext };
+  } catch (error) {
+    const code = safeSyncErrorCode(error);
+    const details = gmailErrorDetails(error);
+    console.log(
+      `[MailboxBackfill] failed mailboxId=${mailboxId} code=${code} errorCode=${details.code ?? ""} reason=${details.reason ?? ""} message=${details.message} elapsedMs=${Date.now() - startedAt}`,
+    );
+    await deps.markError(mailboxId, code, isPermanentSyncError(code));
+    throw error;
+  } finally {
+    await deps.releaseLease(mailbox.id, leaseOwner).catch(() => undefined);
   }
 }
 
@@ -519,11 +670,11 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
   recordCustomerMessage: mailboxResponseMetrics.recordCustomerMessage,
   recordAdminReply: mailboxResponseMetrics.recordAdminReply,
 
-  scanInbox: ({ email, appPassword, initialSyncAfter, lastCommittedUid }) =>
-    createGmailAdapter({ email, appPassword }).scanInbox({ initialSyncAfter, lastCommittedUid }),
+  scanInbox: ({ email, appPassword, initialSyncAfter, lastCommittedUid, limit, oldestFirst }) =>
+    createGmailAdapter({ email, appPassword }).scanInbox({ initialSyncAfter, lastCommittedUid, limit, oldestFirst }),
 
-  scanSent: ({ email, appPassword, initialSyncAfter }) =>
-    createGmailAdapter({ email, appPassword }).scanSent({ initialSyncAfter }),
+  scanSent: ({ email, appPassword, initialSyncAfter, lastCommittedUid, limit, oldestFirst }) =>
+    createGmailAdapter({ email, appPassword }).scanSent({ initialSyncAfter, lastCommittedUid, limit, oldestFirst }),
 
   discoverLabels: ({ email, appPassword }) =>
     createGmailAdapter({ email, appPassword }).listVisibleLabels(),
@@ -666,45 +817,12 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
           });
         }
 
-        await tx.conversationLabel.deleteMany({
-          where: {
-            labelId: inboxLabel.id,
-            conversation: {
-              mailboxId: mailbox.id,
-            },
-            conversationId: { notIn: inboxIds },
-          },
-        });
-
-        await tx.mailboxConversation.updateMany({
-          where: {
-            mailboxId: mailbox.id,
-            labels: {
-              none: {
-                labelId: inboxLabel.id,
-              },
-            },
-            id: { notIn: unreadIds },
-          },
-          data: { isUnread: false },
-        });
+        // ponytail: runtime scans are bounded batches, not full Inbox snapshots.
+        // Absence from this batch must not remove a thread from the Inbox view.
         return;
       }
 
-      await tx.conversationLabel.deleteMany({
-        where: {
-          labelId: inboxLabel.id,
-          conversation: {
-            mailboxId: mailbox.id,
-          },
-        },
-      });
-      await tx.mailboxConversation.updateMany({
-        where: {
-          mailboxId: mailbox.id,
-        },
-        data: { isUnread: false },
-      });
+      // Empty scans are also partial/no-new-message snapshots, so keep existing Inbox labels intact.
     });
   },
 

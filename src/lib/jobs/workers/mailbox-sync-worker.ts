@@ -1,28 +1,41 @@
 import { type Job, Worker } from "bullmq";
 import {
   GMAIL_LABEL_OPERATIONS_QUEUE_NAME,
+  getMailboxBackfillQueue,
+  MAILBOX_BACKFILL_QUEUE_NAME,
   MAILBOX_SYNC_QUEUE_NAME,
   redisConnection,
 } from "@/lib/queue/queue";
 import {
+  type MailboxBackfillJobPayload,
   dispatchActiveMailboxSyncs,
+  enqueueMailboxBackfill,
   scheduleMailboxSyncDispatcher,
   type GmailLabelOperationJobPayload,
   type MailboxSyncJobPayload,
 } from "@/lib/mailboxes/queue";
-import { syncMailbox, type SyncMailboxResult } from "@/lib/mailboxes/sync";
+import { backfillMailbox, syncMailbox, type SyncMailboxResult } from "@/lib/mailboxes/sync";
 import { processGmailLabelOperation } from "@/lib/mailboxes/labels";
 
 const globalForMailboxWorkers = globalThis as unknown as {
   mailboxSyncWorker?: Worker<MailboxSyncJobPayload>;
+  mailboxBackfillWorker?: Worker<MailboxBackfillJobPayload>;
   gmailLabelOperationsWorker?: Worker<GmailLabelOperationJobPayload>;
 };
+
+async function hasPendingBackfill(mailboxId: string) {
+  const jobs = await getMailboxBackfillQueue().getJobs(["waiting", "active", "delayed", "paused"], 0, 100);
+  return jobs.some((job) => job.data.mailboxId === mailboxId);
+}
 
 export const MAILBOX_SYNC_WORKER_CONCURRENCY = Number(
   process.env.MAILBOX_SYNC_WORKER_CONCURRENCY ?? 1,
 );
 export const MAILBOX_SYNC_WORKER_LOCK_DURATION_MS = Number(
   process.env.MAILBOX_SYNC_WORKER_LOCK_DURATION_MS ?? 900_000,
+);
+export const MAILBOX_BACKFILL_WORKER_CONCURRENCY = Number(
+  process.env.MAILBOX_BACKFILL_WORKER_CONCURRENCY ?? 1,
 );
 export const GMAIL_LABEL_OPERATIONS_WORKER_CONCURRENCY = Number(
   process.env.GMAIL_LABEL_OPERATIONS_WORKER_CONCURRENCY ?? 2,
@@ -35,6 +48,16 @@ export async function startMailboxSyncWorker() {
       async (job: Job<MailboxSyncJobPayload>) => {
         if (job.name === "dispatch-active-mailboxes") {
           return dispatchActiveMailboxSyncs();
+        }
+        if (await hasPendingBackfill(job.data.mailboxId)) {
+          console.log(`[MailboxSync] skip mailboxId=${job.data.mailboxId} reason=backfill_pending`);
+          return serializeSyncMailboxResult({
+            mailboxId: job.data.mailboxId,
+            skipped: true,
+            imported: 0,
+            inherited: 0,
+            lastCommittedUid: BigInt(0),
+          });
         }
         return serializeSyncMailboxResult(await syncMailbox(job.data.mailboxId));
       },
@@ -50,6 +73,28 @@ export async function startMailboxSyncWorker() {
   return globalForMailboxWorkers.mailboxSyncWorker;
 }
 
+export function startMailboxBackfillWorker() {
+  if (!globalForMailboxWorkers.mailboxBackfillWorker) {
+    globalForMailboxWorkers.mailboxBackfillWorker = new Worker<MailboxBackfillJobPayload>(
+      MAILBOX_BACKFILL_QUEUE_NAME,
+      async (job: Job<MailboxBackfillJobPayload>) => {
+        const result = await backfillMailbox(job.data);
+        if (result.backfillNext) {
+          await enqueueMailboxBackfill(result.backfillNext);
+        }
+        return serializeSyncMailboxResult(result);
+      },
+      {
+        connection: redisConnection,
+        concurrency: MAILBOX_BACKFILL_WORKER_CONCURRENCY,
+        lockDuration: MAILBOX_SYNC_WORKER_LOCK_DURATION_MS,
+        maxStalledCount: 1,
+      },
+    );
+  }
+  return globalForMailboxWorkers.mailboxBackfillWorker;
+}
+
 export function startGmailLabelOperationsWorker() {
   if (globalForMailboxWorkers.gmailLabelOperationsWorker) {
     return globalForMailboxWorkers.gmailLabelOperationsWorker;
@@ -63,8 +108,8 @@ export function startGmailLabelOperationsWorker() {
 }
 
 export function serializeSyncMailboxResult(result: SyncMailboxResult) {
-  return {
+  return JSON.parse(JSON.stringify({
     ...result,
     lastCommittedUid: result.lastCommittedUid.toString(),
-  };
+  }, (_, value) => (typeof value === "bigint" ? value.toString() : value)));
 }

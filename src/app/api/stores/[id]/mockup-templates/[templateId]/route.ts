@@ -76,6 +76,7 @@ export async function PATCH(
         ? undefined
         : body.priceBySizeDefault ?? null,
     defaultTags: body.defaultTags,
+    defaultCollections: body.defaultCollections,
     colorIds: body.colorIds,
   });
 

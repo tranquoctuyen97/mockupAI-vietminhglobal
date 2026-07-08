@@ -39,7 +39,12 @@ import {
   createPlacementDataWithFront,
   VIEW_LABELS,
 } from "@/lib/placement/views";
-import { MAX_TAGS, normalizeTags } from "@/lib/wizard/product-organization";
+import {
+  MAX_ORGANIZATION_COLLECTIONS,
+  MAX_TAGS,
+  normalizeOrganizationCollections,
+  normalizeTags,
+} from "@/lib/wizard/product-organization";
 
 interface TemplateDetail {
   id: string;
@@ -62,6 +67,7 @@ interface TemplateDetail {
   basePriceUsd: number | null;
   priceBySizeDefault: Record<string, number> | null;
   defaultTags: string[];
+  defaultCollections: string[];
   blueprintImageUrl?: string | null;
   blueprintBrand?: string | null;
   colors: Array<{
@@ -226,6 +232,20 @@ function isValidCompositeRegion(value: unknown): boolean {
 
 function formatTemplateMissingLabels(missing: TemplateMissing[]): string {
   return missing.map((key) => TEMPLATE_MISSING_LABELS[key]).join(", ");
+}
+
+function getTemplateStatusLabel(template: TemplateDetail, ready: boolean): string {
+  if (template.isDefault && ready) return "Mặc định";
+  if (template.isDefault) return "Mặc định thiếu cấu hình";
+  return ready ? "Sẵn sàng" : "Thiếu cấu hình";
+}
+
+function getPlacementSummaryLabel(template: TemplateDetail, enabledViews: ViewKey[], ready: boolean): string {
+  if (enabledViews.length > 0) return "";
+  if (template.defaultMockupSource === "CUSTOM") {
+    return ready ? "Dùng mockup custom" : "Thiếu mockup custom";
+  }
+  return "Chưa cấu hình placement";
 }
 
 /* ========== Tab status helpers ========== */
@@ -717,6 +737,7 @@ function createEmptyTemplate(sortOrder: number, isDefault = false, name = ""): T
     basePriceUsd: null,
     priceBySizeDefault: null,
     defaultTags: [],
+    defaultCollections: [],
     colors: [],
   };
 }
@@ -824,6 +845,7 @@ function TemplatesSection({
     if (JSON.stringify(tempTemplateData.defaultPlacement) !== JSON.stringify(originalTemplate.defaultPlacement)) return true;
     if (JSON.stringify(tempTemplateData.priceBySizeDefault) !== JSON.stringify(originalTemplate.priceBySizeDefault)) return true;
     if (JSON.stringify(tempTemplateData.defaultTags ?? []) !== JSON.stringify(originalTemplate.defaultTags ?? [])) return true;
+    if (JSON.stringify(tempTemplateData.defaultCollections ?? []) !== JSON.stringify(originalTemplate.defaultCollections ?? [])) return true;
 
     const tempColors = tempTemplateData.colors?.map((tc) => tc.color.name).sort().join(",") ?? "";
     const origColors = originalTemplate.colors?.map((tc) => tc.color.name).sort().join(",") ?? "";
@@ -1016,6 +1038,7 @@ function TemplatesSection({
         basePriceUsd: tempTemplateData.basePriceUsd,
         priceBySizeDefault: tempTemplateData.priceBySizeDefault,
         defaultTags: tempTemplateData.defaultTags,
+        defaultCollections: tempTemplateData.defaultCollections,
       };
 
       const res = await fetch(url, {
@@ -1194,21 +1217,26 @@ function TemplatesSection({
               </div>
             </div>
 
-            {store.templates.length > 0 && !store.templates.some((t) => t.isDefault && getTemplateMissing(t).length === 0) && (
-              <div
-                className="alert"
-                style={{
-                  marginBottom: 12,
-                  backgroundColor: "rgba(245, 158, 11, 0.06)",
-                  border: "1px solid rgba(245, 158, 11, 0.25)",
-                }}
-              >
-                <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
-                <span className="flex-1" style={{ fontSize: "0.84rem" }}>
-                  Chưa có default template sẵn sàng. Hoàn tất một template rồi đặt làm default để Wizard có thể chạy.
-                </span>
-              </div>
-            )}
+            {store.templates.length > 0 && !store.templates.some((t) => t.isDefault && getTemplateMissing(t).length === 0) && (() => {
+              const hasReadyTemplate = store.templates.some((t) => getTemplateMissing(t).length === 0);
+              return (
+                <div
+                  className="alert"
+                  style={{
+                    marginBottom: 12,
+                    backgroundColor: "rgba(245, 158, 11, 0.06)",
+                    border: "1px solid rgba(245, 158, 11, 0.25)",
+                  }}
+                >
+                  <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
+                  <span className="flex-1" style={{ fontSize: "0.84rem" }}>
+                    {hasReadyTemplate
+                      ? "Có template sẵn sàng nhưng chưa đặt làm mặc định. Bấm biểu tượng sao để Wizard dùng template này."
+                      : "Chưa có template sẵn sàng. Hoàn tất một template rồi đặt làm mặc định để Wizard có thể chạy."}
+                  </span>
+                </div>
+              );
+            })()}
 
             <div className="card" style={{ padding: 0, overflow: "hidden", borderRadius: 12 }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
@@ -1227,9 +1255,8 @@ function TemplatesSection({
                     const enabledViews = getEnabledViews(normalizePlacementData(t.defaultPlacement, false));
                     const missing = getTemplateMissing(t);
                     const ready = missing.length === 0;
-                    const statusLabel = t.isDefault
-                      ? ready ? "DEFAULT" : "DEFAULT INCOMPLETE"
-                      : ready ? "READY" : "INCOMPLETE";
+                    const statusLabel = getTemplateStatusLabel(t, ready);
+                    const placementSummary = getPlacementSummaryLabel(t, enabledViews, ready);
                     const statusStyle = ready
                       ? { backgroundColor: "rgba(159,232,112,0.18)", color: "#166534" }
                       : { backgroundColor: "rgba(245, 158, 11, 0.12)", color: "#92400e" };
@@ -1267,7 +1294,7 @@ function TemplatesSection({
                                   {statusLabel}
                                 </span>
                                 {t.defaultMockupSource === "CUSTOM" ? (
-                                  <span style={{ padding: "1px 8px", borderRadius: 9999, background: "rgba(159,232,112,0.18)", color: "#054d28", fontSize: 11, fontWeight: 700 }}>Custom</span>
+                                  <span style={{ padding: "1px 8px", borderRadius: 9999, background: "rgba(159,232,112,0.18)", color: "#054d28", fontSize: 11, fontWeight: 700 }}>Mockup custom</span>
                                 ) : (
                                   <span style={{ padding: "1px 8px", borderRadius: 9999, background: "var(--bg-inset)", color: "var(--text-secondary)", fontSize: 11, fontWeight: 700 }}>Printify</span>
                                 )}
@@ -1349,8 +1376,16 @@ function TemplatesSection({
                                 {VIEW_LABELS[view] || view}
                               </span>
                             ))}
-                            {enabledViews.length === 0 && (
-                              <span style={{ opacity: 0.4, fontSize: "0.8rem" }}>Chưa cấu hình</span>
+                            {placementSummary && (
+                              <span
+                                style={{
+                                  opacity: ready ? 0.65 : 0.4,
+                                  fontSize: "0.8rem",
+                                  color: t.defaultMockupSource === "CUSTOM" && ready ? "#166534" : undefined,
+                                }}
+                              >
+                                {placementSummary}
+                              </span>
                             )}
                           </div>
                         </td>
@@ -1659,6 +1694,10 @@ function EditorBlueprintStep({
           value={value.defaultTags ?? []}
           onChange={(defaultTags) => onChange({ defaultTags })}
         />
+        <TemplateDefaultCollectionsField
+          value={value.defaultCollections ?? []}
+          onChange={(defaultCollections) => onChange({ defaultCollections })}
+        />
       </div>
 
       <h4 style={{ fontWeight: 700, marginBottom: 16 }}>Chọn sản phẩm từ Printify</h4>
@@ -1905,6 +1944,79 @@ function TemplateDefaultTagsField({
           className="btn btn-secondary"
           onClick={addTag}
           disabled={tags.length >= MAX_TAGS || !tagInput.trim()}
+          style={{ fontSize: "0.8rem" }}
+        >
+          <Plus size={14} /> Thêm
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TemplateDefaultCollectionsField({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (collections: string[]) => void;
+}) {
+  const [collectionInput, setCollectionInput] = useState("");
+  const collections = normalizeOrganizationCollections(value);
+
+  function addCollection() {
+    const next = normalizeOrganizationCollections([...collections, collectionInput]);
+    onChange(next);
+    setCollectionInput("");
+  }
+
+  function removeCollection(collection: string) {
+    onChange(collections.filter((item) => item !== collection));
+  }
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <label style={{ display: "block", fontWeight: 600, marginBottom: 6, fontSize: "0.85rem" }}>
+        Default collections ({collections.length}/{MAX_ORGANIZATION_COLLECTIONS})
+      </label>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+        {collections.map((collection) => (
+          <span
+            key={collection}
+            className="flex items-center gap-1"
+            style={{ padding: "4px 10px", borderRadius: "var(--radius-sm)", backgroundColor: "var(--bg-tertiary)", fontSize: "0.78rem", fontWeight: 500 }}
+          >
+            {collection}
+            <button
+              type="button"
+              onClick={() => removeCollection(collection)}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", opacity: 0.5 }}
+            >
+              <X size={12} />
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          className="input"
+          value={collectionInput}
+          onChange={(event) => setCollectionInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              addCollection();
+            }
+          }}
+          placeholder="Thêm default collection..."
+          style={{ flex: 1, maxWidth: 360 }}
+          disabled={collections.length >= MAX_ORGANIZATION_COLLECTIONS}
+        />
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={addCollection}
+          disabled={collections.length >= MAX_ORGANIZATION_COLLECTIONS || !collectionInput.trim()}
           style={{ fontSize: "0.8rem" }}
         >
           <Plus size={14} /> Thêm

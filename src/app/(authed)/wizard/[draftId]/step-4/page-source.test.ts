@@ -42,6 +42,19 @@ describe("Step 4 product organization UI source", () => {
     assert.doesNotMatch(generateHandler, /defaultTags/);
   });
 
+  it("seeds template default collections only when active content has no collections", () => {
+    assert.match(source, /templateDefaultCollections/);
+    assert.match(source, /existingCollections\.length\s*>\s*0\s*\?\s*existingCollections\s*:\s*templateDefaultCollections/);
+    assert.match(source, /normalizeOrganizationCollections\(draft\?\.template\?\.defaultCollections/);
+  });
+
+  it("does not merge template default collections inside AI generation", () => {
+    const generateHandler = source.match(/async function handleGenerateAI\(\)[\s\S]*?^\s*}\n\n  \/\/ ── Manual save/m)?.[0] ?? "";
+    assert.ok(generateHandler, "expected handleGenerateAI block");
+    assert.doesNotMatch(generateHandler, /templateDefaultCollections/);
+    assert.doesNotMatch(generateHandler, /defaultCollections/);
+  });
+
   it("builds Step 4 tabs from both pairs and independent draft designs", () => {
     assert.match(source, /getIndependentDraftDesigns/);
     assert.match(source, /kind:\s*"pair"/);

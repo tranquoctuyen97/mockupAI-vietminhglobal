@@ -46,6 +46,8 @@ const FETCH_THREAD_MESSAGE: FetchQueryObject = {
 const GMAIL_CONNECTION_TIMEOUT_MS = 30_000;
 const GMAIL_SOCKET_TIMEOUT_MS = 120_000;
 export const GMAIL_OPERATION_TIMEOUT_MS = Number(process.env.GMAIL_OPERATION_TIMEOUT_MS ?? 180_000);
+const GMAIL_FETCH_BATCH_SIZE = Number(process.env.GMAIL_FETCH_BATCH_SIZE ?? 20);
+const GMAIL_SCAN_MESSAGE_LIMIT = Number(process.env.GMAIL_SCAN_MESSAGE_LIMIT ?? 20);
 
 function headerSearch(field: string, value: string): SearchObject {
   return { header: [field, value] } as unknown as SearchObject;
@@ -212,6 +214,29 @@ function compactMetadata(messages: FetchMessageObject[], uidValidity: bigint): G
   return result;
 }
 
+async function fetchAllInBatches(
+  connection: GmailImapClient,
+  uids: number[],
+  query: FetchQueryObject,
+): Promise<FetchMessageObject[]> {
+  const result: FetchMessageObject[] = [];
+  for (let index = 0; index < uids.length; index += GMAIL_FETCH_BATCH_SIZE) {
+    result.push(...await connection.fetchAll(uids.slice(index, index + GMAIL_FETCH_BATCH_SIZE), query, { uid: true }));
+  }
+  return result;
+}
+
+function newestUids(uids: number[], limit = GMAIL_SCAN_MESSAGE_LIMIT): number[] {
+  const sorted = [...uids].sort((left, right) => left - right);
+  return limit > 0 ? sorted.slice(-limit) : sorted;
+}
+
+function scanUids(uids: number[], limit = GMAIL_SCAN_MESSAGE_LIMIT, oldestFirst = false): number[] {
+  if (!oldestFirst) return newestUids(uids, limit);
+  const sorted = [...uids].sort((left, right) => left - right);
+  return limit > 0 ? sorted.slice(0, limit) : sorted;
+}
+
 function systemDescriptor(mailbox: Pick<ListResponse, "path" | "specialUse">): GmailLabelDescriptor | null {
   const lowerPath = mailbox.path.toLocaleLowerCase("en-US");
   if (mailbox.specialUse === "\\Inbox" || lowerPath === "inbox") return { name: "INBOX", normalizedName: "inbox", type: "INBOX", mutable: false };
@@ -268,7 +293,9 @@ export function createGmailAdapter(
     try {
       const uidValidity = connection.mailbox && connection.mailbox.uidValidity;
       if (!uidValidity) throw new Error("gmail_uidvalidity_missing");
-      const fetched = await connection.fetchAll(range, FETCH_THREAD_MESSAGE, { uid: true });
+      const fetched = Array.isArray(range)
+        ? await fetchAllInBatches(connection, range, FETCH_THREAD_MESSAGE)
+        : await connection.fetchAll(range, FETCH_THREAD_MESSAGE, { uid: true });
       return {
         uidValidity,
         messages: compactMetadata(fetched, uidValidity).sort((a, b) => Number(a.uid - b.uid)),
@@ -340,21 +367,27 @@ export function createGmailAdapter(
       return fetchLocked(connection, "INBOX", uids.map((uid) => Number(uid)));
     }),
 
-    scanInbox: (input: { initialSyncAfter: Date; lastCommittedUid: bigint }) => withClient(async (connection) => {
+    scanInbox: (input: { initialSyncAfter: Date; lastCommittedUid: bigint; limit?: number | null; oldestFirst?: boolean }) => withClient(async (connection) => {
       const lock = await connection.getMailboxLock("INBOX");
       try {
         const uids = await connection.search({ since: input.initialSyncAfter }, { uid: true });
         const uidValidity = connection.mailbox && connection.mailbox.uidValidity;
         if (!uidValidity) throw new Error("gmail_uidvalidity_missing");
         if (!uids || uids.length === 0) return { uidValidity, messages: [] };
-        const messages = await connection.fetchAll(uids, FETCH_THREAD_MESSAGE, { uid: true });
+        const currentUids = scanUids(
+          uids.filter((uid) => BigInt(uid) > input.lastCommittedUid),
+          input.limit === null ? 0 : input.limit ?? GMAIL_SCAN_MESSAGE_LIMIT,
+          input.oldestFirst,
+        );
+        if (currentUids.length === 0) return { uidValidity, messages: [] };
+        const messages = await fetchAllInBatches(connection, currentUids, FETCH_THREAD_MESSAGE);
         return { uidValidity, messages: compactMetadata(messages, uidValidity).sort((a, b) => Number(a.uid - b.uid)) };
       } finally {
         lock.release();
       }
     }),
 
-    scanSent: (input: { initialSyncAfter: Date }) => withClient(async (connection) => {
+    scanSent: (input: { initialSyncAfter: Date; lastCommittedUid?: bigint; limit?: number | null; oldestFirst?: boolean }) => withClient(async (connection) => {
       const sentPath = (await connection.list()).find((mailbox) => mailbox.specialUse === "\\Sent")?.path ?? "[Gmail]/Sent Mail";
       const lock = await connection.getMailboxLock(sentPath);
       try {
@@ -362,7 +395,15 @@ export function createGmailAdapter(
         const uidValidity = connection.mailbox && connection.mailbox.uidValidity;
         if (!uidValidity) throw new Error("gmail_uidvalidity_missing");
         if (!uids || uids.length === 0) return { uidValidity, messages: [] };
-        const messages = await connection.fetchAll(uids, FETCH_THREAD_MESSAGE, { uid: true });
+        const messages = await fetchAllInBatches(
+          connection,
+          scanUids(
+            uids.filter((uid) => BigInt(uid) > (input.lastCommittedUid ?? BigInt(0))),
+            input.limit === null ? 0 : input.limit ?? GMAIL_SCAN_MESSAGE_LIMIT,
+            input.oldestFirst,
+          ),
+          FETCH_THREAD_MESSAGE,
+        );
         return {
           uidValidity,
           messages: compactMetadata(messages, uidValidity)
@@ -565,7 +606,7 @@ export function createGmailAdapter(
         const uidValidity = connection.mailbox && connection.mailbox.uidValidity;
         if (!uidValidity) throw new Error("gmail_uidvalidity_missing");
         if (!uids || uids.length === 0) return { uidValidity, messages: [] };
-        const fetched = await connection.fetchAll(uids, FETCH_THREAD_MESSAGE, { uid: true });
+        const fetched = await fetchAllInBatches(connection, uids, FETCH_THREAD_MESSAGE);
         const messages = fetched.map((message) => {
           if (!message.emailId || !message.threadId) throw new Error("gmail_metadata_incomplete");
           if (message.threadId !== gmailThreadId) throw new Error("gmail_thread_mismatch");

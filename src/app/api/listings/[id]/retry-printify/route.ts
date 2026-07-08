@@ -6,8 +6,8 @@ import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { getClientForStore } from "@/lib/printify/account";
-
-import { runPrintifyStage } from "@/lib/publish/worker";
+import { resolvePublishStrategy } from "@/lib/publish/strategy";
+import { runPrintifyStage, runPublishWorker } from "@/lib/publish/worker";
 import { getStorage } from "@/lib/storage/local-disk";
 
 export async function POST(
@@ -73,9 +73,30 @@ export async function POST(
   // Get store + Printify connection (Phase 6.5: workspace-level)
   const store = await prisma.store.findUnique({
     where: { id: listing.storeId },
+    include: { printifyShop: true },
   });
   if (!store) {
     return NextResponse.json({ error: "Store not found" }, { status: 400 });
+  }
+
+  if (resolvePublishStrategy(store) === "PRINTIFY_SHOPIFY_CHANNEL") {
+    const jobs = listing.publishJobs.filter(
+      (job) => job.stage === "SHOPIFY" || job.stage === "PRINTIFY",
+    );
+    for (const job of jobs) {
+      await prisma.publishJob.update({
+        where: { id: job.id },
+        data: { status: "PENDING", attempts: 0, lastError: null, completedAt: null },
+      });
+    }
+
+    void runPublishWorker({
+      listingId: listing.id,
+      draftId: draft.id,
+      tenantId: session.tenantId,
+    }).catch((err) => console.error("[RetryPrintify] Full worker error:", err));
+
+    return NextResponse.json({ ok: true, status: "retrying" });
   }
 
   let printifyApiKey: string;

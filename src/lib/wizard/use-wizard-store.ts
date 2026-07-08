@@ -97,6 +97,7 @@ interface DraftData {
     basePriceUsd?: number | string | null;
     priceBySizeDefault?: Record<string, number> | null;
     defaultTags?: string[];
+    defaultCollections?: string[];
   } | null;
   store?: {
     defaultPriceUsd?: number | string | null;
@@ -108,6 +109,7 @@ interface DraftData {
       basePriceUsd?: number | string | null;
       priceBySizeDefault?: Record<string, number> | null;
       defaultTags?: string[];
+      defaultCollections?: string[];
     } | null;
     templates?: Array<{
       id: string;
@@ -122,6 +124,7 @@ interface DraftData {
       basePriceUsd?: number | string | null;
       priceBySizeDefault?: Record<string, number> | null;
       defaultTags?: string[];
+      defaultCollections?: string[];
     }>;
   } | null;
   placementOverride: unknown | null;

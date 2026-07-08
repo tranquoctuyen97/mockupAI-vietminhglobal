@@ -53,6 +53,10 @@ export interface ResponseMetricRepository {
     tenantId?: string;
     mailboxId?: string;
     limit?: number;
+    minArticles?: number;
+    onlyMissingDuration?: boolean;
+    repliedOnly?: boolean;
+    progressEvery?: number;
     dryRun: boolean;
   }): Promise<{ examined: number; written: number; skipped: number; replied: number }>;
 }
@@ -163,12 +167,30 @@ export function createResponseMetricService(repository: ResponseMetricRepository
 }
 
 async function rebuildMailboxResponseMetrics(
-  input: { tenantId?: string; mailboxId?: string; limit?: number; dryRun: boolean },
+  input: {
+    tenantId?: string;
+    mailboxId?: string;
+    limit?: number;
+    minArticles?: number;
+    onlyMissingDuration?: boolean;
+    repliedOnly?: boolean;
+    progressEvery?: number;
+    dryRun: boolean;
+  },
 ) {
   const conversations = await prisma.mailboxConversation.findMany({
     where: {
       ...(input.mailboxId ? { mailboxId: input.mailboxId } : {}),
       ...(input.tenantId ? { mailbox: { tenantId: input.tenantId } } : {}),
+      ...(input.minArticles ? { articleCount: { gte: input.minArticles } } : {}),
+      ...(input.onlyMissingDuration
+        ? {
+            OR: [
+              { responseMetric: null },
+              { responseMetric: { responseDurationMs: null } },
+            ],
+          }
+        : {}),
     },
     include: {
       mailbox: { select: { tenantId: true, storeId: true, email: true } },
@@ -216,7 +238,7 @@ async function rebuildMailboxResponseMetrics(
         : null,
     };
   }
-  for (const conversation of conversations) {
+  for (const [index, conversation] of conversations.entries()) {
     const inbound = conversation.messages
       .filter((message) => message.direction === inboundMatch.direction)
       .sort((left, right) =>
@@ -250,6 +272,10 @@ async function rebuildMailboxResponseMetrics(
       ? durationMsBetween(responseStartedAt, latestAdminReplyAt)
       : null;
     if (latestAdminReplyAt) replied += 1;
+    if (!latestAdminReplyAt && input.repliedOnly) {
+      skipped += 1;
+      continue;
+    }
     if (!input.dryRun) {
       await prisma.mailboxResponseMetric.upsert({
         where: { conversationId: conversation.id },
@@ -270,6 +296,9 @@ async function rebuildMailboxResponseMetrics(
       });
     }
     written += 1;
+    if (input.progressEvery && (index + 1) % input.progressEvery === 0) {
+      console.log(`[MailboxResponseMetrics] progress examined=${index + 1}/${conversations.length} written=${written} replied=${replied} skipped=${skipped}`);
+    }
   }
   return { examined: conversations.length, written, skipped, replied };
 }

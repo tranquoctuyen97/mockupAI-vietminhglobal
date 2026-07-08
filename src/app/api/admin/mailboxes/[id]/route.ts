@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { removeRuntimeSecret } from "@/lib/mailboxes/credentials";
 import { createGmailAdapter } from "@/lib/mailboxes/gmail-client";
 import { verifyGmailSmtp } from "@/lib/mailboxes/gmail-smtp";
+import { removeMailboxJobs } from "@/lib/mailboxes/queue";
 import { removeRuntimeMailboxConfigs } from "@/lib/mailboxes/runtime-config";
 import { updateMailboxSchema } from "@/lib/mailboxes/validation";
 import { disableQueue } from "@/lib/rt/client";
@@ -201,11 +202,12 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
     await disableQueue(mailbox.rtQueueId).catch(() => undefined);
   }
   await Promise.all([
+    removeMailboxJobs(mailbox.id).catch(() => undefined),
     removeRuntimeSecret(mailbox.id, DEFAULT_RUNTIME_DIR).catch(() => undefined),
     removeRuntimeMailboxConfigs(mailbox.id, DEFAULT_RUNTIME_DIR).catch(() => undefined),
   ]);
 
-  await prisma.mailbox.delete({ where: { id } });
+  await prisma.mailbox.deleteMany({ where: { id, tenantId: session.tenantId } });
 
   await logAudit({
     actorUserId: session.id,

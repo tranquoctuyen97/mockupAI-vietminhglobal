@@ -12,7 +12,10 @@ import { getDraft, updateDraft, deleteDraft } from "@/lib/wizard/state";
 import { getClientForStore } from "@/lib/printify/account";
 import { ensureVariantCostCache, groupSizes } from "@/lib/printify/variant-catalog";
 import { hasActiveMockupJob, regenerateMockupsForDraft } from "@/lib/mockup/regenerate";
-import { loadTemplateDefaultTags } from "@/lib/stores/store-service";
+import {
+  loadTemplateDefaultCollections,
+  loadTemplateDefaultTags,
+} from "@/lib/stores/store-service";
 import { buildChecklist } from "./checklist";
 
 export async function GET(
@@ -72,12 +75,17 @@ export async function GET(
     ...(draft.template ? [draft.template.id] : []),
     ...(draft.store?.templates?.map((template) => template.id) ?? []),
   ]);
+  const defaultCollectionsByTemplateId = await loadTemplateDefaultCollections([
+    ...(draft.template ? [draft.template.id] : []),
+    ...(draft.store?.templates?.map((template) => template.id) ?? []),
+  ]);
   const response: Record<string, unknown> = {
     ...draft,
     template: draft.template
       ? {
           ...draft.template,
           defaultTags: defaultTagsByTemplateId.get(draft.template.id) ?? [],
+          defaultCollections: defaultCollectionsByTemplateId.get(draft.template.id) ?? [],
         }
       : null,
     store: draft.store
@@ -86,6 +94,7 @@ export async function GET(
           templates: draft.store.templates.map((template) => ({
             ...template,
             defaultTags: defaultTagsByTemplateId.get(template.id) ?? [],
+            defaultCollections: defaultCollectionsByTemplateId.get(template.id) ?? [],
           })),
         }
       : null,

@@ -118,6 +118,56 @@ describe("mailbox sync state machine", () => {
     expect(deps.markError).toHaveBeenCalledWith("mailbox-1", "gmail_auth_failed", true);
   });
 
+  it("persists Inbox messages when Sent scan drops the IMAP connection", async () => {
+    const mailbox = {
+      id: "mailbox-1",
+      tenantId: "tenant-1",
+      storeId: "store-1",
+      email: "support@example.com",
+      initialSyncAfter: new Date("2026-01-01T00:00:00Z"),
+      rtQueueId: 7,
+      isActive: true,
+      syncCursor: { lastCommittedUid: BigInt(1), uidValidity: BigInt(9) },
+    };
+    const inboxMessage = gmailMessage({ uid: BigInt(1), uidValidity: BigInt(9) });
+    const deps: MailboxSyncDeps = {
+      findMailbox: vi.fn().mockResolvedValue(mailbox),
+      getAppPassword: vi.fn().mockResolvedValue("app-pass"),
+      provisionMailbox: vi.fn(),
+      scanInbox: vi.fn().mockResolvedValue({ uidValidity: BigInt(9), messages: [inboxMessage] }),
+      scanSent: vi.fn().mockRejectedValue(new Error("Connection not available")),
+      discoverLabels: vi.fn().mockResolvedValue([]),
+      persistLabelCatalog: vi.fn().mockResolvedValue(undefined),
+      reconcileInboxState: vi.fn().mockResolvedValue(undefined),
+      persist: vi.fn().mockResolvedValue({
+        imported: 1,
+        inherited: 0,
+        lastCommittedUid: BigInt(1),
+        responseMetricInputs: [],
+        adminReplyMetricInputs: [],
+      }),
+      recordCustomerMessage: vi.fn().mockResolvedValue(undefined),
+      recordAdminReply: vi.fn().mockResolvedValue(undefined),
+      materializeConfig: vi.fn(),
+      runGetmail: vi.fn(),
+      acquireLease: vi.fn().mockResolvedValue(true),
+      releaseLease: vi.fn().mockResolvedValue(undefined),
+      markError: vi.fn(),
+    };
+
+    const result = await syncMailbox("mailbox-1", deps);
+
+    expect(deps.persist).toHaveBeenCalledWith(expect.objectContaining({ messages: [inboxMessage] }));
+    expect(deps.markError).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      mailboxId: "mailbox-1",
+      skipped: false,
+      imported: 1,
+      inherited: 0,
+      lastCommittedUid: BigInt(1),
+    }));
+  });
+
   it("moves skipped sender messages to Spam before getmail", async () => {
     const mailbox = {
       id: "mailbox-1",

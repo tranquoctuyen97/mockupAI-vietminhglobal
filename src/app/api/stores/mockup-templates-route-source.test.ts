@@ -36,3 +36,24 @@ test("mockup templates routes include defaultTags in read and write contracts", 
   assert.match(service, /loadTemplateDefaultTags/);
   assert.match(service, /originalDefaultTags/);
 });
+
+test("mockup templates routes include defaultCollections in read and write contracts", () => {
+  const listRoute = readFileSync(join(process.cwd(), "src/app/api/stores/[id]/mockup-templates/route.ts"), "utf8");
+  const detailRoute = readFileSync(join(process.cwd(), "src/app/api/stores/[id]/mockup-templates/[templateId]/route.ts"), "utf8");
+  const wizardConfigRoute = readFileSync(join(process.cwd(), "src/app/api/stores/[id]/wizard-config/route.ts"), "utf8");
+  const draftRoute = readFileSync(join(process.cwd(), "src/app/api/wizard/drafts/[id]/route.ts"), "utf8");
+  const service = readFileSync(join(process.cwd(), "src/lib/stores/store-service.ts"), "utf8");
+
+  assert.match(listRoute, /loadTemplateDefaultCollections/);
+  assert.match(listRoute, /defaultCollectionsByTemplateId\.get\(template\.id\)\s*\?\?\s*\[\]/);
+  assert.match(listRoute, /defaultCollections\?:\s*unknown/);
+  assert.match(detailRoute, /defaultCollections:\s*body\.defaultCollections/);
+  assert.match(wizardConfigRoute, /loadTemplateDefaultCollections/);
+  assert.match(wizardConfigRoute, /defaultCollectionsByTemplateId\.get\(template\.id\)\s*\?\?\s*\[\]/);
+  assert.match(draftRoute, /loadTemplateDefaultCollections/);
+  assert.match(draftRoute, /defaultCollectionsByTemplateId\.get\(draft\.template\.id\)\s*\?\?\s*\[\]/);
+  assert.match(service, /defaultCollections\?:\s*unknown/);
+  assert.match(service, /function updateTemplateDefaultCollections/);
+  assert.match(service, /loadTemplateDefaultCollections/);
+  assert.match(service, /originalDefaultCollections/);
+});

@@ -9,6 +9,7 @@ import { requireFeature } from "@/lib/auth/guards";
 import { validateSession } from "@/lib/auth/session";
 import {
   createTemplate,
+  loadTemplateDefaultCollections,
   loadTemplateDefaultTags,
   updateTemplatePlacement,
 } from "@/lib/stores/store-service";
@@ -22,7 +23,10 @@ import {
   getTemplateReadiness,
   getTemplateReadinessLabel,
 } from "@/lib/stores/template-readiness";
-import { normalizeTags } from "@/lib/wizard/product-organization";
+import {
+  normalizeOrganizationCollections,
+  normalizeTags,
+} from "@/lib/wizard/product-organization";
 import type { Prisma } from "@prisma/client";
 
 export async function GET(
@@ -78,6 +82,9 @@ export async function GET(
   const defaultTagsByTemplateId = await loadTemplateDefaultTags(
     store.templates.map((template) => template.id),
   );
+  const defaultCollectionsByTemplateId = await loadTemplateDefaultCollections(
+    store.templates.map((template) => template.id),
+  );
 
   const templates = store.templates.map((template) => {
     const readiness = getTemplateReadiness(template);
@@ -108,6 +115,7 @@ export async function GET(
       basePriceUsd: template.basePriceUsd ? Number(template.basePriceUsd) : null,
       priceBySizeDefault: template.priceBySizeDefault ?? null,
       defaultTags: defaultTagsByTemplateId.get(template.id) ?? [],
+      defaultCollections: defaultCollectionsByTemplateId.get(template.id) ?? [],
       enabledVariantIds: template.enabledVariantIds,
       enabledSizes: template.enabledSizes,
       defaultPlacement: template.defaultPlacement,
@@ -169,6 +177,7 @@ export async function POST(
     basePriceUsd?: number | string | null;
     priceBySizeDefault?: Record<string, unknown> | null;
     defaultTags?: unknown;
+    defaultCollections?: unknown;
   };
 
   if (!data.name || !data.printifyBlueprintId || !data.printifyPrintProviderId) {
@@ -201,6 +210,7 @@ export async function POST(
     basePriceUsd: data.basePriceUsd ?? null,
     priceBySizeDefault: data.priceBySizeDefault ?? null,
     defaultTags: normalizeTags(data.defaultTags),
+    defaultCollections: normalizeOrganizationCollections(data.defaultCollections),
   });
   return NextResponse.json(result);
 }

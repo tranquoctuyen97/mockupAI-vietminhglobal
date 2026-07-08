@@ -6,7 +6,8 @@ describe("mailbox sync queue source", () => {
   it("skips recently Gmail-rate-limited mailboxes", () => {
     expect(source).toContain("GMAIL_RATE_LIMIT_ERROR_CODE");
     expect(source).toContain("MAILBOX_SYNC_RATE_LIMIT_BACKOFF_MS");
-    expect(source).toContain("lastSyncErrorCode: GMAIL_RATE_LIMIT_ERROR_CODE");
-    expect(source).toContain("updatedAt: { gt: new Date(Date.now() - MAILBOX_SYNC_RATE_LIMIT_BACKOFF_MS) }");
+    expect(source).toContain("lastSyncErrorCode: { not: GMAIL_RATE_LIMIT_ERROR_CODE }");
+    expect(source).toContain("lastSyncErrorCode: null");
+    expect(source).toContain("updatedAt: { lte: new Date(Date.now() - MAILBOX_SYNC_RATE_LIMIT_BACKOFF_MS) }");
   });
 });

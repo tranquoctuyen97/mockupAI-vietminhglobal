@@ -3,6 +3,7 @@ import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { normalizeAppliesToColorIds } from "@/lib/mockup/global-library";
 import { storageUrl } from "@/lib/mockup/custom-library";
+import { promoteReadyTemplateIfNoDefault } from "@/lib/stores/store-service";
 
 export async function GET(
   _request: Request,
@@ -83,6 +84,8 @@ export async function POST(
       },
     });
   });
+
+  await promoteReadyTemplateIfNoDefault(storeId);
 
   return NextResponse.json(item, { status: 201 });
 }

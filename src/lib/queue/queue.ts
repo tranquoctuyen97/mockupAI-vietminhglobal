@@ -38,6 +38,7 @@ const globalForQueues = globalThis as unknown as {
   mockupQueue?: Queue;
   tripleWhaleSyncQueue?: Queue;
   mailboxSyncQueue?: Queue;
+  mailboxBackfillQueue?: Queue;
   gmailLabelOperationsQueue?: Queue;
 };
 
@@ -109,6 +110,7 @@ export function getTripleWhaleSyncQueue(): Queue {
 }
 
 export const MAILBOX_SYNC_QUEUE_NAME = "mailbox-sync";
+export const MAILBOX_BACKFILL_QUEUE_NAME = "mailbox-backfill";
 export const GMAIL_LABEL_OPERATIONS_QUEUE_NAME = "gmail-label-operations";
 
 export function getMailboxSyncQueue(): Queue {
@@ -127,6 +129,24 @@ export function getMailboxSyncQueue(): Queue {
     });
   }
   return globalForQueues.mailboxSyncQueue;
+}
+
+export function getMailboxBackfillQueue(): Queue {
+  if (!globalForQueues.mailboxBackfillQueue) {
+    globalForQueues.mailboxBackfillQueue = new Queue(MAILBOX_BACKFILL_QUEUE_NAME, {
+      connection: redisConnection,
+      defaultJobOptions: {
+        removeOnComplete: 100,
+        removeOnFail: 100,
+        attempts: 3,
+        backoff: { type: "exponential" as const, delay: 60_000 },
+      },
+    });
+    globalForQueues.mailboxBackfillQueue.on("error", (err) => {
+      console.error("[Queue/mailbox-backfill] Redis error:", err.message);
+    });
+  }
+  return globalForQueues.mailboxBackfillQueue;
 }
 
 export function getGmailLabelOperationsQueue(): Queue {

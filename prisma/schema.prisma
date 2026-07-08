@@ -333,6 +333,7 @@ model StoreMockupTemplate {
   basePriceUsd            Decimal?                    @map("base_price_usd") @db.Decimal(10, 2)
   priceBySizeDefault      Json?                       @map("price_by_size_default")
   defaultTags             String[]                    @default([]) @map("default_tags")
+  defaultCollections      String[]                    @default([]) @map("default_collections")
 
   store        Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
   colors       TemplateColor[]

@@ -137,7 +137,7 @@ const POLL_INTERVAL = 45_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await fetch(url, { cache: "no-store", ...init });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: "Unknown error" }));
     throw new Error(body.error || `HTTP ${res.status}`);

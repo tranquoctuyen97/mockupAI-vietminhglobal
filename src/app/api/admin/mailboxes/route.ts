@@ -6,10 +6,11 @@ import { encrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
 import { createGmailAdapter } from "@/lib/mailboxes/gmail-client";
 import { verifyGmailSmtp } from "@/lib/mailboxes/gmail-smtp";
+import { enqueueMailboxBackfill, enqueueMailboxSync } from "@/lib/mailboxes/queue";
 import { createMailboxSchema } from "@/lib/mailboxes/validation";
 import { provisionMailbox } from "@/lib/rt/provisioning";
 
-const INITIAL_SYNC_WINDOW_MONTHS = 6;
+const INITIAL_SYNC_WINDOW_MONTHS = 4;
 
 async function validateStore(storeId: string, tenantId: string) {
   return prisma.store.findFirst({
@@ -157,6 +158,12 @@ export async function POST(request: NextRequest) {
   });
 
   const provisioned = await provisionMailbox(mailbox.id);
+  if (provisioned.status === "ACTIVE") {
+    await Promise.all([
+      enqueueMailboxBackfill(mailbox.id),
+      enqueueMailboxSync(mailbox.id),
+    ]);
+  }
   const finalMailbox = await prisma.mailbox.findUnique({
     where: { id: mailbox.id },
     select: {

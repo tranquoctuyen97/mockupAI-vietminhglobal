@@ -24,3 +24,16 @@ test("template default tags are editable, saved, and mark editor dirty", () => {
   assert.match(source, /function TemplateDefaultTagsField/);
   assert.match(source, /<TemplateDefaultTagsField[\s\S]*value=\{value\.defaultTags/);
 });
+
+test("template default collections are editable, saved, and mark editor dirty", () => {
+  const source = readFileSync("src/app/(authed)/stores/[id]/config/page.tsx", "utf8");
+  const isDirtyBlock = source.match(/const isDirty = useMemo\(\(\) => \{[\s\S]*?return false;\n  \}, \[tempTemplateData, originalTemplate\]\);/);
+
+  assert.ok(isDirtyBlock, "expected TemplatesSection isDirty useMemo block");
+  assert.match(source, /defaultCollections:\s*\[\]/);
+  assert.match(source, /defaultCollections:\s*tempTemplateData\.defaultCollections/);
+  assert.match(isDirtyBlock[0], /defaultCollections/);
+  assert.match(source, /function TemplateDefaultCollectionsField/);
+  assert.match(source, /<TemplateDefaultCollectionsField[\s\S]*value=\{value\.defaultCollections/);
+  assert.match(source, /MAX_ORGANIZATION_COLLECTIONS/);
+});
