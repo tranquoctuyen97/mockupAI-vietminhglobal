@@ -23,7 +23,7 @@ services:
       dockerfile: Dockerfile
     command: ["/opt/rt/sbin/rt-server", "--server", "Standalone", "--port", "9000"]
     environment:
-      RT_POSTGRES_HOST: ${RT_POSTGRES_HOST:-host.docker.internal}
+      RT_POSTGRES_HOST: mockupai-postgres
       RT_POSTGRES_PORT: ${RT_POSTGRES_PORT:-5432}
       RT_POSTGRES_DB: ${RT_POSTGRES_DB:-rt}
       RT_POSTGRES_USER: ${RT_POSTGRES_USER:-rt}
@@ -47,6 +47,7 @@ services:
     networks:
       - rt-internal
       - rt-edge
+      - app-internal
 
   mailbox-worker:
     build:
@@ -57,8 +58,8 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL:?required}
-      REDIS_URL: ${REDIS_URL:?required}
+      DATABASE_URL: ${APP_DATABASE_URL:-postgresql://mockupai:${RT_POSTGRES_PASSWORD:?required}@mockupai-postgres:5432/mockupai}
+      REDIS_URL: ${APP_REDIS_URL:-redis://mockupai-redis:6379}
       RT_URL: ${RT_URL:-http://rt:9000}
       RT_API_TOKEN: ${RT_API_TOKEN:-}
       MASTER_ENCRYPTION_KEY_ID: ${MASTER_ENCRYPTION_KEY_ID:?required}
@@ -72,11 +73,15 @@ services:
     networks:
       - rt-internal
       - rt-edge
+      - app-internal
 
 networks:
   rt-internal:
     internal: true
   rt-edge:
+  app-internal:
+    name: mockupai-internal
+    external: true
 
 volumes:
   rt-postgres:

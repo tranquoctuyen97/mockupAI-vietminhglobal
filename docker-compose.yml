@@ -16,6 +16,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - mockupai-internal
 
   redis:
     image: redis:8.4-alpine
@@ -31,7 +33,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    networks:
+      - mockupai-internal
 
 volumes:
   pgdata:
   redisdata:
+
+networks:
+  mockupai-internal:
+    name: mockupai-internal
