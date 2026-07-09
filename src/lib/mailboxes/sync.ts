@@ -11,7 +11,7 @@ import { GMAIL_RATE_LIMIT_ERROR_CODE, gmailErrorDetails, isGmailRateLimitError }
 import { createGmailAdapter } from "./gmail-client";
 import { parseEmailIdentity } from "./identity";
 import { durationMsBetween, mailboxResponseMetrics } from "./response-metrics";
-import { enqueueGmailLabelOperation } from "./queue";
+import { enqueueGmailLabelOperation, enqueueMailboxBackfill } from "./queue";
 import { writeRuntimeMailboxConfig } from "./runtime-config";
 import type { GmailLabelDescriptor, GmailMessageMetadata } from "./types";
 
@@ -93,6 +93,7 @@ export interface MailboxSyncDeps {
   provisionMailbox(mailboxId: string): Promise<
     { status: "ACTIVE"; queueId: number } | { status: "DEGRADED"; errorCode: string }
   >;
+  enqueueBackfill?(mailboxId: string): Promise<unknown>;
   materializeConfig(input: {
     mailbox: SyncMailboxRecord;
     lastCommittedUid: bigint;
@@ -381,6 +382,7 @@ export async function syncMailbox(
       if (provisioned.status !== "ACTIVE") {
         throw new Error(provisioned.errorCode);
       }
+      await deps.enqueueBackfill?.(mailbox.id);
       mailbox = await deps.findMailbox(mailbox.id);
       if (!mailbox || !mailbox.isActive) {
         throw new Error("mailbox_not_found");
@@ -667,6 +669,7 @@ export const prismaMailboxSyncDeps: MailboxSyncDeps = {
 
   getAppPassword: getDecryptedAppPassword,
   provisionMailbox: (mailboxId) => provisionMailbox(mailboxId),
+  enqueueBackfill: (mailboxId) => enqueueMailboxBackfill(mailboxId),
   recordCustomerMessage: mailboxResponseMetrics.recordCustomerMessage,
   recordAdminReply: mailboxResponseMetrics.recordAdminReply,
 

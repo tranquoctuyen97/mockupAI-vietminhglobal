@@ -33,6 +33,7 @@ describe("mailbox sync state machine", () => {
       findMailbox: vi.fn().mockResolvedValue(mailbox),
       getAppPassword: vi.fn().mockResolvedValue("app-pass"),
       provisionMailbox: vi.fn().mockResolvedValue({ status: "ACTIVE", queueId: 7 }),
+      enqueueBackfill: vi.fn().mockResolvedValue(undefined),
       scanInbox: vi.fn().mockResolvedValue({
         uidValidity: BigInt(9),
         messages: [{
@@ -72,6 +73,7 @@ describe("mailbox sync state machine", () => {
       lastCommittedUid: BigInt(0),
     });
     expect(deps.provisionMailbox).toHaveBeenCalledWith("mailbox-1");
+    expect(deps.enqueueBackfill).toHaveBeenCalledWith("mailbox-1");
     expect(deps.persistLabelCatalog).toHaveBeenCalledWith("mailbox-1", [
       { name: "Support/Test", normalizedName: "support/test", type: "USER", mutable: true },
     ]);

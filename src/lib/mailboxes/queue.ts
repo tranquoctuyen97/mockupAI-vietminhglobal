@@ -26,7 +26,7 @@ export interface GmailLabelOperationJobPayload {
 export const MAILBOX_SYNC_SCHEDULER_JOB_ID = "mailbox-sync-scheduler";
 export const MAILBOX_SYNC_POLL_INTERVAL_MS = Number(process.env.MAILBOX_SYNC_POLL_INTERVAL_MS ?? 60_000);
 export const MAILBOX_SYNC_RATE_LIMIT_BACKOFF_MS = Number(process.env.MAILBOX_SYNC_RATE_LIMIT_BACKOFF_MS ?? 60 * 60_000);
-export const MAILBOX_BACKFILL_CHUNK_DELAY_MS = Number(process.env.MAILBOX_BACKFILL_CHUNK_DELAY_MS ?? 60_000);
+export const MAILBOX_BACKFILL_CHUNK_DELAY_MS = Number(process.env.MAILBOX_BACKFILL_CHUNK_DELAY_MS ?? 10_000);
 export const MAILBOX_BACKFILL_RETRY_DELAY_MS = Number(process.env.MAILBOX_BACKFILL_RETRY_DELAY_MS ?? 10 * 60_000);
 
 export async function enqueueMailboxSync(
