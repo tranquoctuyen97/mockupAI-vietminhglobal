@@ -38,6 +38,7 @@ describe("RT production infrastructure source", () => {
     expect(mailboxWorker).toMatch(/^import "\.\/src\/lib\/env\/standalone-worker-env";/);
     expect(mailboxWorker).toContain("startMailboxSyncWorker");
     expect(mailboxWorker).toContain("startMailboxBackfillWorker");
+    expect(mailboxWorker).toContain("startMailboxResponseMetricsWorker");
     expect(mailboxWorker).toContain("startGmailLabelOperationsWorker");
     expect(mailboxWorker).not.toContain("startMockupCompositeWorker");
     expect(mailboxWorker).not.toContain("startPrintifyMockupPollWorker");

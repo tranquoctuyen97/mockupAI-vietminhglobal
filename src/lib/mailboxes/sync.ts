@@ -168,21 +168,9 @@ async function recordResponseMetrics(
   },
 ) {
   await Promise.all(input.responseMetricInputs.map((metric) => deps.recordCustomerMessage(metric)));
-  for (const metric of input.adminReplyMetricInputs) {
-    try {
-      await deps.recordAdminReply(metric);
-    } catch (error) {
-      if (
-        error instanceof Error
-        && (error.message === "response_metric_missing" || error.message === "negative_response_duration")
-      ) {
-        // ponytail: historical outbound-only chunks can lack the original customer row; rebuild fills old gaps.
-        console.warn(`[MailboxSync] response_metric_skipped mailboxId=${input.mailboxId} conversationId=${metric.conversationId} reason=${error.message}`);
-        continue;
-      }
-      throw error;
-    }
-  }
+  // Admin reply metrics are rebuilt from the persisted conversation timeline below.
+  // Per-message writes can run before old inbound links are visible and spam false missing/negative skips.
+  void input.adminReplyMetricInputs;
 }
 
 function ticketSenderIdentity(ticket: Awaited<ReturnType<typeof getTicket>>) {

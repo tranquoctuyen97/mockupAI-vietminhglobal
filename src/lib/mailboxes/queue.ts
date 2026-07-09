@@ -3,8 +3,10 @@ import { prisma } from "@/lib/db";
 import {
   getGmailLabelOperationsQueue,
   getMailboxBackfillQueue,
+  getMailboxResponseMetricsQueue,
   getMailboxSyncQueue,
   MAILBOX_BACKFILL_QUEUE_NAME,
+  MAILBOX_RESPONSE_METRICS_QUEUE_NAME,
   MAILBOX_SYNC_QUEUE_NAME,
 } from "@/lib/queue/queue";
 import { GMAIL_RATE_LIMIT_ERROR_CODE } from "./gmail-errors";
@@ -23,11 +25,23 @@ export interface GmailLabelOperationJobPayload {
   operationId: string;
 }
 
+export interface MailboxResponseMetricsJobPayload {
+  mailboxId?: string;
+  tenantId?: string;
+  cursorId?: string;
+  batchSize?: number;
+  minArticles?: number;
+  onlyMissingDuration?: boolean;
+  repliedOnly?: boolean;
+  dryRun?: boolean;
+}
+
 export const MAILBOX_SYNC_SCHEDULER_JOB_ID = "mailbox-sync-scheduler";
 export const MAILBOX_SYNC_POLL_INTERVAL_MS = Number(process.env.MAILBOX_SYNC_POLL_INTERVAL_MS ?? 60_000);
 export const MAILBOX_SYNC_RATE_LIMIT_BACKOFF_MS = Number(process.env.MAILBOX_SYNC_RATE_LIMIT_BACKOFF_MS ?? 60 * 60_000);
 export const MAILBOX_BACKFILL_CHUNK_DELAY_MS = Number(process.env.MAILBOX_BACKFILL_CHUNK_DELAY_MS ?? 10_000);
 export const MAILBOX_BACKFILL_RETRY_DELAY_MS = Number(process.env.MAILBOX_BACKFILL_RETRY_DELAY_MS ?? 10 * 60_000);
+export const MAILBOX_RESPONSE_METRICS_CHUNK_DELAY_MS = Number(process.env.MAILBOX_RESPONSE_METRICS_CHUNK_DELAY_MS ?? 10_000);
 
 export async function enqueueMailboxSync(
   mailboxId: string,
@@ -85,6 +99,26 @@ export async function enqueueGmailLabelOperation(
   );
 }
 
+export async function enqueueMailboxResponseMetricsRebuild(
+  input: MailboxResponseMetricsJobPayload,
+  queue: Queue<MailboxResponseMetricsJobPayload> = getMailboxResponseMetricsQueue(),
+) {
+  const scope = input.mailboxId ?? input.tenantId ?? "all";
+  const cursor = input.cursorId ?? "start";
+  return queue.add(
+    "rebuild-mailbox-response-metrics",
+    input,
+    {
+      jobId: `response-metrics-${scope}-${cursor}`,
+      attempts: 5,
+      backoff: { type: "exponential", delay: 60_000 },
+      delay: input.cursorId ? MAILBOX_RESPONSE_METRICS_CHUNK_DELAY_MS : 0,
+      removeOnComplete: true,
+      removeOnFail: 100,
+    },
+  );
+}
+
 async function removeJobIfIdle(queue: Queue, jobId: string) {
   const job = await queue.getJob(jobId);
   if (!job) return;
@@ -105,19 +139,21 @@ async function removeMailboxJobsByData(queue: Queue, mailboxId: string) {
 }
 
 export async function removeMailboxJobs(mailboxId: string) {
-  const [operations, syncQueue, backfillQueue, labelQueue] = await Promise.all([
+  const [operations, syncQueue, backfillQueue, responseMetricsQueue, labelQueue] = await Promise.all([
     prisma.gmailLabelOperation.findMany({
       where: { mailboxId },
       select: { id: true },
     }),
     Promise.resolve(getMailboxSyncQueue()),
     Promise.resolve(getMailboxBackfillQueue()),
+    Promise.resolve(getMailboxResponseMetricsQueue()),
     Promise.resolve(getGmailLabelOperationsQueue()),
   ]);
   await Promise.all([
     removeJobIfIdle(syncQueue, `sync-${mailboxId}`),
     removeJobIfIdle(backfillQueue, `backfill-${mailboxId}`),
     removeMailboxJobsByData(backfillQueue, mailboxId),
+    removeMailboxJobsByData(responseMetricsQueue, mailboxId),
     ...operations.map((operation) => removeJobIfIdle(labelQueue, `label-${operation.id}`)),
   ]);
 }
@@ -165,6 +201,7 @@ export async function dispatchActiveMailboxSyncs() {
   return {
     queue: MAILBOX_SYNC_QUEUE_NAME,
     backfillQueue: MAILBOX_BACKFILL_QUEUE_NAME,
+    responseMetricsQueue: MAILBOX_RESPONSE_METRICS_QUEUE_NAME,
     enqueued: mailboxes.length,
     recoveredLabelOperations: pendingLabelOperations.length,
   };

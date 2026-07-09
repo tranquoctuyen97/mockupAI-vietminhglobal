@@ -9,6 +9,7 @@ let printifyMockupPollWorker: ClosableWorker | null = null;
 let tripleWhaleSyncWorker: ClosableWorker | null = null;
 let mailboxSyncWorker: ClosableWorker | null = null;
 let mailboxBackfillWorker: ClosableWorker | null = null;
+let mailboxResponseMetricsWorker: ClosableWorker | null = null;
 let gmailLabelOperationsWorker: ClosableWorker | null = null;
 
 loadStandaloneWorkerEnv();
@@ -39,7 +40,7 @@ async function startWorkers() {
     { startMockupCompositeWorker },
     { startPrintifyMockupPollWorker },
     { startTripleWhaleSyncWorker },
-    { startMailboxSyncWorker, startMailboxBackfillWorker, startGmailLabelOperationsWorker },
+    { startMailboxSyncWorker, startMailboxBackfillWorker, startMailboxResponseMetricsWorker, startGmailLabelOperationsWorker },
   ] =
     await Promise.all([
       import("./src/lib/mockup/worker"),
@@ -53,6 +54,7 @@ async function startWorkers() {
   tripleWhaleSyncWorker = startTripleWhaleSyncWorker();
   mailboxSyncWorker = await startMailboxSyncWorker();
   mailboxBackfillWorker = startMailboxBackfillWorker();
+  mailboxResponseMetricsWorker = startMailboxResponseMetricsWorker();
   gmailLabelOperationsWorker = startGmailLabelOperationsWorker();
 
   mockupWorker.on("ready", () => {
@@ -73,6 +75,10 @@ async function startWorkers() {
 
   mailboxBackfillWorker.on("ready", () => {
     console.log("Mailbox backfill worker is ready and listening to queue.");
+  });
+
+  mailboxResponseMetricsWorker.on("ready", () => {
+    console.log("Mailbox response metrics worker is ready and listening to queue.");
   });
 
   gmailLabelOperationsWorker.on("ready", () => {
@@ -111,6 +117,7 @@ async function shutdown() {
     tripleWhaleSyncWorker?.close(),
     mailboxSyncWorker?.close(),
     mailboxBackfillWorker?.close(),
+    mailboxResponseMetricsWorker?.close(),
     gmailLabelOperationsWorker?.close(),
   ]);
   process.exit(0);

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   enqueueGmailLabelOperation,
+  enqueueMailboxResponseMetricsRebuild,
   enqueueMailboxSync,
   MAILBOX_SYNC_POLL_INTERVAL_MS,
   MAILBOX_SYNC_SCHEDULER_JOB_ID,
@@ -38,6 +39,26 @@ describe("mailbox queue contracts", () => {
         jobId: "label-op-1",
         attempts: 5,
         backoff: { type: "exponential", delay: 30_000 },
+      }),
+    );
+  });
+
+  it("queues response metric rebuild chunks by scope and cursor", async () => {
+    const queue = { add: vi.fn() };
+
+    await enqueueMailboxResponseMetricsRebuild({
+      mailboxId: "mailbox-1",
+      cursorId: "conversation-9",
+      batchSize: 200,
+    }, queue as never);
+
+    expect(queue.add).toHaveBeenCalledWith(
+      "rebuild-mailbox-response-metrics",
+      { mailboxId: "mailbox-1", cursorId: "conversation-9", batchSize: 200 },
+      expect.objectContaining({
+        jobId: "response-metrics-mailbox-1-conversation-9",
+        attempts: 5,
+        removeOnComplete: true,
       }),
     );
   });

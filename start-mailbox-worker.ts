@@ -5,6 +5,7 @@ import type { Worker } from "bullmq";
 import {
   startGmailLabelOperationsWorker,
   startMailboxBackfillWorker,
+  startMailboxResponseMetricsWorker,
   startMailboxSyncWorker,
 } from "./src/lib/jobs/workers/mailbox-sync-worker";
 
@@ -12,6 +13,7 @@ type ClosableWorker = Pick<Worker, "close" | "on">;
 
 let mailboxSyncWorker: ClosableWorker | null = null;
 let mailboxBackfillWorker: ClosableWorker | null = null;
+let mailboxResponseMetricsWorker: ClosableWorker | null = null;
 let gmailLabelOperationsWorker: ClosableWorker | null = null;
 
 console.log("Starting mailbox BullMQ workers...");
@@ -26,6 +28,7 @@ async function startWorkers() {
 
   mailboxSyncWorker = await startMailboxSyncWorker();
   mailboxBackfillWorker = startMailboxBackfillWorker();
+  mailboxResponseMetricsWorker = startMailboxResponseMetricsWorker();
   gmailLabelOperationsWorker = startGmailLabelOperationsWorker();
 
   mailboxSyncWorker.on("ready", () => {
@@ -34,6 +37,10 @@ async function startWorkers() {
 
   mailboxBackfillWorker.on("ready", () => {
     console.log("Mailbox backfill worker is ready and listening to queue.");
+  });
+
+  mailboxResponseMetricsWorker.on("ready", () => {
+    console.log("Mailbox response metrics worker is ready and listening to queue.");
   });
 
   gmailLabelOperationsWorker.on("ready", () => {
@@ -69,6 +76,7 @@ async function shutdown() {
   await Promise.all([
     mailboxSyncWorker?.close(),
     mailboxBackfillWorker?.close(),
+    mailboxResponseMetricsWorker?.close(),
     gmailLabelOperationsWorker?.close(),
   ]);
   process.exit(0);

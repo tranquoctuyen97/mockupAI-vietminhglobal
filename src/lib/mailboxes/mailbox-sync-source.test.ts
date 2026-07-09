@@ -27,7 +27,7 @@ test("mailbox sync reconnects orphan Gmail links to RT conversations", () => {
   assert.match(source, /const direction = isOutboundGmailMessage\(message\) \? "OUTBOUND" : "INBOUND"/);
   assert.match(source, /link\.direction !== direction && direction === "OUTBOUND"/);
   assert.match(source, /adminReplyMetricInputs\.push/);
-  assert.match(source, /recordAdminReply/);
+  assert.match(source, /void input\.adminReplyMetricInputs/);
   assert.match(source, /articleCount: messageCount/);
   assert.match(source, /mailboxResponseMetric\.upsert/);
   assert.match(source, /const inbound = links\.find\(\(link\) => link\.direction === "INBOUND"\)/);
@@ -45,6 +45,7 @@ test("mailbox sync reconnects orphan Gmail links to RT conversations", () => {
   assert.match(source, /oldestFirst:\s*true/);
   assert.match(source, /folder === "SENT"/);
   assert.match(source, /backfillNext/);
+  assert.doesNotMatch(source, /response_metric_skipped/);
   assert.doesNotMatch(source, /limit:\s*null/);
   assert.doesNotMatch(source, /lastCommittedUid:\s*BigInt\(0\),\n\s*\}\);\n\s*if \(/);
 });

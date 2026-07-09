@@ -53,12 +53,14 @@ export interface ResponseMetricRepository {
     tenantId?: string;
     mailboxId?: string;
     limit?: number;
+    cursorId?: string;
+    batchSize?: number;
     minArticles?: number;
     onlyMissingDuration?: boolean;
     repliedOnly?: boolean;
     progressEvery?: number;
     dryRun: boolean;
-  }): Promise<{ examined: number; written: number; skipped: number; replied: number }>;
+  }): Promise<{ examined: number; written: number; skipped: number; replied: number; nextCursorId?: string | null; done?: boolean }>;
 }
 
 export function durationMsBetween(start: Date, end: Date): bigint {
@@ -166,22 +168,37 @@ export function createResponseMetricService(repository: ResponseMetricRepository
   };
 }
 
-async function rebuildMailboxResponseMetrics(
+interface RebuildMailboxResponseMetricsInput {
+  tenantId?: string;
+  mailboxId?: string;
+  limit?: number;
+  cursorId?: string;
+  batchSize?: number;
+  minArticles?: number;
+  onlyMissingDuration?: boolean;
+  repliedOnly?: boolean;
+  progressEvery?: number;
+  dryRun: boolean;
+}
+
+export async function rebuildMailboxResponseMetricsBatch(
   input: {
     tenantId?: string;
     mailboxId?: string;
-    limit?: number;
+    cursorId?: string;
+    batchSize?: number;
     minArticles?: number;
     onlyMissingDuration?: boolean;
     repliedOnly?: boolean;
-    progressEvery?: number;
     dryRun: boolean;
   },
 ) {
+  const batchSize = input.batchSize ?? 200;
   const conversations = await prisma.mailboxConversation.findMany({
     where: {
       ...(input.mailboxId ? { mailboxId: input.mailboxId } : {}),
       ...(input.tenantId ? { mailbox: { tenantId: input.tenantId } } : {}),
+      ...(input.cursorId ? { id: { gt: input.cursorId } } : {}),
       ...(input.minArticles ? { articleCount: { gte: input.minArticles } } : {}),
       ...(input.onlyMissingDuration
         ? {
@@ -202,8 +219,8 @@ async function rebuildMailboxResponseMetrics(
         },
       },
     },
-    orderBy: { updatedAt: "desc" },
-    ...(input.limit ? { take: input.limit } : {}),
+    orderBy: { id: "asc" },
+    take: batchSize,
   });
 
   let written = 0;
@@ -296,11 +313,42 @@ async function rebuildMailboxResponseMetrics(
       });
     }
     written += 1;
-    if (input.progressEvery && (index + 1) % input.progressEvery === 0) {
-      console.log(`[MailboxResponseMetrics] progress examined=${index + 1}/${conversations.length} written=${written} replied=${replied} skipped=${skipped}`);
-    }
   }
-  return { examined: conversations.length, written, skipped, replied };
+  return {
+    examined: conversations.length,
+    written,
+    skipped,
+    replied,
+    nextCursorId: conversations.length === batchSize ? conversations.at(-1)?.id ?? null : null,
+    done: conversations.length < batchSize,
+  };
+}
+
+async function rebuildMailboxResponseMetrics(input: RebuildMailboxResponseMetricsInput) {
+  const batchSize = input.batchSize ?? input.limit ?? 200;
+  let cursorId = input.cursorId;
+  let examined = 0;
+  let written = 0;
+  let skipped = 0;
+  let replied = 0;
+  do {
+    const remaining = input.limit ? input.limit - examined : undefined;
+    const result = await rebuildMailboxResponseMetricsBatch({
+      ...input,
+      cursorId,
+      batchSize: remaining ? Math.min(batchSize, remaining) : batchSize,
+    });
+    examined += result.examined;
+    written += result.written;
+    skipped += result.skipped;
+    replied += result.replied;
+    cursorId = result.nextCursorId ?? undefined;
+    if (input.progressEvery && examined % input.progressEvery === 0) {
+      console.log(`[MailboxResponseMetrics] progress examined=${examined} written=${written} replied=${replied} skipped=${skipped}`);
+    }
+    if (input.limit && examined >= input.limit) break;
+  } while (cursorId);
+  return { examined, written, skipped, replied, nextCursorId: cursorId ?? null, done: !cursorId };
 }
 
 export const mailboxResponseMetrics = createResponseMetricService({

@@ -3,6 +3,7 @@ import {
   GMAIL_LABEL_OPERATIONS_QUEUE_NAME,
   getMailboxBackfillQueue,
   MAILBOX_BACKFILL_QUEUE_NAME,
+  MAILBOX_RESPONSE_METRICS_QUEUE_NAME,
   MAILBOX_SYNC_QUEUE_NAME,
   redisConnection,
 } from "@/lib/queue/queue";
@@ -10,16 +11,20 @@ import {
   type MailboxBackfillJobPayload,
   dispatchActiveMailboxSyncs,
   enqueueMailboxBackfill,
+  enqueueMailboxResponseMetricsRebuild,
   scheduleMailboxSyncDispatcher,
   type GmailLabelOperationJobPayload,
+  type MailboxResponseMetricsJobPayload,
   type MailboxSyncJobPayload,
 } from "@/lib/mailboxes/queue";
 import { backfillMailbox, syncMailbox, type SyncMailboxResult } from "@/lib/mailboxes/sync";
 import { processGmailLabelOperation } from "@/lib/mailboxes/labels";
+import { rebuildMailboxResponseMetricsBatch } from "@/lib/mailboxes/response-metrics";
 
 const globalForMailboxWorkers = globalThis as unknown as {
   mailboxSyncWorker?: Worker<MailboxSyncJobPayload>;
   mailboxBackfillWorker?: Worker<MailboxBackfillJobPayload>;
+  mailboxResponseMetricsWorker?: Worker<MailboxResponseMetricsJobPayload>;
   gmailLabelOperationsWorker?: Worker<GmailLabelOperationJobPayload>;
 };
 
@@ -36,6 +41,9 @@ export const MAILBOX_SYNC_WORKER_LOCK_DURATION_MS = Number(
 );
 export const MAILBOX_BACKFILL_WORKER_CONCURRENCY = Number(
   process.env.MAILBOX_BACKFILL_WORKER_CONCURRENCY ?? 1,
+);
+export const MAILBOX_RESPONSE_METRICS_WORKER_CONCURRENCY = Number(
+  process.env.MAILBOX_RESPONSE_METRICS_WORKER_CONCURRENCY ?? 1,
 );
 export const GMAIL_LABEL_OPERATIONS_WORKER_CONCURRENCY = Number(
   process.env.GMAIL_LABEL_OPERATIONS_WORKER_CONCURRENCY ?? 2,
@@ -93,6 +101,34 @@ export function startMailboxBackfillWorker() {
     );
   }
   return globalForMailboxWorkers.mailboxBackfillWorker;
+}
+
+export function startMailboxResponseMetricsWorker() {
+  if (!globalForMailboxWorkers.mailboxResponseMetricsWorker) {
+    globalForMailboxWorkers.mailboxResponseMetricsWorker = new Worker<MailboxResponseMetricsJobPayload>(
+      MAILBOX_RESPONSE_METRICS_QUEUE_NAME,
+      async (job: Job<MailboxResponseMetricsJobPayload>) => {
+        const result = await rebuildMailboxResponseMetricsBatch({
+          ...job.data,
+          dryRun: job.data.dryRun ?? false,
+        });
+        console.log(
+          `[MailboxResponseMetrics] chunk_done mailboxId=${job.data.mailboxId ?? "all"} cursor=${job.data.cursorId ?? "start"} examined=${result.examined} written=${result.written} replied=${result.replied} skipped=${result.skipped} next=${result.nextCursorId ?? "done"}`,
+        );
+        if (result.nextCursorId) {
+          await enqueueMailboxResponseMetricsRebuild({ ...job.data, cursorId: result.nextCursorId });
+        }
+        return result;
+      },
+      {
+        connection: redisConnection,
+        concurrency: MAILBOX_RESPONSE_METRICS_WORKER_CONCURRENCY,
+        lockDuration: MAILBOX_SYNC_WORKER_LOCK_DURATION_MS,
+        maxStalledCount: 1,
+      },
+    );
+  }
+  return globalForMailboxWorkers.mailboxResponseMetricsWorker;
 }
 
 export function startGmailLabelOperationsWorker() {
