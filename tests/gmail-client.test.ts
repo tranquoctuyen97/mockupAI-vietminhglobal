@@ -345,6 +345,55 @@ describe("Gmail IMAP adapter", () => {
     expect(result.messages[0].body).not.toContain(encodedHtml);
   });
 
+  it("parses multipart messages with folded content-type headers", async () => {
+    const source = [
+      "From: Shopify <no-reply@shopify.com>",
+      "Message-ID: <shopify-order@example.test>",
+      "Content-Type: multipart/alternative;",
+      " boundary=\"shopify-boundary\"",
+      "",
+      "--shopify-boundary",
+      "Content-Transfer-Encoding: quoted-printable",
+      "Content-Type: text/plain; charset=\"utf-8\"",
+      "",
+      "=2Ebutton__cell { background: #1990C6; }",
+      "Christine Vertin placed order #TM19021 on Apr 25.",
+      "--shopify-boundary",
+      "Content-Transfer-Encoding: quoted-printable",
+      "Content-Type: text/html; charset=\"utf-8\"",
+      "",
+      "<div>Christine Vertin placed order #TM19021</div>",
+      "--shopify-boundary--",
+      "",
+    ].join("\r\n");
+    const client = mockClient({
+      fetchAll: vi.fn().mockResolvedValue([{
+        uid: 1,
+        emailId: "msg-1",
+        threadId: "thread-1",
+        internalDate: new Date("2026-04-25T12:53:22.000Z"),
+        envelope: {
+          subject: "[ThreadsMuse] Order #TM19021 placed by Christine Vertin",
+          from: [{ name: "ThreadsMuse", address: "no-reply@shopify.com" }],
+          to: [{ name: "Support", address: "support@example.test" }],
+        },
+        flags: new Set<string>(["\\Seen"]),
+        labels: new Set(["\\Inbox"]),
+        source: Buffer.from(source),
+      }]),
+    });
+    const adapter = createGmailAdapter({ email: "support@example.test", appPassword: "secret" }, () => client as never);
+
+    const result = await adapter.fetchThreadMessages("thread-1");
+
+    expect(result.messages[0]).toMatchObject({
+      body: "<div>Christine Vertin placed order #TM19021</div>",
+      contentType: "text/html",
+    });
+    expect(result.messages[0].body).not.toContain("--shopify-boundary");
+    expect(result.messages[0].body).not.toContain("Content-Transfer-Encoding");
+  });
+
   it("descends into nested multipart Gmail delivery status messages", async () => {
     const source = [
       "From: Mail Delivery Subsystem <mailer-daemon@googlemail.com>",

@@ -96,8 +96,12 @@ function splitMessage(raw: string): { headerText: string; body: string } {
   };
 }
 
+function unfoldHeaderText(headerText: string): string {
+  return headerText.replace(/\r?\n[ \t]+/g, " ");
+}
+
 function headerValue(headerText: string, name: string): string | null {
-  return headerText.match(new RegExp(`^${name}:\\s*(.+?)\\s*$`, "im"))?.[1] ?? null;
+  return unfoldHeaderText(headerText).match(new RegExp(`^${name}:\\s*(.+?)\\s*$`, "im"))?.[1] ?? null;
 }
 
 function contentTypeFrom(headerText: string): string {

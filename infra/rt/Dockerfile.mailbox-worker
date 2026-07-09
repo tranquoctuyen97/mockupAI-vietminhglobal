@@ -11,4 +11,4 @@ COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts --fetch-retries=5 --fetch-retry-maxtimeout=120000
 COPY . .
 RUN npx prisma generate
-CMD ["npm", "run", "worker"]
+CMD ["npx", "tsx", "start-mailbox-worker.ts"]
