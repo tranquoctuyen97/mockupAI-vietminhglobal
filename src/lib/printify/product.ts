@@ -58,6 +58,7 @@ export function buildPrintifyProductPayload(input: {
   imageId: string;
   placementData: PlacementData;
   tags?: string[];
+  salesChannelCollections?: string[];
   imageGroups?: Array<{ imageId: string; variantIds: number[] }>;
 }): Record<string, unknown> {
   function buildPlaceholders(imageId: string): Array<Record<string, unknown>> {
@@ -105,6 +106,9 @@ export function buildPrintifyProductPayload(input: {
     })),
     print_areas: printAreas,
     ...(input.tags && input.tags.length > 0 ? { tags: input.tags } : {}),
+    ...(input.salesChannelCollections && input.salesChannelCollections.length > 0
+      ? { sales_channel_properties: { collections: input.salesChannelCollections } }
+      : {}),
   };
 }
 
@@ -121,6 +125,7 @@ export async function createOrUpdatePrintifyProduct(input: {
   title: string;
   description: string;
   tags?: string[];
+  salesChannelCollections?: string[];
   imageGroups?: Array<{ imageId: string; variantIds: number[] }>;
 }): Promise<{ productId: string; images: ParsedPrintifyMockupImage[] }> {
   // Fetch full catalog variants for this blueprint+provider.

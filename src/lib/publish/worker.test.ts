@@ -79,6 +79,23 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.match(source, /listingVariant\.createMany/);
   });
 
+  it("passes Listing organizationCollections into Printify Shopify sales channel properties", () => {
+    assert.match(source, /salesChannelCollections:\s*normalizeOrganizationCollections\(listing\.organizationCollections\)/);
+  });
+
+  it("maps paired light and dark print areas across the full Printify variant catalog", () => {
+    const resolverIndex = source.indexOf("async function resolvePrintifyProductPublishInput");
+    const pairLoopIndex = source.indexOf("for (const variant of cachedVariants)", resolverIndex);
+    assert.ok(pairLoopIndex > -1, "pair variant loop should exist");
+    const pairLoopSource = source.slice(pairLoopIndex, source.indexOf("imageGroups = [", pairLoopIndex));
+    assert.doesNotMatch(pairLoopSource, /enabledSet\.has\(variant\.variantId\).*continue/s);
+  });
+
+  it("does not let transient Printify create recovery leave jobs stuck running", () => {
+    assert.match(source, /Failed to check recent Printify product after transient create error/);
+    assert.match(source, /where:\s*\{\s*id:\s*printifyJob\.id\s*\}[\s\S]*status:\s*"FAILED"[\s\S]*completedAt:\s*new Date\(\)/);
+  });
+
   it("marks Shopify sync timeout as partial failure without Shopify productSet fallback", () => {
     assert.match(source, /Printify published but Shopify sync was not confirmed/);
     assert.doesNotMatch(source, /catch[\s\S]{0,400}publishToShopify/);

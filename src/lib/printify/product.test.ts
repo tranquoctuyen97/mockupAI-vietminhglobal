@@ -174,3 +174,26 @@ test("buildPrintifyProductPayload legacy single image still creates one print_ar
   assert.equal(printAreas[0].placeholders[0].images[0].id, "single-image");
 });
 
+test("buildPrintifyProductPayload sends Shopify sales channel collections", () => {
+  const payload = buildPrintifyProductPayload({
+    title: "Collection Product",
+    description: "Description",
+    blueprintId: 1,
+    printProviderId: 2,
+    variantIds: [101],
+    imageId: "image",
+    placementData: {
+      version: "2.1" as const,
+      variants: {
+        _default: {
+          front: { xMm: 0, yMm: 0, widthMm: 100, heightMm: 100, rotationDeg: 0 },
+        },
+      },
+    },
+    salesChannelCollections: ["Patriotic", "T-Shirts"],
+  });
+
+  assert.deepEqual(payload.sales_channel_properties, {
+    collections: ["Patriotic", "T-Shirts"],
+  });
+});

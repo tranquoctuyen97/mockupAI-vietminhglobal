@@ -40,6 +40,7 @@ import {
 import { ShopifyAuthError, ShopifyClient } from "@/lib/shopify/client";
 import { sseChannels } from "@/lib/sse/channel";
 import { getStorage } from "@/lib/storage/local-disk";
+import { normalizeOrganizationCollections } from "@/lib/wizard/product-organization";
 import { publishToPrintify } from "./printify";
 import { waitForShopifyProductSync, type ShopifySyncMatch } from "./shopify-sync";
 import { publishToShopify, type ShopifyMockupImage, type ShopifyVariantInput } from "./shopify";
@@ -1001,58 +1002,81 @@ async function runPrintifyShopifyChannelPublish(input: {
   });
 
   let productIdForAttempt = publishInput.productId;
-  const printifyProductResult = await retryWithBackoff(
-    async () => {
-      try {
-        return await createOrUpdatePrintifyProduct({
-          client: printifyClient,
-          shopId: externalShopId,
-          productId: productIdForAttempt,
-          blueprintId: publishInput.blueprintId,
-          printProviderId: publishInput.printProviderId,
-          variantIds: publishInput.variantIds,
-          variants: publishInput.variants,
-          imageId: publishInput.imageId,
-          imageGroups: publishInput.imageGroups,
-          placementData: publishInput.placementData,
-          title: listing.title,
-          description: listing.descriptionHtml,
-          tags: normalizeExternalTags(listing.tags),
-        });
-      } catch (err) {
-        if (isTransientPrintifyCreateError(err) && !productIdForAttempt) {
-          const candidate = await findRecentPrintifyProductCandidate({
+  let printifyProductResult: { productId: string; images: unknown[] } | null = null;
+  try {
+    printifyProductResult = await retryWithBackoff(
+      async () => {
+        try {
+          return await createOrUpdatePrintifyProduct({
             client: printifyClient,
             shopId: externalShopId,
-            title: listing.title,
+            productId: productIdForAttempt,
             blueprintId: publishInput.blueprintId,
             printProviderId: publishInput.printProviderId,
+            variantIds: publishInput.variantIds,
+            variants: publishInput.variants,
+            imageId: publishInput.imageId,
+            imageGroups: publishInput.imageGroups,
+            placementData: publishInput.placementData,
+            title: listing.title,
+            description: listing.descriptionHtml,
+            tags: normalizeExternalTags(listing.tags),
+            salesChannelCollections: normalizeOrganizationCollections(listing.organizationCollections),
           });
-          if (candidate) {
-            productIdForAttempt = candidate.id;
-            return createOrUpdatePrintifyProduct({
-              client: printifyClient,
-              shopId: externalShopId,
-              productId: candidate.id,
-              blueprintId: publishInput.blueprintId,
-              printProviderId: publishInput.printProviderId,
-              variantIds: publishInput.variantIds,
-              variants: publishInput.variants,
-              imageId: publishInput.imageId,
-              imageGroups: publishInput.imageGroups,
-              placementData: publishInput.placementData,
-              title: listing.title,
-              description: listing.descriptionHtml,
-              tags: normalizeExternalTags(listing.tags),
-            });
+        } catch (err) {
+          if (isTransientPrintifyCreateError(err) && !productIdForAttempt) {
+            let candidate: { id: string } | null = null;
+            try {
+              candidate = await findRecentPrintifyProductCandidate({
+                client: printifyClient,
+                shopId: externalShopId,
+                title: listing.title,
+                blueprintId: publishInput.blueprintId,
+                printProviderId: publishInput.printProviderId,
+              });
+            } catch (candidateErr) {
+              console.warn("[PublishWorker] Failed to check recent Printify product after transient create error:", {
+                listingId,
+                shopId: externalShopId,
+                error: candidateErr instanceof Error ? candidateErr.message : String(candidateErr),
+              });
+            }
+            if (candidate) {
+              productIdForAttempt = candidate.id;
+              return createOrUpdatePrintifyProduct({
+                client: printifyClient,
+                shopId: externalShopId,
+                productId: candidate.id,
+                blueprintId: publishInput.blueprintId,
+                printProviderId: publishInput.printProviderId,
+                variantIds: publishInput.variantIds,
+                variants: publishInput.variants,
+                imageId: publishInput.imageId,
+                imageGroups: publishInput.imageGroups,
+                placementData: publishInput.placementData,
+                title: listing.title,
+                description: listing.descriptionHtml,
+                tags: normalizeExternalTags(listing.tags),
+                salesChannelCollections: normalizeOrganizationCollections(listing.organizationCollections),
+              });
+            }
           }
+          throw err;
         }
-        throw err;
-      }
-    },
-    printifyJob.id,
-    "PRINTIFY",
-  );
+      },
+      printifyJob.id,
+      "PRINTIFY",
+    );
+  } catch (err) {
+    const error = err instanceof Error ? err.message : "Printify product create/update failed";
+    await prisma.publishJob.update({
+      where: { id: printifyJob.id },
+      data: { status: "FAILED", lastError: error, completedAt: new Date() },
+    });
+    await prisma.listing.update({ where: { id: listingId }, data: { status: "FAILED" } });
+    emitEvent("publish.failed", { stage: "PRINTIFY", error });
+    return;
+  }
 
   if (!printifyProductResult) {
     await prisma.listing.update({ where: { id: listingId }, data: { status: "FAILED" } });
@@ -1474,7 +1498,6 @@ async function resolvePrintifyProductPublishInput(input: {
     const darkVariantIds: number[] = [];
 
     for (const variant of cachedVariants) {
-      if (!enabledSet.has(variant.variantId)) continue;
       const colorId = colorNameToId.get(variant.colorName.trim().toLowerCase());
       const group = (() => {
         if (colorId) return colorGroups.get(colorId);

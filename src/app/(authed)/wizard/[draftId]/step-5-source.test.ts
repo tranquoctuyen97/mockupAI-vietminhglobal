@@ -17,3 +17,10 @@ test("step 5 resolves active independent content from draftDesign aiContent", ()
   assert.match(source, /activeIndependentDesign\?\.aiContent/);
   assert.doesNotMatch(source, /designPairs\[0\]/);
 });
+
+test("step 5 renders one publish progress entry per pair listing", () => {
+  assert.match(source, /const pairEntries = designPairs\.map/);
+  assert.match(source, /publishKey:\s*pair\.id/);
+  assert.match(source, /listing\.designPairId \?\? listing\.draftDesignId \?\? listing\.designId/);
+  assert.doesNotMatch(source, /selectedDraftDesigns\.map\(\(entry\) => \{\s*const pair = designPairs\.find/s);
+});

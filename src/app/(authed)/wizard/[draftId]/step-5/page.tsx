@@ -118,11 +118,19 @@ interface PublishDesignState {
 
 interface PublishResponseEntry {
   listingId: string;
+  designPairId?: string | null;
   draftDesignId: string | null;
   designId: string;
   designName: string;
   status: string;
   alreadyPublished: boolean;
+}
+
+interface PublishDisplayEntry {
+  id: string;
+  publishKey: string;
+  title: string;
+  publish: PublishDesignState;
 }
 
 function formatPriceDisplay(raw: string): string {
@@ -433,17 +441,21 @@ export default function Step5ReviewPage() {
     : "var(--bg-tertiary)";
 
   const designPublishEntries = useMemo(() => {
-    return selectedDraftDesigns.map((entry) => {
-      const pair = designPairs.find(
-        (p) => p.lightDraftDesignId === entry.id || p.darkDraftDesignId === entry.id,
-      );
-      const publishKey = pair ? pair.lightDraftDesignId : entry.id;
+    const pairEntries = designPairs.map((pair) => ({
+      id: pair.id,
+      publishKey: pair.id,
+      title: pair.baseName,
+      publish: publishStateByDesignId[pair.id] ?? defaultPublishState(),
+    }));
 
-      return {
-        ...entry,
-        publish: publishStateByDesignId[publishKey] ?? defaultPublishState(),
-      };
-    });
+    const independentEntries = independentDesigns.map((entry) => ({
+      id: entry.id,
+      publishKey: entry.id,
+      title: entry.design?.name ?? `Design ${entry.sortOrder + 1}`,
+      publish: publishStateByDesignId[entry.id] ?? defaultPublishState(),
+    }));
+
+    return [...pairEntries, ...independentEntries] satisfies PublishDisplayEntry[];
   }, [publishStateByDesignId, selectedDraftDesigns, designPairs]);
 
   const overallPublishStatus = useMemo(() => {
@@ -521,8 +533,8 @@ export default function Step5ReviewPage() {
     setPublishing(true);
     setPublishStateByDesignId(
       Object.fromEntries(
-        selectedDraftDesigns.map((entry) => [
-          entry.id,
+        designPublishEntries.map((entry) => [
+          entry.publishKey,
           {
             listingId: null,
             status: "PUBLISHING" as const,
@@ -649,7 +661,7 @@ export default function Step5ReviewPage() {
       const nextMapping = new Map<string, string>();
       const nextState: Record<string, PublishDesignState> = {};
       for (const listing of (data.listings ?? []) as PublishResponseEntry[]) {
-        const designKey = listing.draftDesignId ?? listing.designId;
+        const designKey = listing.designPairId ?? listing.draftDesignId ?? listing.designId;
         nextMapping.set(listing.listingId, designKey);
 
         const baseLogs: PublishLog[] = listing.alreadyPublished
@@ -1256,7 +1268,7 @@ export default function Step5ReviewPage() {
                     <div className="flex items-start justify-between gap-3" style={{ marginBottom: 8 }}>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: "0.85rem", overflowWrap: "anywhere" }}>
-                          {entry.design?.name ?? `Design ${entry.sortOrder + 1}`}
+                          {entry.title}
                         </div>
                         <p style={{ margin: "3px 0 0", fontSize: "0.72rem", opacity: 0.65 }}>
                           {entry.publish.listingId ? `Listing ${entry.publish.listingId.slice(-6)}` : "Chưa tạo listing"}
@@ -1269,7 +1281,7 @@ export default function Step5ReviewPage() {
 
                     <div style={{ display: "grid", gap: 6 }}>
                       {entry.publish.logs.map((log, index) => (
-                        <div key={`${entry.id}-${index}`} className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
+                        <div key={`${entry.publishKey}-${index}`} className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
                           {log.status === "pending" ? (
                             <Loader2 size={14} className="animate-spin text-amber-500" />
                           ) : log.status === "error" ? (

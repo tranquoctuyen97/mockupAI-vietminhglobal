@@ -183,15 +183,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     });
 
     if (existingListing) {
+      const retryExisting = ["FAILED", "PARTIAL_FAILURE"].includes(existingListing.status);
       listings.push({
         listingId: existingListing.id,
         designPairId: pair.id,
         draftDesignId: existingListing.wizardDraftDesignId ?? null,
         designId: existingListing.designId ?? pair.lightDesign.designId,
         designName: pair.baseName,
-        status: existingListing.status,
-        alreadyPublished: true,
+        status: retryExisting ? "PUBLISHING" : existingListing.status,
+        alreadyPublished: !retryExisting,
       });
+      if (retryExisting) workersToStart.push({ listingId: existingListing.id });
       continue;
     }
 
@@ -256,15 +258,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     });
 
     if (existingListing) {
+      const retryExisting = ["FAILED", "PARTIAL_FAILURE"].includes(existingListing.status);
       listings.push({
         listingId: existingListing.id,
         designPairId: null,
         draftDesignId: existingListing.wizardDraftDesignId ?? null,
         designId: existingListing.designId ?? draftDesign.designId,
         designName: draftDesign.design?.name ?? "Design",
-        status: existingListing.status,
-        alreadyPublished: true,
+        status: retryExisting ? "PUBLISHING" : existingListing.status,
+        alreadyPublished: !retryExisting,
       });
+      if (retryExisting) workersToStart.push({ listingId: existingListing.id });
       continue;
     }
 

@@ -16,3 +16,9 @@ test("publish route does not require selected design count to equal pairs times 
   assert.doesNotMatch(source, /selectedDraftDesigns\.length\s*!==\s*draft\.designPairs\.length\s*\*\s*2/);
   assert.doesNotMatch(source, /hasUnpairedDraftDesigns/);
 });
+
+test("publish route retries existing failed listings instead of treating them as done", () => {
+  assert.match(source, /\["FAILED", "PARTIAL_FAILURE"\]\.includes\(existingListing\.status\)/);
+  assert.match(source, /if \(retryExisting\) workersToStart\.push\(\{ listingId: existingListing\.id \}\)/);
+  assert.match(source, /alreadyPublished:\s*!retryExisting/);
+});
