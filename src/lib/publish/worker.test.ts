@@ -92,6 +92,17 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.match(source, /collections:\s*listing\.organizationCollections\s*\?\?\s*\[\]/);
   });
 
+  it("updates Shopify category after Printify Shopify-channel sync without failing publish", () => {
+    const syncIndex = source.indexOf("await waitForShopifyProductSync(");
+    const categoryIndex = source.indexOf("await updateProductCategory(");
+    const attachIndex = source.indexOf("await attachProductToManualCollections(");
+    assert.ok(syncIndex > -1, "Shopify sync should be awaited");
+    assert.ok(categoryIndex > syncIndex, "category update should run after Shopify sync");
+    assert.ok(categoryIndex < attachIndex, "category update should run before collection attach");
+    assert.match(source, /Shopify category post-sync failed \(non-fatal\)/);
+    assert.match(source, /productType:\s*draft\.template\?\.blueprintTitle\s*\?\?\s*draft\.productType/);
+  });
+
   it("uploads existing WebP mockup media to Shopify after sync without duplicating retries", () => {
     const syncIndex = source.indexOf("await waitForShopifyProductSync(");
     const hasWebpIndex = source.indexOf("await productHasWebpMedia(");

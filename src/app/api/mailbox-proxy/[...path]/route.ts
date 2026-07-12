@@ -490,6 +490,7 @@ async function handleListLabels(request: NextRequest, tenantId: string) {
   });
   const selectedLabel = selectedLabelId ? labels.find((label) => label.id === selectedLabelId) : undefined;
   if (selectedLabelId && !selectedLabel) return errorJson("Label not found", 404);
+  const countableLabels = labels.filter((label) => label.type === "USER");
 
   const [statusCounts, labelCounts] = await Promise.all([
     Promise.all(
@@ -505,7 +506,7 @@ async function handleListLabels(request: NextRequest, tenantId: string) {
       ] as const),
     ),
     Promise.all(
-      labels.map(async (label) => [
+      countableLabels.map(async (label) => [
         label.id,
         await prisma.mailboxConversation.count({
           where: mailboxConversationWhere({
@@ -528,7 +529,7 @@ async function handleListLabels(request: NextRequest, tenantId: string) {
       type: label.type,
       mutable: label.isMutable,
       state: label.state,
-      conversationCount: labelCountMap.get(label.id) ?? 0,
+      ...(label.type === "USER" ? { conversationCount: labelCountMap.get(label.id) ?? 0 } : {}),
     })),
     statusCounts: statusCountMap,
   });

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { buildProductTags, normalizeProductType, resolveProductCollectionIds } from "./shopify";
+import {
+  buildProductTags,
+  normalizeProductType,
+  resolveProductCollectionIds,
+  updateProductCategory,
+} from "./shopify";
 
 describe("normalizeProductType", () => {
   it("maps Printify blueprint titles to canonical apparel types", () => {
@@ -281,5 +286,67 @@ describe("Shopify productSet inventory quantities", () => {
     assert.match(source, /tracked:\s*true/);
     assert.match(source, /inventoryItemUpdate/);
     assert.match(source, /inventorySetQuantities/);
+  });
+});
+
+describe("updateProductCategory", () => {
+  it("validates and updates the Shopify taxonomy category for a synced product", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const client = {
+      graphql: async (query: string, variables: Record<string, unknown>) => {
+        calls.push({ query, variables });
+        if (query.includes("ValidateCategory")) {
+          return {
+            node: {
+              __typename: "TaxonomyCategory",
+              id: variables.id,
+            },
+          };
+        }
+        if (query.includes("UpdateProductCategory")) {
+          return {
+            productUpdate: {
+              product: { id: (variables.product as { id: string }).id },
+              userErrors: [],
+            },
+          };
+        }
+        throw new Error(`Unexpected query/mutation: ${query}`);
+      },
+    };
+
+    const categoryId = await updateProductCategory({
+      client,
+      productId: "gid://shopify/Product/123",
+      productType: "Unisex Heavy Cotton Tee",
+    });
+
+    assert.equal(categoryId, "gid://shopify/TaxonomyCategory/aa-1-13-8");
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[1].variables.product, {
+      id: "gid://shopify/Product/123",
+      category: "gid://shopify/TaxonomyCategory/aa-1-13-8",
+      productType: "T-Shirt",
+    });
+  });
+
+  it("skips productUpdate when the product type has no taxonomy mapping", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const client = {
+      graphql: async (query: string, variables: Record<string, unknown>) => {
+        calls.push({ query, variables });
+        throw new Error("graphql should not be called for unmapped product types");
+      },
+    };
+
+    assert.equal(
+      await updateProductCategory({
+        client,
+        productId: "gid://shopify/Product/123",
+        productType: "Ceramic Mug",
+      }),
+      null,
+    );
+    assert.equal(calls.length, 0);
   });
 });

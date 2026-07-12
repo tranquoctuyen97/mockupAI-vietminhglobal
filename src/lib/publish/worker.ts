@@ -48,6 +48,7 @@ import {
   productHasWebpMedia,
   publishToShopify,
   reorderPrimaryMedia,
+  updateProductCategory,
   uploadProductImages,
   type ShopifyMockupImage,
   type ShopifyVariantInput,
@@ -1175,6 +1176,20 @@ async function runPrintifyShopifyChannelPublish(input: {
   }
 
   const shopifyClient = new ShopifyClient(store.shopifyDomain!, shopifyAccessToken);
+
+  try {
+    await updateProductCategory({
+      client: shopifyClient,
+      productId: syncMatch.shopifyProductId,
+      productType: draft.template?.blueprintTitle ?? draft.productType,
+    });
+  } catch (err) {
+    console.warn("[PublishWorker] Shopify category post-sync failed (non-fatal):", {
+      listingId,
+      shopifyProductId: syncMatch.shopifyProductId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 
   try {
     await attachProductToManualCollections({

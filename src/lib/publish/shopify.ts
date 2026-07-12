@@ -741,7 +741,7 @@ async function enableInventoryTrackingAndSetStock(
  * returns null (omit category → Shopify auto-classifies) on miss/invalid.
  */
 async function resolveCategoryId(
-  client: ShopifyClient,
+  client: CollectionResolverClient,
   canonicalType: string | null,
 ): Promise<string | null> {
   if (!canonicalType) return null;
@@ -807,6 +807,44 @@ export async function reorderPrimaryMedia(
       err instanceof Error ? err.message : err,
     );
   }
+}
+
+export async function updateProductCategory(input: {
+  client: CollectionResolverClient;
+  productId: string;
+  productType: string | null | undefined;
+}): Promise<string | null> {
+  const canonicalType = normalizeProductType(input.productType ?? "");
+  const categoryId = await resolveCategoryId(input.client, canonicalType);
+  if (!categoryId) return null;
+
+  const mutation = `
+    mutation UpdateProductCategory($product: ProductUpdateInput!) {
+      productUpdate(product: $product) {
+        product { id }
+        userErrors { field message }
+      }
+    }
+  `;
+  const data = (await input.client.graphql(mutation, {
+    product: {
+      id: input.productId,
+      category: categoryId,
+      productType: canonicalType ?? input.productType,
+    },
+  })) as {
+    productUpdate: {
+      product: { id: string } | null;
+      userErrors: Array<{ field: string[] | string | null; message: string }>;
+    };
+  };
+  const errors = data.productUpdate?.userErrors ?? [];
+  if (errors.length > 0) {
+    throw new Error(
+      `Shopify productUpdate category failed: ${errors.map((error) => error.message).join("; ")}`,
+    );
+  }
+  return categoryId;
 }
 
 export async function productHasWebpMedia(

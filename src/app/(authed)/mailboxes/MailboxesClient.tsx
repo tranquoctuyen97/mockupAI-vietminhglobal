@@ -1530,7 +1530,6 @@ function FilterRail({
           active={selectedLabelId === sentLabel.id}
           dot="#7c3aed"
           label="Sent"
-          count={sentLabel.conversationCount}
           onClick={() => onLabel(sentLabel.id)}
         />
       ) : null}
@@ -2809,8 +2808,16 @@ function formatDuration(valueMs: number | string | null | undefined) {
   if (valueMs == null) return "—";
   const ms = typeof valueMs === "string" ? Number(valueMs) : valueMs;
   if (!Number.isFinite(ms)) return "—";
-  const hours = Math.floor(ms / 3_600_000);
-  const minutes = Math.round((ms % 3_600_000) / 60_000);
+  const totalMinutes = Math.round(ms / 60_000);
+  const days = Math.floor(totalMinutes / 1_440);
+  const hours = Math.floor((totalMinutes % 1_440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) {
+    const parts = [`${days}d`];
+    if (hours > 0) parts.push(`${hours}h`);
+    if (days < 7 && minutes > 0) parts.push(`${minutes}m`);
+    return parts.join(" ");
+  }
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
