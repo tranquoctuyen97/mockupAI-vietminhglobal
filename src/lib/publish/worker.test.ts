@@ -83,6 +83,24 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.match(source, /salesChannelCollections:\s*normalizeOrganizationCollections\(listing\.organizationCollections\)/);
   });
 
+  it("attaches Shopify collections after Printify Shopify-channel sync", () => {
+    const syncIndex = source.indexOf("await waitForShopifyProductSync(");
+    const attachIndex = source.indexOf("await attachProductToManualCollections(");
+    assert.ok(syncIndex > -1, "Shopify sync should be awaited");
+    assert.ok(attachIndex > -1, "Shopify collection attach should be called");
+    assert.ok(syncIndex < attachIndex, "collection attach must run after Shopify product sync");
+    assert.match(source, /collections:\s*listing\.organizationCollections\s*\?\?\s*\[\]/);
+  });
+
+  it("uploads existing WebP mockup media to Shopify after sync without duplicating retries", () => {
+    const syncIndex = source.indexOf("await waitForShopifyProductSync(");
+    const hasWebpIndex = source.indexOf("await productHasWebpMedia(");
+    const uploadIndex = source.indexOf("await uploadProductImages(");
+    assert.ok(hasWebpIndex > syncIndex, "WebP check should run after Shopify sync");
+    assert.ok(uploadIndex > hasWebpIndex, "WebP upload should run after idempotency check");
+    assert.match(source, /Shopify WebP media post-sync failed \(non-fatal\)/);
+  });
+
   it("maps paired light and dark print areas across the full Printify variant catalog", () => {
     const resolverIndex = source.indexOf("async function resolvePrintifyProductPublishInput");
     const pairLoopIndex = source.indexOf("for (const variant of cachedVariants)", resolverIndex);

@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { DEFAULT_PLACEMENT } from "../placement/types";
 import type { PrintifyClient } from "./client";
 import {
+  ensurePrintifyImage,
   PrintifyMockupTimeoutError,
   buildPrintifyProductPayload,
   parsePrintifyMockupImages,
   pollPrintifyMockups,
+  resolvePrintifyUploadUrl,
 } from "./product";
 
 const placementData = {
@@ -196,4 +201,96 @@ test("buildPrintifyProductPayload sends Shopify sales channel collections", () =
   assert.deepEqual(payload.sales_channel_properties, {
     collections: ["Patriotic", "T-Shirts"],
   });
+});
+
+test("resolvePrintifyUploadUrl builds public /api/files URLs", () => {
+  assert.equal(
+    resolvePrintifyUploadUrl({
+      publicBaseUrl: "https://example.ngrok-free.dev/",
+      storagePath: "originals/design one.png",
+    }),
+    "https://example.ngrok-free.dev/api/files/originals/design%20one.png",
+  );
+});
+
+test("resolvePrintifyUploadUrl rejects local and private URLs", () => {
+  for (const publicBaseUrl of [
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://10.0.0.2",
+    "http://172.16.1.5",
+    "http://192.168.1.10",
+  ]) {
+    assert.equal(
+      resolvePrintifyUploadUrl({
+        publicBaseUrl,
+        storagePath: "originals/design.png",
+      }),
+      null,
+    );
+  }
+});
+
+test("ensurePrintifyImage uploads by URL before reading local file when public base URL is valid", async () => {
+  const calls: string[] = [];
+  const client = {
+    uploadImageUrl: async (input: { fileName: string; url: string }) => {
+      calls.push(`url:${input.fileName}:${input.url}`);
+      return { id: "url-image-id" };
+    },
+    uploadImageBase64: async () => {
+      calls.push("base64");
+      return { id: "base64-image-id" };
+    },
+  } as unknown as PrintifyClient;
+
+  const id = await ensurePrintifyImage({
+    client,
+    designStoragePath: "originals/design.png",
+    publicBaseUrl: "https://example.ngrok-free.dev",
+    storage: {
+      resolvePath: () => {
+        throw new Error("base64 fallback should not read storage");
+      },
+    } as any,
+  });
+
+  assert.equal(id, "url-image-id");
+  assert.deepEqual(calls, [
+    "url:design_design.png:https://example.ngrok-free.dev/api/files/originals/design.png",
+  ]);
+});
+
+test("ensurePrintifyImage falls back to base64 when public base URL is local", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "printify-image-"));
+  try {
+    const filePath = join(dir, "design.png");
+    await writeFile(filePath, Buffer.from("image-bytes"));
+
+    const calls: string[] = [];
+    const client = {
+      uploadImageUrl: async () => {
+        calls.push("url");
+        return { id: "url-image-id" };
+      },
+      uploadImageBase64: async (input: { fileName: string; contentsBase64: string }) => {
+        calls.push(`base64:${input.fileName}:${input.contentsBase64}`);
+        return { id: "base64-image-id" };
+      },
+    } as unknown as PrintifyClient;
+
+    const id = await ensurePrintifyImage({
+      client,
+      designStoragePath: "originals/design.png",
+      publicBaseUrl: "http://localhost:3001",
+      storage: {
+        resolvePath: () => filePath,
+      } as any,
+    });
+
+    assert.equal(id, "base64-image-id");
+    assert.deepEqual(calls, ["base64:design_design.png:aW1hZ2UtYnl0ZXM="]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

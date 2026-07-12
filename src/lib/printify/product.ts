@@ -25,6 +25,7 @@ export interface EnsurePrintifyImageInput {
   designStoragePath: string;
   cachedImageId?: string | null;
   storage?: ReturnType<typeof getStorage>;
+  publicBaseUrl?: string | null;
 }
 
 export class PrintifyMockupTimeoutError extends Error {
@@ -38,14 +39,88 @@ export async function ensurePrintifyImage(input: EnsurePrintifyImageInput): Prom
   if (input.cachedImageId) return input.cachedImageId;
 
   const storage = input.storage ?? getStorage();
+  const fileName = `design_${basename(input.designStoragePath)}`;
+  const publicUrl = resolvePrintifyUploadUrl({
+    storagePath: input.designStoragePath,
+    publicBaseUrl: input.publicBaseUrl ?? process.env.NEXT_PUBLIC_APP_URL,
+  });
+
+  if (publicUrl) {
+    try {
+      const uploaded = await input.client.uploadImageUrl({
+        fileName,
+        url: publicUrl,
+      });
+      return uploaded.id;
+    } catch (err) {
+      console.warn("[Printify] URL image upload failed, falling back to base64:", {
+        storagePath: input.designStoragePath,
+        publicUrl,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   const absolutePath = storage.resolvePath(input.designStoragePath);
   const fileBuffer = await readFile(absolutePath);
   const uploaded = await input.client.uploadImageBase64({
-    fileName: `design_${basename(input.designStoragePath)}`,
+    fileName,
     contentsBase64: fileBuffer.toString("base64"),
   });
 
   return uploaded.id;
+}
+
+export function resolvePrintifyUploadUrl(input: {
+  storagePath: string;
+  publicBaseUrl?: string | null;
+}): string | null {
+  const baseUrl = input.publicBaseUrl?.trim();
+  if (!baseUrl) return null;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) return null;
+  if (isLocalOrPrivateHost(parsed.hostname)) return null;
+
+  const encodedPath = input.storagePath
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  parsed.pathname = `${parsed.pathname.replace(/\/$/, "")}/api/files/${encodedPath}`;
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+function isLocalOrPrivateHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!host) return true;
+  if (host === "localhost" || host === "::1") return true;
+  if (host.endsWith(".localhost")) return true;
+
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!ipv4) return false;
+
+  const octets = ipv4.slice(1).map(Number);
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return true;
+  }
+
+  const [a, b] = octets;
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) ||
+    a === 0
+  );
 }
 
 export function buildPrintifyProductPayload(input: {

@@ -43,7 +43,15 @@ import { getStorage } from "@/lib/storage/local-disk";
 import { normalizeOrganizationCollections } from "@/lib/wizard/product-organization";
 import { publishToPrintify } from "./printify";
 import { waitForShopifyProductSync, type ShopifySyncMatch } from "./shopify-sync";
-import { publishToShopify, type ShopifyMockupImage, type ShopifyVariantInput } from "./shopify";
+import {
+  attachProductToManualCollections,
+  productHasWebpMedia,
+  publishToShopify,
+  reorderPrimaryMedia,
+  uploadProductImages,
+  type ShopifyMockupImage,
+  type ShopifyVariantInput,
+} from "./shopify";
 import { resolvePublishStrategy } from "./strategy";
 
 const MAX_RETRIES = 5;
@@ -292,6 +300,8 @@ export async function runPublishWorker(input: PublishInput): Promise<void> {
         listing,
         draft,
         store,
+        mockupImages,
+        listingColorNames,
         shopifyAccessToken,
         isDryRun,
         emitEvent,
@@ -940,11 +950,13 @@ async function runPrintifyShopifyChannelPublish(input: {
   listing: any;
   draft: any;
   store: any;
+  mockupImages: ShopifyMockupImage[];
+  listingColorNames: string[];
   shopifyAccessToken: string;
   isDryRun: boolean;
   emitEvent: (type: string, data?: Record<string, unknown>) => void;
 }): Promise<void> {
-  const { listingId, listing, draft, store, shopifyAccessToken, isDryRun, emitEvent } = input;
+  const { listingId, listing, draft, store, mockupImages, listingColorNames, shopifyAccessToken, isDryRun, emitEvent } = input;
   const printifyJob = listing.publishJobs.find((job: any) => job.stage === "PRINTIFY");
   const shopifyJob = listing.publishJobs.find((job: any) => job.stage === "SHOPIFY");
 
@@ -1160,6 +1172,60 @@ async function runPrintifyShopifyChannelPublish(input: {
     await prisma.listing.update({ where: { id: listingId }, data: { status: "PARTIAL_FAILURE" } });
     emitEvent("publish.complete", { status: "PARTIAL_FAILURE", reason: message });
     return;
+  }
+
+  const shopifyClient = new ShopifyClient(store.shopifyDomain!, shopifyAccessToken);
+
+  try {
+    await attachProductToManualCollections({
+      client: shopifyClient,
+      productId: syncMatch.shopifyProductId,
+      collections: listing.organizationCollections ?? [],
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Shopify collection attach failed";
+    await prisma.publishJob.update({
+      where: { id: shopifyJob.id },
+      data: {
+        status: "FAILED",
+        lastError: message,
+        completedAt: new Date(),
+      },
+    });
+    await prisma.listing.update({ where: { id: listingId }, data: { status: "PARTIAL_FAILURE" } });
+    emitEvent("publish.complete", { status: "PARTIAL_FAILURE", reason: message });
+    return;
+  }
+
+  try {
+    const alreadyHasWebp = await productHasWebpMedia(shopifyClient, syncMatch.shopifyProductId);
+    if (!alreadyHasWebp && mockupImages.length > 0) {
+      const primaryColorName = pickPrimaryColorName(mockupImages);
+      const orderedMockupImages = orderMockupImagesByPrimary(
+        mockupImages,
+        listingColorNames,
+        primaryColorName,
+      );
+      const uploadedMedia = await uploadProductImages(
+        shopifyClient,
+        syncMatch.shopifyProductId,
+        orderedMockupImages,
+      );
+      if (uploadedMedia.length > 0 && primaryColorName) {
+        const primaryMedia = uploadedMedia.find(
+          (media) => media.colorName?.toLowerCase() === primaryColorName.toLowerCase(),
+        );
+        if (primaryMedia) {
+          await reorderPrimaryMedia(shopifyClient, syncMatch.shopifyProductId, primaryMedia.mediaId);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[PublishWorker] Shopify WebP media post-sync failed (non-fatal):", {
+      listingId,
+      shopifyProductId: syncMatch.shopifyProductId,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   await persistPrintifyShopifyVariantMapping({

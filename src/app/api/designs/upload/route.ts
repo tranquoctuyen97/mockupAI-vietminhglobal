@@ -143,7 +143,11 @@ export async function POST(request: Request) {
 
     // Save files to storage
     const storage = getStorage();
-    await storage.putStream(originalKey, createReadStream(file.filepath), file.mimetype);
+    if (probeResult.normalizedBuffer) {
+      await storage.putBuffer(originalKey, probeResult.normalizedBuffer, probeResult.mimeType);
+    } else {
+      await storage.putStream(originalKey, createReadStream(file.filepath), probeResult.mimeType);
+    }
     await storage.putBuffer(previewKey, probeResult.previewBuffer, "image/webp");
 
     // Clean up temp file
@@ -186,6 +190,10 @@ export async function POST(request: Request) {
         height: probeResult.height,
         dpi: probeResult.dpi,
         fileSize: probeResult.fileSize,
+        wasNormalized: probeResult.wasNormalized,
+        originalWidth: probeResult.originalWidth,
+        originalHeight: probeResult.originalHeight,
+        originalFileSize: probeResult.originalFileSize,
       },
     });
 

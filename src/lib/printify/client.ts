@@ -185,6 +185,19 @@ export class PrintifyClient {
     });
   }
 
+  async uploadImageUrl(input: {
+    fileName: string;
+    url: string;
+  }): Promise<PrintifyUploadImageResponse> {
+    return this.request<PrintifyUploadImageResponse>("/uploads/images.json", {
+      method: "POST",
+      body: JSON.stringify({
+        file_name: input.fileName,
+        url: input.url,
+      }),
+    });
+  }
+
   async createProduct(
     shopId: number,
     payload: unknown,

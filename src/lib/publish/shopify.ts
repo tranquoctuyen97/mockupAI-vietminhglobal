@@ -395,7 +395,7 @@ async function createProductWithSet(
   };
 }
 
-async function uploadProductImages(
+export async function uploadProductImages(
   client: ShopifyClient,
   productId: string,
   mockupImages: ShopifyMockupImage[],
@@ -779,7 +779,7 @@ async function resolveCategoryId(
  * Move the primary color's media to position 0 so it becomes the product
  * thumbnail. Non-fatal — the product is already created/published.
  */
-async function reorderPrimaryMedia(
+export async function reorderPrimaryMedia(
   client: ShopifyClient,
   productId: string,
   mediaId: string,
@@ -807,6 +807,83 @@ async function reorderPrimaryMedia(
       err instanceof Error ? err.message : err,
     );
   }
+}
+
+export async function productHasWebpMedia(
+  client: ShopifyClient,
+  productId: string,
+): Promise<boolean> {
+  const query = `
+    query ProductWebpMedia($id: ID!) {
+      product(id: $id) {
+        media(first: 50) {
+          nodes {
+            ... on MediaImage {
+              mimeType
+            }
+          }
+        }
+      }
+    }
+  `;
+  const data = (await client.graphql(query, { id: productId })) as {
+    product: { media: { nodes: Array<{ mimeType?: string | null }> } } | null;
+  };
+  return Boolean(data.product?.media.nodes.some((node) => node.mimeType === "image/webp"));
+}
+
+export async function attachProductToManualCollections(input: {
+  client: CollectionResolverClient;
+  productId: string;
+  collections: unknown;
+}): Promise<string[]> {
+  const collectionIds = await resolveManualCollectionIdsByTitlesOrHandles(
+    input.client,
+    input.collections,
+  );
+  if (collectionIds.length === 0) return [];
+
+  const existingQuery = `
+    query ProductCollections($id: ID!) {
+      product(id: $id) {
+        collections(first: 250) {
+          nodes { id }
+        }
+      }
+    }
+  `;
+  const existingData = (await input.client.graphql(existingQuery, { id: input.productId })) as {
+    product: { collections: { nodes: Array<{ id: string }> } } | null;
+  };
+  const existingIds = new Set(existingData.product?.collections.nodes.map((node) => node.id) ?? []);
+  const idsToAdd = collectionIds.filter((id) => !existingIds.has(id));
+  if (idsToAdd.length === 0) return collectionIds;
+
+  const mutation = `
+    mutation AddProductToCollection($id: ID!, $productIds: [ID!]!) {
+      collectionAddProducts(id: $id, productIds: $productIds) {
+        userErrors { field message }
+      }
+    }
+  `;
+  for (const collectionId of idsToAdd) {
+    const data = (await input.client.graphql(mutation, {
+      id: collectionId,
+      productIds: [input.productId],
+    })) as {
+      collectionAddProducts: {
+        userErrors: Array<{ field: string[] | null; message: string }>;
+      };
+    };
+    const errors = data.collectionAddProducts?.userErrors ?? [];
+    if (errors.length > 0) {
+      throw new Error(
+        `Shopify collectionAddProducts failed: ${errors.map((error) => error.message).join("; ")}`,
+      );
+    }
+  }
+
+  return collectionIds;
 }
 
 /** Fetch every publication ID for the shop, following pagination. */

@@ -34,6 +34,7 @@ import {
   Loader2,
   Play,
   Check,
+  XCircle,
 } from "lucide-react";
 
 interface AiContent {
@@ -194,6 +195,23 @@ function isUsableMockupImage(image: MockupImage): boolean {
 
 function defaultPublishState(): PublishDesignState {
   return { listingId: null, status: "IDLE", logs: [] };
+}
+
+function compactPublishLogs(state: PublishDesignState): PublishLog[] {
+  const latestByStage = new Map<string, PublishLog>();
+
+  for (const log of state.logs) {
+    latestByStage.set(log.stage, log);
+  }
+
+  const logs = Array.from(latestByStage.values());
+
+  if (state.status === "SUCCESS") {
+    const successLogs = logs.filter((log) => log.status === "success");
+    return successLogs.length > 0 ? successLogs : logs;
+  }
+
+  return logs;
 }
 
 export default function Step5ReviewPage() {
@@ -498,7 +516,9 @@ export default function Step5ReviewPage() {
   }, [colors, selectedDraftDesigns, latestMockupJobByDesign]);
 
   const isLoadingPage = loading || !draft;
-  const canPublish = Boolean(localChecklist?.readyToPublish && selectedDraftDesigns.length > 0 && !publishing);
+  const allListingsPublished = overallPublishStatus === "SUCCESS";
+  const canPublish = Boolean(localChecklist?.readyToPublish && selectedDraftDesigns.length > 0 && !publishing && !allListingsPublished);
+  const publishButtonLabel = allListingsPublished ? `Đã publish ${summaryListingsCount} listings` : `Publish ${summaryListingsCount} listings`;
 
   function updatePublishStateByListingId(
     listingId: string | null | undefined,
@@ -517,9 +537,17 @@ export default function Step5ReviewPage() {
   }
 
   function appendPublishLog(current: PublishDesignState, log: PublishLog): PublishDesignState {
+    const nextLogs = [...current.logs];
+    const existingIndex = nextLogs.findIndex((item) => item.stage === log.stage);
+    if (existingIndex >= 0) {
+      nextLogs[existingIndex] = log;
+    } else {
+      nextLogs.push(log);
+    }
+
     return {
       ...current,
-      logs: [...current.logs, log],
+      logs: nextLogs,
     };
   }
 
@@ -1246,6 +1274,7 @@ export default function Step5ReviewPage() {
 
             <div style={{ display: "grid", gap: 10 }}>
               {designPublishEntries.map((entry) => {
+                const displayLogs = compactPublishLogs(entry.publish);
                 const statusClass =
                   entry.publish.status === "SUCCESS"
                     ? "badge-success"
@@ -1280,12 +1309,12 @@ export default function Step5ReviewPage() {
                     </div>
 
                     <div style={{ display: "grid", gap: 6 }}>
-                      {entry.publish.logs.map((log, index) => (
+                      {displayLogs.map((log, index) => (
                         <div key={`${entry.publishKey}-${index}`} className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
                           {log.status === "pending" ? (
                             <Loader2 size={14} className="animate-spin text-amber-500" />
                           ) : log.status === "error" ? (
-                            <CheckCircle2 size={14} style={{ color: "var(--color-error)" }} />
+                            <XCircle size={14} style={{ color: "var(--color-error)" }} />
                           ) : (
                             <CheckCircle2 size={14} style={{ color: "var(--color-wise-green)" }} />
                           )}
@@ -1320,12 +1349,12 @@ export default function Step5ReviewPage() {
                 padding: "12px 24px",
                 width: "100%",
                 marginTop: 14,
-                opacity: localChecklist && !localChecklist.readyToPublish ? 0.5 : 1,
-                cursor: localChecklist && !localChecklist.readyToPublish ? "not-allowed" : "pointer",
+                opacity: !canPublish ? 0.65 : 1,
+                cursor: !canPublish ? "not-allowed" : "pointer",
               }}
             >
-              {publishing ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-                  Publish {listingsCount} listings
+              {publishing ? <Loader2 size={16} className="animate-spin" /> : allListingsPublished ? <Check size={16} /> : <Play size={16} />}
+              {publishButtonLabel}
             </button>
           </div>
         </div>
