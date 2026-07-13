@@ -52,6 +52,12 @@ export interface ShopifyPublishResult {
   shopifyProductUrl: string;
 }
 
+export interface ShopifyPublishChannelsResult {
+  attempted: number;
+  succeeded: number;
+  failed: Array<{ publicationId: string; message: string }>;
+}
+
 const DEFAULT_VENDOR = "Printify";
 const DEFAULT_SHOPIFY_INVENTORY_QUANTITY = 999;
 const TAXONOMY_BASE = "gid://shopify/TaxonomyCategory/";
@@ -958,7 +964,10 @@ async function getAllPublicationIds(client: ShopifyClient): Promise<string[]> {
  * continues so it never crashes the whole publish job. Product is already
  * ACTIVE via productSet, so this is best-effort.
  */
-async function publishToAllChannels(client: ShopifyClient, productId: string): Promise<void> {
+export async function publishToAllChannels(
+  client: ShopifyClient,
+  productId: string,
+): Promise<ShopifyPublishChannelsResult> {
   const mutation = `
     mutation publishablePublish($id: ID!, $input: [PublicationInput!]!) {
       publishablePublish(id: $id, input: $input) {
@@ -972,12 +981,20 @@ async function publishToAllChannels(client: ShopifyClient, productId: string): P
     publicationIds = await getAllPublicationIds(client);
   } catch (err) {
     // Likely missing read_publications scope — product is already ACTIVE.
+    const message = err instanceof Error ? err.message : String(err);
     console.warn(
       `[Shopify] Could not list publications (non-fatal, product already ACTIVE):`,
-      err instanceof Error ? err.message : err,
+      message,
     );
-    return;
+    return {
+      attempted: 0,
+      succeeded: 0,
+      failed: [{ publicationId: "publications", message }],
+    };
   }
+
+  const failed: ShopifyPublishChannelsResult["failed"] = [];
+  let succeeded = 0;
 
   for (const publicationId of publicationIds) {
     try {
@@ -988,14 +1005,28 @@ async function publishToAllChannels(client: ShopifyClient, productId: string): P
       const errors = data.publishablePublish?.userErrors ?? [];
       if (errors.length > 0) {
         console.warn(`[Shopify] publish to ${publicationId} userErrors (skip):`, errors);
+        failed.push({
+          publicationId,
+          message: errors.map((error) => error.message).join("; "),
+        });
+        continue;
       }
+      succeeded += 1;
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       console.warn(
         `[Shopify] publish to ${publicationId} failed (skip):`,
-        err instanceof Error ? err.message : err,
+        message,
       );
+      failed.push({ publicationId, message });
     }
   }
+
+  return {
+    attempted: publicationIds.length,
+    succeeded,
+    failed,
+  };
 }
 
 function toHandle(title: string): string {

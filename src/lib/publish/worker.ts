@@ -12,7 +12,7 @@ import { decrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
 import { classifyColorHex, resolveColorGroups } from "@/lib/designs/color-classifier";
 import { getLatestJobByDraftDesignId } from "@/lib/mockup/multi-design";
-import { resolveEffectivePlacementData } from "@/lib/mockup/plan";
+import { resolveEffectivePlacementData, resolvePlacementViews } from "@/lib/mockup/plan";
 import {
   isAllowedRemoteMockupUrl,
   isRemoteUrl,
@@ -20,7 +20,14 @@ import {
 } from "@/lib/mockup/real-printify-media";
 import { parseMockupSourceUrl } from "@/lib/mockup/source-url";
 import { buildListingReadyPlacementData } from "@/lib/placement/auto-place";
-import { DEFAULT_PLACEMENT, DEFAULT_PRINT_AREA, type PlacementData } from "@/lib/placement/types";
+import { resolvePlacement } from "@/lib/placement/resolver";
+import {
+  DEFAULT_PLACEMENT,
+  DEFAULT_PRINT_AREA,
+  type PlacementData,
+  type PrintArea,
+  type ViewKey,
+} from "@/lib/placement/types";
 import {
   mergeDraftAndTemplatePriceMaps,
   resolveBaseTemplatePrice,
@@ -46,6 +53,7 @@ import { waitForShopifyProductSync, type ShopifySyncMatch } from "./shopify-sync
 import {
   attachProductToManualCollections,
   productHasWebpMedia,
+  publishToAllChannels,
   publishToShopify,
   reorderPrimaryMedia,
   updateProductCategory,
@@ -78,6 +86,50 @@ type PublishableMockupImage = {
 type StorageResolver = {
   resolvePath(key: string): string;
 };
+
+type PrintAreaByView = Partial<Record<ViewKey, PrintArea>>;
+
+function toPlacementPosition(view: ViewKey): string {
+  return view.toUpperCase();
+}
+
+async function resolvePrintAreaByView(input: {
+  blueprintId: number;
+  views: ViewKey[];
+}): Promise<PrintAreaByView> {
+  const uniqueViews = Array.from(new Set(input.views));
+  if (!input.blueprintId || uniqueViews.length === 0) return {};
+
+  const rows = await prisma.blueprintPrintArea.findMany({
+    where: {
+      printifyBlueprintId: input.blueprintId,
+      position: { in: uniqueViews.map(toPlacementPosition) as any },
+    },
+  });
+
+  const byView: PrintAreaByView = {};
+  for (const row of rows) {
+    byView[row.position.toLowerCase() as ViewKey] = {
+      widthMm: row.widthMm,
+      heightMm: row.heightMm,
+      safeMarginMm: row.safeMarginMm,
+    };
+  }
+
+  const missingViews = uniqueViews.filter((view) => !byView[view]);
+  if (missingViews.length > 0) {
+    console.warn("[PublishWorker] Printify publish using default print area fallback:", {
+      blueprintId: input.blueprintId,
+      missingViews,
+    });
+  }
+
+  return byView;
+}
+
+function printAreaForView(printAreaByView: PrintAreaByView, view: ViewKey): PrintArea {
+  return printAreaByView[view] ?? DEFAULT_PRINT_AREA;
+}
 
 type PrintifyTagsClient = {
   getProduct: (shopId: number, productId: string) => Promise<{ tags?: unknown }>;
@@ -777,14 +829,24 @@ export async function runPrintifyStage(
       ];
     }
 
+    const blueprintIdForPlacement = template?.printifyBlueprintId ?? 0;
+    const effectivePlacementData = resolveEffectivePlacementData(
+      draft.placementOverride,
+      template?.defaultPlacement,
+    );
+    const printAreaByView = await resolvePrintAreaByView({
+      blueprintId: blueprintIdForPlacement,
+      views: effectivePlacementData ? resolvePlacementViews(effectivePlacementData) : ["front"],
+    });
+
     // Placement fallback chain (Guard 3): draft override → template default →
     // listing-ready ratio default (artwork only, never the print area) → legacy.
     const placementData =
-      resolveEffectivePlacementData(draft.placementOverride, template?.defaultPlacement) ??
+      effectivePlacementData ??
       (targetDesign
         ? buildListingReadyPlacementData({
           design: { widthPx: targetDesign.width, heightPx: targetDesign.height },
-          printArea: DEFAULT_PRINT_AREA,
+          printArea: printAreaForView(printAreaByView, "front"),
           template: {
             productType: draft.productType,
             blueprintTitle: template?.blueprintTitle,
@@ -877,6 +939,7 @@ export async function runPrintifyStage(
               variantIds,
               variants: printifyVariantsPayload,
               placementData,
+              printAreaByView,
               imageGroups,
             }),
           printifyJob.id,
@@ -897,6 +960,8 @@ export async function runPrintifyStage(
               mockupPaths: [],
               selectedMockupIds,
               designPath: designPath ?? undefined,
+              placementMm: resolvePlacement(placementData, "front") ?? undefined,
+              printAreaMm: printAreaForView(printAreaByView, "front"),
               imageGroups,
             });
           },
@@ -1031,6 +1096,7 @@ async function runPrintifyShopifyChannelPublish(input: {
             imageId: publishInput.imageId,
             imageGroups: publishInput.imageGroups,
             placementData: publishInput.placementData,
+            printAreaByView: publishInput.printAreaByView,
             title: listing.title,
             description: listing.descriptionHtml,
             tags: normalizeExternalTags(listing.tags),
@@ -1067,6 +1133,7 @@ async function runPrintifyShopifyChannelPublish(input: {
                 imageId: publishInput.imageId,
                 imageGroups: publishInput.imageGroups,
                 placementData: publishInput.placementData,
+                printAreaByView: publishInput.printAreaByView,
                 title: listing.title,
                 description: listing.descriptionHtml,
                 tags: normalizeExternalTags(listing.tags),
@@ -1117,7 +1184,7 @@ async function runPrintifyShopifyChannelPublish(input: {
     await printifyClient.publishProduct(externalShopId, printifyProductResult.productId, {
       title: true,
       description: true,
-      images: true,
+      images: false,
       variants: true,
       tags: true,
       keyFeatures: true,
@@ -1176,6 +1243,35 @@ async function runPrintifyShopifyChannelPublish(input: {
   }
 
   const shopifyClient = new ShopifyClient(store.shopifyDomain!, shopifyAccessToken);
+
+  try {
+    const channelResult = await publishToAllChannels(shopifyClient, syncMatch.shopifyProductId);
+    if (channelResult.attempted === 0 || channelResult.failed.length > 0) {
+      const failures = channelResult.failed
+        .map((failure) => `${failure.publicationId}: ${failure.message}`)
+        .join("; ");
+      throw new Error(
+        failures ||
+          `No Shopify publications were available for product ${syncMatch.shopifyProductId}`,
+      );
+    }
+  } catch (err) {
+    const message =
+      err instanceof Error
+        ? `Shopify sales-channel publish failed: ${err.message}`
+        : "Shopify sales-channel publish failed";
+    await prisma.publishJob.update({
+      where: { id: shopifyJob.id },
+      data: {
+        status: "FAILED",
+        lastError: message,
+        completedAt: new Date(),
+      },
+    });
+    await prisma.listing.update({ where: { id: listingId }, data: { status: "PARTIAL_FAILURE" } });
+    emitEvent("publish.complete", { status: "PARTIAL_FAILURE", reason: message });
+    return;
+  }
 
   try {
     await updateProductCategory({
@@ -1466,6 +1562,7 @@ async function resolvePrintifyProductPublishInput(input: {
   imageId: string;
   imageGroups?: Array<{ imageId: string; variantIds: number[] }>;
   placementData: PlacementData;
+  printAreaByView: PrintAreaByView;
 }> {
   const pair =
     input.listing.wizardDraftDesignPair ??
@@ -1611,6 +1708,15 @@ async function resolvePrintifyProductPublishInput(input: {
     throw new Error("Design file not found");
   }
 
+  const effectivePlacementData = resolveEffectivePlacementData(
+    input.draft.placementOverride,
+    template.defaultPlacement,
+  );
+  const printAreaByView = await resolvePrintAreaByView({
+    blueprintId: template.printifyBlueprintId,
+    views: effectivePlacementData ? resolvePlacementViews(effectivePlacementData) : ["front"],
+  });
+
   return {
     productId: input.productId,
     blueprintId: template.printifyBlueprintId,
@@ -1620,11 +1726,11 @@ async function resolvePrintifyProductPublishInput(input: {
     imageId,
     imageGroups,
     placementData:
-      resolveEffectivePlacementData(input.draft.placementOverride, template.defaultPlacement) ??
+      effectivePlacementData ??
       (targetDesign
         ? buildListingReadyPlacementData({
             design: { widthPx: targetDesign.width, heightPx: targetDesign.height },
-            printArea: DEFAULT_PRINT_AREA,
+            printArea: printAreaForView(printAreaByView, "front"),
             template: {
               productType: input.draft.productType,
               blueprintTitle: template.blueprintTitle,
@@ -1632,6 +1738,7 @@ async function resolvePrintifyProductPublishInput(input: {
             },
           })
         : defaultPlacementData()),
+    printAreaByView,
   };
 }
 
@@ -1655,6 +1762,7 @@ async function publishExistingPrintifyDraftProduct(input: {
     is_default?: boolean;
   }>;
   placementData: PlacementData;
+  printAreaByView?: PrintAreaByView;
   imageGroups?: Array<{ imageId: string; variantIds: number[] }>;
 }): Promise<{ printifyProductId: string }> {
   const { client, externalShopId } = await getClientForStore(input.storeId);
@@ -1675,6 +1783,7 @@ async function publishExistingPrintifyDraftProduct(input: {
     variants: input.variants,
     imageId,
     placementData: input.placementData,
+    printAreaByView: input.printAreaByView,
     title: input.title,
     description: input.description,
     imageGroups: input.imageGroups,

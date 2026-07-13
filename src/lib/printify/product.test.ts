@@ -75,6 +75,45 @@ test("buildPrintifyProductPayload includes one placeholder per enabled placement
   assert.equal("is_locked" in payload, false);
 });
 
+test("buildPrintifyProductPayload normalizes placement with per-view print areas", () => {
+  const payload = buildPrintifyProductPayload({
+    title: "Per-view placement",
+    description: "Description",
+    blueprintId: 1,
+    printProviderId: 2,
+    variantIds: [101],
+    imageId: "image",
+    placementData: {
+      version: "2.1" as const,
+      variants: {
+        _default: {
+          front: { ...DEFAULT_PLACEMENT, xMm: 10, yMm: 20, widthMm: 100, heightMm: 200, rotationDeg: 15 },
+          back: { ...DEFAULT_PLACEMENT, xMm: 10, yMm: 20, widthMm: 100, heightMm: 200, rotationDeg: 15 },
+        },
+      },
+    },
+    printAreaByView: {
+      front: { widthMm: 200, heightMm: 400, safeMarginMm: 3 },
+      back: { widthMm: 400, heightMm: 800, safeMarginMm: 3 },
+    },
+  });
+
+  const placeholders = (payload.print_areas as Array<{
+    placeholders: Array<{ position: string; images: Array<{ x: number; y: number; scale: number; angle: number }> }>;
+  }>)[0].placeholders;
+
+  assert.deepEqual(placeholders.map((placeholder) => ({
+    position: placeholder.position,
+    x: placeholder.images[0].x,
+    y: placeholder.images[0].y,
+    scale: placeholder.images[0].scale,
+    angle: placeholder.images[0].angle,
+  })), [
+    { position: "front", x: 0.3, y: 0.3, scale: 0.5, angle: 15 },
+    { position: "back", x: 0.15, y: 0.15, scale: 0.25, angle: 15 },
+  ]);
+});
+
 test("pollPrintifyMockups resolves when product images appear", async () => {
   let calls = 0;
   const client = {

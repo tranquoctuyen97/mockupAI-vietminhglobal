@@ -23,3 +23,11 @@ test("PM2 ecosystem includes a dedicated worker process", () => {
   assert.match(source, /args:\s*["']run worker["']/);
   assert.match(source, /NODE_ENV:\s*["']production["']/);
 });
+
+test("PM2 web and worker share the same absolute upload directory", () => {
+  const source = readFileSync(join(process.cwd(), "ecosystem.config.js"), "utf8");
+
+  assert.match(source, /const UPLOAD_DIR = process\.env\.UPLOAD_DIR \|\| path\.join\(__dirname,\s*"uploads"\)/);
+  assert.match(source, /name:\s*"mockupai"[\s\S]*UPLOAD_DIR/);
+  assert.match(source, /name:\s*"mockupai-worker"[\s\S]*UPLOAD_DIR/);
+});

@@ -1,4 +1,5 @@
 require("dotenv").config();
+const path = require("path");
 
 const AI_HUB_RUNTIME_HOME = process.env.AI_HUB_RUNTIME_HOME || "/tmp/ai-hub/codex-runtime/home";
 const AI_HUB_CODEX_WEB_REF =
@@ -11,6 +12,7 @@ const AI_HUB_GATEWAY_PORT = process.env.AI_HUB_GATEWAY_PORT || "8215";
 const CODEX_CLI_PATH = process.env.CODEX_CLI_PATH || "codex";
 const APP_PORT = process.env.PORT || "3000";
 const AI_HUB_APP_ORIGIN = process.env.AI_HUB_APP_ORIGIN || `http://127.0.0.1:${APP_PORT}`;
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, "uploads");
 
 module.exports = {
   apps: [
@@ -32,6 +34,7 @@ module.exports = {
         AI_HUB_MEMBERS_ROOT: process.env.AI_HUB_MEMBERS_ROOT || "/tmp/ai-hub/members",
         AI_HUB_SHARED_ROOT: process.env.AI_HUB_SHARED_ROOT || "/tmp/ai-hub/common",
         CODEX_CLI_PATH,
+        UPLOAD_DIR,
       },
       error_file: "./logs/pm2/mockupai-error.log",
       out_file: "./logs/pm2/mockupai-out.log",
@@ -57,7 +60,7 @@ module.exports = {
     },
     {
       name: "mockupai-worker",
-      script: "npm",
+      script: "pnpm",
       args: "run worker",
       cwd: ".",
       exec_mode: "fork",
@@ -66,6 +69,7 @@ module.exports = {
       max_memory_restart: "1G",
       env: {
         NODE_ENV: "production",
+        UPLOAD_DIR,
       },
       error_file: "./logs/pm2/mockupai-worker-error.log",
       out_file: "./logs/pm2/mockupai-worker-out.log",

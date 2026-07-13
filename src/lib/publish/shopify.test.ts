@@ -249,6 +249,16 @@ describe("Shopify productSet collections", () => {
   });
 });
 
+describe("publishToAllChannels export contract", () => {
+  const source = readFileSync(new URL("./shopify.ts", import.meta.url), "utf8");
+
+  it("exports the publication helper for Printify-first Shopify sync flow", () => {
+    assert.match(source, /export async function publishToAllChannels/);
+    assert.match(source, /publishablePublish/);
+    assert.match(source, /publications\(first:\s*50/);
+  });
+});
+
 describe("Shopify productSet inventory quantities", () => {
   const source = readFileSync(new URL("./shopify.ts", import.meta.url), "utf8");
 

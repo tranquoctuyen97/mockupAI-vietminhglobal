@@ -73,6 +73,15 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.ok(publishIndex < syncIndex, "Printify publish must happen before Shopify sync");
   });
 
+  it("does not let Printify sync mockup images to Shopify", () => {
+    const publishIndex = source.indexOf("await printifyClient.publishProduct(");
+    const publishPayloadEndIndex = source.indexOf("});", publishIndex);
+    const publishPayloadSource = source.slice(publishIndex, publishPayloadEndIndex);
+    assert.ok(publishIndex > -1, "Printify publishProduct should be called");
+    assert.match(publishPayloadSource, /images:\s*false/);
+    assert.doesNotMatch(publishPayloadSource, /images:\s*true/);
+  });
+
   it("extracts enabled Printify matrix and persists listing variants", () => {
     assert.match(source, /extractEnabledPrintifyVariantMatrix/);
     assert.match(source, /listingVariant\.deleteMany/);
@@ -101,6 +110,17 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.ok(categoryIndex < attachIndex, "category update should run before collection attach");
     assert.match(source, /Shopify category post-sync failed \(non-fatal\)/);
     assert.match(source, /productType:\s*draft\.template\?\.blueprintTitle\s*\?\?\s*draft\.productType/);
+  });
+
+  it("publishes the synced Shopify product to all publications before marking it active", () => {
+    const syncIndex = source.indexOf("await waitForShopifyProductSync(");
+    const publishChannelsIndex = source.indexOf("await publishToAllChannels(");
+    const activeUpdateIndex = source.indexOf('data: { status: "ACTIVE", publishedAt: new Date() }', publishChannelsIndex);
+    assert.ok(syncIndex > -1, "Shopify sync should be awaited");
+    assert.ok(publishChannelsIndex > syncIndex, "sales-channel publish should run after Shopify sync");
+    assert.ok(activeUpdateIndex > publishChannelsIndex, "listing should only become active after sales-channel publish");
+    assert.match(source, /Shopify sales-channel publish failed/);
+    assert.match(source, /status:\s*"PARTIAL_FAILURE"/);
   });
 
   it("uploads existing WebP mockup media to Shopify after sync without duplicating retries", () => {

@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import { DEFAULT_PRINT_AREA, type Placement, type PlacementData } from "../placement/types";
+import {
+  DEFAULT_PRINT_AREA,
+  type Placement,
+  type PlacementData,
+  type PrintArea,
+  type ViewKey,
+} from "../placement/types";
 import { resolvePlacement } from "../placement/resolver";
 import { getStorage } from "../storage/local-disk";
 import { resolvePlacementViews } from "../mockup/plan";
@@ -132,6 +138,7 @@ export function buildPrintifyProductPayload(input: {
   variants?: Array<{ id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean }>;
   imageId: string;
   placementData: PlacementData;
+  printAreaByView?: Partial<Record<ViewKey, PrintArea>>;
   tags?: string[];
   salesChannelCollections?: string[];
   imageGroups?: Array<{ imageId: string; variantIds: number[] }>;
@@ -139,12 +146,13 @@ export function buildPrintifyProductPayload(input: {
   function buildPlaceholders(imageId: string): Array<Record<string, unknown>> {
     return resolvePlacementViews(input.placementData).map((view) => {
       const placement = resolvePlacement(input.placementData, view);
+      const printArea = input.printAreaByView?.[view] ?? DEFAULT_PRINT_AREA;
       return {
         position: view,
         images: [
           {
             id: imageId,
-            ...mmToPrintifyCoords(placement ?? undefined),
+            ...mmToPrintifyCoords(placement ?? undefined, printArea),
           },
         ],
       };
@@ -197,6 +205,7 @@ export async function createOrUpdatePrintifyProduct(input: {
   variants?: Array<{ id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean }>;
   imageId: string;
   placementData: PlacementData;
+  printAreaByView?: Partial<Record<ViewKey, PrintArea>>;
   title: string;
   description: string;
   tags?: string[];
