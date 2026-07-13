@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  compositeRegionToPrintifyPlacement,
   computeCustomPrintAreaPx,
   computeFitRegion,
   computeListingReadyRegion,
@@ -68,6 +69,27 @@ test("computeListingReadyRegion — tall design → height capped at 66%", () =>
   const maxH = pa.height * 0.66; // 528
   assert.ok(r.height <= maxH + 1, `height ${r.height} should be <= ${maxH}`);
   assert.equal(isBadCompositeRegion(r, pa), false);
+});
+
+test("compositeRegionToPrintifyPlacement converts selected custom region to mm placement ratios", () => {
+  const printAreaPx = { x: 100, y: 50, width: 800, height: 1000 };
+  const printAreaMm = { widthMm: 240, heightMm: 300 };
+  const placement = compositeRegionToPrintifyPlacement(
+    { x: 260, y: 200, width: 400, height: 500, rotationDeg: 7 },
+    printAreaPx,
+    printAreaMm,
+  );
+
+  assert.deepEqual(placement, {
+    xMm: 48,
+    yMm: 45,
+    widthMm: 120,
+    heightMm: 150,
+    rotationDeg: 7,
+    lockAspect: true,
+    placementMode: "preserve",
+    mirrored: false,
+  });
 });
 
 // ─── computeFitRegion (Max Fit) ───────────────────────────────────────────────

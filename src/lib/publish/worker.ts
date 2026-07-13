@@ -12,6 +12,13 @@ import { decrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
 import { classifyColorHex, resolveColorGroups } from "@/lib/designs/color-classifier";
 import { getLatestJobByDraftDesignId } from "@/lib/mockup/multi-design";
+import { normalizeCompositeRegionPx, scaleCompositeRegionToImage } from "@/lib/mockup/custom-library";
+import {
+  compositeRegionToPrintifyPlacement,
+  computeCustomPrintAreaPx,
+  computeListingReadyRegion,
+  isBadCompositeRegion,
+} from "@/lib/mockup/placement-region";
 import { resolveEffectivePlacementData, resolvePlacementViews } from "@/lib/mockup/plan";
 import {
   isAllowedRemoteMockupUrl,
@@ -21,6 +28,7 @@ import {
 import { parseMockupSourceUrl } from "@/lib/mockup/source-url";
 import { buildListingReadyPlacementData } from "@/lib/placement/auto-place";
 import { resolvePlacement } from "@/lib/placement/resolver";
+import { createEmptyPlacementData, setPlacementForView } from "@/lib/placement/views";
 import {
   DEFAULT_PLACEMENT,
   DEFAULT_PRINT_AREA,
@@ -66,6 +74,7 @@ import { resolvePublishStrategy } from "./strategy";
 const MAX_RETRIES = 5;
 const BACKOFF_BASE_MS = 2000;
 const INTERNAL_TAG_DENYLIST = new Set(["mockupai", "draft-preview"]);
+const CUSTOM_MOCKUP_REFERENCE_PRINT_AREA = { widthMm: 340, heightMm: 420 };
 
 export function generateIdempotencyKey(draftId: string, tenantId: string, scope = ""): string {
   return createHash("sha256").update(`${draftId}|${tenantId}|${scope}`).digest("hex");
@@ -129,6 +138,71 @@ async function resolvePrintAreaByView(input: {
 
 function printAreaForView(printAreaByView: PrintAreaByView, view: ViewKey): PrintArea {
   return printAreaByView[view] ?? DEFAULT_PRINT_AREA;
+}
+
+function toPlacementView(view: string | null | undefined): ViewKey | null {
+  if (view === "front" || view === "back" || view === "sleeve_left" || view === "sleeve_right") {
+    return view;
+  }
+  return null;
+}
+
+async function resolveCustomMockupPlacementData(input: {
+  draftId: string;
+  colorIds: string[];
+  design: { width: number; height: number } | null | undefined;
+  printAreaByView: PrintAreaByView;
+}): Promise<PlacementData | null> {
+  if (!input.design || input.colorIds.length === 0) return null;
+
+  const picks = await prisma.wizardDraftMockupLibraryPick.findMany({
+    where: {
+      draftId: input.draftId,
+      colorId: { in: input.colorIds },
+    },
+    orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    include: {
+      templateMockupItem: {
+        include: { mockup: true },
+      },
+    },
+  });
+
+  for (const pick of picks) {
+    const mockup = pick.templateMockupItem.mockup;
+    const view = toPlacementView(mockup.view);
+    if (!view) continue;
+
+    const printAreaPx = computeCustomPrintAreaPx(
+      CUSTOM_MOCKUP_REFERENCE_PRINT_AREA,
+      mockup.width,
+      mockup.height,
+    );
+    const normalizedRegion = normalizeCompositeRegionPx(
+      pick.compositeRegionPx ?? mockup.compositeRegionPx,
+    );
+    const runtimeRegion = normalizedRegion
+      ? scaleCompositeRegionToImage(normalizedRegion, mockup.width, mockup.height)
+      : null;
+
+    const region =
+      runtimeRegion && !isBadCompositeRegion(runtimeRegion, printAreaPx)
+        ? runtimeRegion
+        : {
+            ...computeListingReadyRegion(printAreaPx, input.design.width, input.design.height),
+            rotationDeg: runtimeRegion?.rotationDeg ?? 0,
+          };
+
+    const placement = compositeRegionToPrintifyPlacement(
+      region,
+      printAreaPx,
+      printAreaForView(input.printAreaByView, view),
+    );
+
+    return setPlacementForView(createEmptyPlacementData(), view, placement);
+  }
+
+  return null;
 }
 
 type PrintifyTagsClient = {
@@ -838,11 +912,22 @@ export async function runPrintifyStage(
       blueprintId: blueprintIdForPlacement,
       views: effectivePlacementData ? resolvePlacementViews(effectivePlacementData) : ["front"],
     });
+    const customMockupPlacementData = !effectivePlacementData
+      ? await resolveCustomMockupPlacementData({
+          draftId: draft.id,
+          colorIds: draft.enabledColorIds ?? [],
+          design: targetDesign
+            ? { width: targetDesign.width, height: targetDesign.height }
+            : null,
+          printAreaByView,
+        })
+      : null;
 
     // Placement fallback chain (Guard 3): draft override → template default →
-    // listing-ready ratio default (artwork only, never the print area) → legacy.
+    // custom mockup region → listing-ready ratio default → legacy.
     const placementData =
       effectivePlacementData ??
+      customMockupPlacementData ??
       (targetDesign
         ? buildListingReadyPlacementData({
           design: { widthPx: targetDesign.width, heightPx: targetDesign.height },
@@ -1716,6 +1801,16 @@ async function resolvePrintifyProductPublishInput(input: {
     blueprintId: template.printifyBlueprintId,
     views: effectivePlacementData ? resolvePlacementViews(effectivePlacementData) : ["front"],
   });
+  const customMockupPlacementData = !effectivePlacementData
+    ? await resolveCustomMockupPlacementData({
+        draftId: input.draft.id,
+        colorIds: input.draft.enabledColorIds ?? [],
+        design: targetDesign
+          ? { width: targetDesign.width, height: targetDesign.height }
+          : null,
+        printAreaByView,
+      })
+    : null;
 
   return {
     productId: input.productId,
@@ -1727,6 +1822,7 @@ async function resolvePrintifyProductPublishInput(input: {
     imageGroups,
     placementData:
       effectivePlacementData ??
+      customMockupPlacementData ??
       (targetDesign
         ? buildListingReadyPlacementData({
             design: { widthPx: targetDesign.width, heightPx: targetDesign.height },

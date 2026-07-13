@@ -140,6 +140,17 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.doesNotMatch(pairLoopSource, /enabledSet\.has\(variant\.variantId\).*continue/s);
   });
 
+  it("derives Printify placement from selected custom mockup regions before ratio fallback", () => {
+    assert.match(source, /resolveCustomMockupPlacementData/);
+    const customPlacementIndex = source.indexOf("await resolveCustomMockupPlacementData(");
+    const ratioFallbackIndex = source.indexOf("buildListingReadyPlacementData", customPlacementIndex);
+    assert.ok(customPlacementIndex > -1, "custom mockup placement resolver should be used");
+    assert.ok(
+      ratioFallbackIndex > customPlacementIndex,
+      "custom mockup placement should be attempted before listing-ready ratio fallback",
+    );
+  });
+
   it("does not let transient Printify create recovery leave jobs stuck running", () => {
     assert.match(source, /Failed to check recent Printify product after transient create error/);
     assert.match(source, /where:\s*\{\s*id:\s*printifyJob\.id\s*\}[\s\S]*status:\s*"FAILED"[\s\S]*completedAt:\s*new Date\(\)/);

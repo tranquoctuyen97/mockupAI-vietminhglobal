@@ -67,6 +67,32 @@ export function computeCustomPrintAreaPx(
   };
 }
 
+export function compositeRegionToPrintifyPlacement(
+  region: RawRegion & { rotationDeg?: number },
+  printAreaPx: PrintAreaBounds,
+  printAreaMm: PrintAreaMm,
+) {
+  const xRatio = (region.x - printAreaPx.x) / Math.max(1, printAreaPx.width);
+  const yRatio = (region.y - printAreaPx.y) / Math.max(1, printAreaPx.height);
+  const widthRatio = region.width / Math.max(1, printAreaPx.width);
+  const heightRatio = region.height / Math.max(1, printAreaPx.height);
+
+  return {
+    xMm: round2(xRatio * printAreaMm.widthMm),
+    yMm: round2(yRatio * printAreaMm.heightMm),
+    widthMm: round2(widthRatio * printAreaMm.widthMm),
+    heightMm: round2(heightRatio * printAreaMm.heightMm),
+    rotationDeg: region.rotationDeg ?? 0,
+    lockAspect: true,
+    placementMode: "preserve" as const,
+    mirrored: false,
+  };
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 // ─── Region Computation ────────────────────────────────────────────────────────
 
 /**
