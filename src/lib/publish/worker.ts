@@ -63,6 +63,7 @@ import {
   productHasWebpMedia,
   publishToAllChannels,
   publishToShopify,
+  reorderProductOptionsByPrimaryColor,
   reorderPrimaryMedia,
   updateProductCategory,
   uploadProductImages,
@@ -1328,6 +1329,7 @@ async function runPrintifyShopifyChannelPublish(input: {
   }
 
   const shopifyClient = new ShopifyClient(store.shopifyDomain!, shopifyAccessToken);
+  const primaryColorName = pickPrimaryColorName(mockupImages);
 
   try {
     const channelResult = await publishToAllChannels(shopifyClient, syncMatch.shopifyProductId);
@@ -1394,9 +1396,32 @@ async function runPrintifyShopifyChannelPublish(input: {
   }
 
   try {
+    await reorderProductOptionsByPrimaryColor({
+      client: shopifyClient,
+      productId: syncMatch.shopifyProductId,
+      primaryColorName,
+    });
+  } catch (err) {
+    const message =
+      err instanceof Error
+        ? `Shopify color option reorder failed: ${err.message}`
+        : "Shopify color option reorder failed";
+    await prisma.publishJob.update({
+      where: { id: shopifyJob.id },
+      data: {
+        status: "FAILED",
+        lastError: message,
+        completedAt: new Date(),
+      },
+    });
+    await prisma.listing.update({ where: { id: listingId }, data: { status: "PARTIAL_FAILURE" } });
+    emitEvent("publish.complete", { status: "PARTIAL_FAILURE", reason: message });
+    return;
+  }
+
+  try {
     const alreadyHasWebp = await productHasWebpMedia(shopifyClient, syncMatch.shopifyProductId);
     if (!alreadyHasWebp && mockupImages.length > 0) {
-      const primaryColorName = pickPrimaryColorName(mockupImages);
       const orderedMockupImages = orderMockupImagesByPrimary(
         mockupImages,
         listingColorNames,

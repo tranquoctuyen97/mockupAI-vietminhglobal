@@ -4,6 +4,8 @@ import { describe, it } from "node:test";
 import {
   buildProductTags,
   normalizeProductType,
+  orderOptionValuesByPrimary,
+  reorderProductOptionsByPrimaryColor,
   resolveProductCollectionIds,
   updateProductCategory,
 } from "./shopify";
@@ -256,6 +258,166 @@ describe("publishToAllChannels export contract", () => {
     assert.match(source, /export async function publishToAllChannels/);
     assert.match(source, /publishablePublish/);
     assert.match(source, /publications\(first:\s*50/);
+  });
+});
+
+describe("reorderProductOptionsByPrimaryColor", () => {
+  it("moves the primary color option value first and preserves other option order", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const client = {
+      graphql: async (query: string, variables: Record<string, unknown>) => {
+        calls.push({ query, variables });
+        if (query.includes("ProductOptionsForReorder")) {
+          return {
+            product: {
+              options: [
+                {
+                  id: "gid://shopify/ProductOption/1",
+                  name: "Color",
+                  position: 1,
+                  values: ["Athletic Heather", "Black", "Pink"],
+                  optionValues: [
+                    {
+                      id: "gid://shopify/ProductOptionValue/1",
+                      name: "Athletic Heather",
+                      hasVariants: true,
+                    },
+                    { id: "gid://shopify/ProductOptionValue/2", name: "Black", hasVariants: true },
+                    { id: "gid://shopify/ProductOptionValue/3", name: "Pink", hasVariants: true },
+                  ],
+                },
+                {
+                  id: "gid://shopify/ProductOption/2",
+                  name: "Size",
+                  position: 2,
+                  values: ["S", "M"],
+                  optionValues: [
+                    { id: "gid://shopify/ProductOptionValue/4", name: "S", hasVariants: true },
+                    { id: "gid://shopify/ProductOptionValue/5", name: "M", hasVariants: true },
+                  ],
+                },
+              ],
+            },
+          };
+        }
+        if (query.includes("ReorderProductOptions")) {
+          return {
+            productOptionsReorder: {
+              product: { id: variables.productId },
+              userErrors: [],
+            },
+          };
+        }
+        throw new Error(`Unexpected query/mutation: ${query}`);
+      },
+    };
+
+    assert.equal(
+      await reorderProductOptionsByPrimaryColor({
+        client,
+        productId: "gid://shopify/Product/123",
+        primaryColorName: "Pink",
+      }),
+      true,
+    );
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[1].variables, {
+      productId: "gid://shopify/Product/123",
+      options: [
+        {
+          name: "Color",
+          values: [{ name: "Pink" }, { name: "Athletic Heather" }, { name: "Black" }],
+        },
+        { name: "Size" },
+      ],
+    });
+  });
+
+  it("no-ops when the primary color is already first", async () => {
+    const calls: string[] = [];
+    const client = {
+      graphql: async (query: string) => {
+        calls.push(query);
+        return {
+          product: {
+            options: [
+              {
+                name: "Color",
+                values: ["Pink", "Black"],
+                optionValues: [
+                  { name: "Pink", hasVariants: true },
+                  { name: "Black", hasVariants: true },
+                ],
+              },
+            ],
+          },
+        };
+      },
+    };
+
+    assert.equal(
+      await reorderProductOptionsByPrimaryColor({
+        client,
+        productId: "gid://shopify/Product/123",
+        primaryColorName: "pink",
+      }),
+      false,
+    );
+    assert.equal(calls.length, 1);
+  });
+
+  it("throws productOptionsReorder user errors", async () => {
+    const client = {
+      graphql: async (query: string) => {
+        if (query.includes("ProductOptionsForReorder")) {
+          return {
+            product: {
+              options: [
+                {
+                  name: "Color",
+                  values: ["Black", "Pink"],
+                  optionValues: [
+                    { name: "Black", hasVariants: true },
+                    { name: "Pink", hasVariants: true },
+                  ],
+                },
+              ],
+            },
+          };
+        }
+        return {
+          productOptionsReorder: {
+            userErrors: [{ field: ["options", "0"], message: "Invalid option order" }],
+          },
+        };
+      },
+    };
+
+    await assert.rejects(
+      () =>
+        reorderProductOptionsByPrimaryColor({
+          client,
+          productId: "gid://shopify/Product/123",
+          primaryColorName: "Pink",
+        }),
+      /Shopify productOptionsReorder failed: options\.0: Invalid option order/,
+    );
+  });
+});
+
+describe("orderOptionValuesByPrimary", () => {
+  it("moves the matching value first case-insensitively", () => {
+    assert.deepEqual(
+      orderOptionValuesByPrimary(["Athletic Heather", "Black", "Pink"], "pink"),
+      ["Pink", "Athletic Heather", "Black"],
+    );
+  });
+
+  it("returns the input order when the primary value is missing", () => {
+    assert.deepEqual(
+      orderOptionValuesByPrimary(["Athletic Heather", "Black"], "Pink"),
+      ["Athletic Heather", "Black"],
+    );
   });
 });
 

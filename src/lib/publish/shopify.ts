@@ -815,6 +815,116 @@ export async function reorderPrimaryMedia(
   }
 }
 
+type ProductOptionForReorder = {
+  id?: string;
+  name: string;
+  optionValues?: Array<{ id?: string; name: string; hasVariants?: boolean }>;
+  values?: string[];
+};
+
+function normalizeOptionName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function optionValueNames(option: ProductOptionForReorder): string[] {
+  if (Array.isArray(option.optionValues) && option.optionValues.length > 0) {
+    return option.optionValues.map((value) => value.name).filter((name) => name.trim().length > 0);
+  }
+  return (option.values ?? []).filter((name) => name.trim().length > 0);
+}
+
+export function orderOptionValuesByPrimary(
+  values: string[],
+  primaryValueName: string | null | undefined,
+): string[] {
+  if (!primaryValueName) return values;
+  const primaryKey = normalizeOptionName(primaryValueName);
+  return values
+    .map((value, index) => ({ value, index }))
+    .sort((a, b) => {
+      const ar = normalizeOptionName(a.value) === primaryKey ? -1 : a.index;
+      const br = normalizeOptionName(b.value) === primaryKey ? -1 : b.index;
+      return ar - br;
+    })
+    .map((entry) => entry.value);
+}
+
+export async function reorderProductOptionsByPrimaryColor(input: {
+  client: CollectionResolverClient;
+  productId: string;
+  primaryColorName: string | null | undefined;
+}): Promise<boolean> {
+  if (!input.primaryColorName) return false;
+
+  const query = `
+    query ProductOptionsForReorder($id: ID!) {
+      product(id: $id) {
+        id
+        options {
+          id
+          name
+          position
+          values
+          optionValues {
+            id
+            name
+            hasVariants
+          }
+        }
+      }
+    }
+  `;
+  const data = (await input.client.graphql(query, { id: input.productId })) as {
+    product: { options: ProductOptionForReorder[] } | null;
+  };
+  const options = data.product?.options ?? [];
+  if (options.length === 0) return false;
+
+  const colorOption = options.find((option) => normalizeOptionName(option.name) === "color");
+  if (!colorOption) return false;
+
+  const currentColorValues = optionValueNames(colorOption);
+  const reorderedColorValues = orderOptionValuesByPrimary(
+    currentColorValues,
+    input.primaryColorName,
+  );
+  const changed = reorderedColorValues.some((value, index) => value !== currentColorValues[index]);
+  if (!changed) return false;
+
+  const mutation = `
+    mutation ReorderProductOptions($productId: ID!, $options: [OptionReorderInput!]!) {
+      productOptionsReorder(productId: $productId, options: $options) {
+        product { id }
+        userErrors { field message code }
+      }
+    }
+  `;
+  const mutationData = (await input.client.graphql(mutation, {
+    productId: input.productId,
+    options: options.map((option) => ({
+      name: option.name,
+      ...(normalizeOptionName(option.name) === "color"
+        ? { values: reorderedColorValues.map((name) => ({ name })) }
+        : {}),
+    })),
+  })) as {
+    productOptionsReorder: {
+      userErrors: Array<{ field?: string | string[] | null; message: string; code?: string | null }>;
+    };
+  };
+
+  const errors = mutationData.productOptionsReorder?.userErrors ?? [];
+  if (errors.length > 0) {
+    const messages = errors.map((error) => {
+      const field = Array.isArray(error.field) ? error.field.join(".") : error.field;
+      return field ? `${field}: ${error.message}` : error.message;
+    });
+    throw new Error(`Shopify productOptionsReorder failed: ${messages.join("; ")}`);
+  }
+
+  return true;
+}
+
 export async function updateProductCategory(input: {
   client: CollectionResolverClient;
   productId: string;
