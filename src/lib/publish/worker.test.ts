@@ -147,6 +147,18 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.match(source, /Shopify color option reorder failed/);
   });
 
+  it("optionally unpublishes Printify after Shopify sync while keeping Shopify active", () => {
+    const mappingIndex = source.indexOf("await persistPrintifyShopifyVariantMapping(");
+    const unpublishIndex = source.indexOf("await printifyClient.unpublishProduct(", mappingIndex);
+    const activeUpdateIndex = source.indexOf('data: { status: "ACTIVE", publishedAt: new Date() }', unpublishIndex);
+    assert.ok(mappingIndex > -1, "variant mapping should be persisted");
+    assert.ok(unpublishIndex > mappingIndex, "Printify unpublish should run after mapping is persisted");
+    assert.ok(activeUpdateIndex > unpublishIndex, "Shopify/listing ACTIVE finalization should remain after unpublish");
+    assert.match(source, /store\.printifyShop\?\.unpublishAfterShopifySync/);
+    assert.match(source, /Printify post-sync unpublish failed \(non-fatal\)/);
+    assert.doesNotMatch(source, /status:\s*"DRAFT"/);
+  });
+
   it("maps paired light and dark print areas across the full Printify variant catalog", () => {
     const resolverIndex = source.indexOf("async function resolvePrintifyProductPublishInput");
     const pairLoopIndex = source.indexOf("for (const variant of cachedVariants)", resolverIndex);

@@ -259,6 +259,16 @@ export class PrintifyClient {
       },
     );
   }
+
+  async unpublishProduct(shopId: number, productId: string): Promise<unknown> {
+    return this.request<unknown>(
+      `/shops/${shopId}/products/${productId}/unpublish.json`,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
+    );
+  }
 }
 
 // Error classes

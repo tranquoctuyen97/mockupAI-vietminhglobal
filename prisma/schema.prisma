@@ -209,14 +209,15 @@ enum PrintifyAccountStatus {
 }
 
 model PrintifyShop {
-  id                String   @id @default(cuid())
-  printifyAccountId String   @map("printify_account_id")
-  externalShopId    Int      @map("external_shop_id") // Printify's numeric shop ID
-  title             String
-  salesChannel      String?  @map("sales_channel") // shopify|custom|etsy
-  externalDomain    String?  @map("external_domain") // domain if native Shopify
-  disconnected      Boolean  @default(false)
-  syncedAt          DateTime @default(now()) @map("synced_at")
+  id                         String   @id @default(cuid())
+  printifyAccountId          String   @map("printify_account_id")
+  externalShopId             Int      @map("external_shop_id") // Printify's numeric shop ID
+  title                      String
+  salesChannel               String?  @map("sales_channel") // shopify|custom|etsy
+  externalDomain             String?  @map("external_domain") // domain if native Shopify
+  disconnected               Boolean  @default(false)
+  unpublishAfterShopifySync Boolean  @default(false) @map("unpublish_after_shopify_sync")
+  syncedAt                   DateTime @default(now()) @map("synced_at")
 
   account PrintifyAccount @relation(fields: [printifyAccountId], references: [id], onDelete: Cascade)
   stores  Store[] // reverse relation — shops linked by stores

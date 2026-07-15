@@ -27,10 +27,51 @@ export async function POST(
   }
 
   const body = await request.json();
-  const { printifyShopId } = body as { printifyShopId: string | null };
+  const { printifyShopId, unpublishAfterShopifySync } = body as {
+    printifyShopId?: string | null;
+    unpublishAfterShopifySync?: boolean;
+  };
 
   try {
-    if (printifyShopId) {
+    if (typeof unpublishAfterShopifySync === "boolean") {
+      const linkedStore = await prisma.store.findFirst({
+        where: { id, tenantId: session.tenantId },
+        include: {
+          printifyShop: {
+            include: { account: { select: { tenantId: true } } },
+          },
+        },
+      });
+      const linkedShop = linkedStore?.printifyShop;
+      if (!linkedShop || linkedShop.account.tenantId !== session.tenantId) {
+        return NextResponse.json({ error: "Printify shop is not linked" }, { status: 400 });
+      }
+      const isShopifyChannel =
+        linkedShop.salesChannel?.trim().toLowerCase() === "shopify" &&
+        linkedShop.disconnected !== true;
+      if (unpublishAfterShopifySync && !isShopifyChannel) {
+        return NextResponse.json(
+          { error: "This setting is only available for active Printify Shopify-channel shops" },
+          { status: 400 },
+        );
+      }
+
+      await prisma.printifyShop.update({
+        where: { id: linkedShop.id },
+        data: { unpublishAfterShopifySync },
+      });
+
+      const reqInfo = getRequestInfo(request);
+      await logAudit({
+        tenantId: session.tenantId,
+        actorUserId: session.id,
+        action: "printify_shop.unpublish_after_shopify_sync.updated",
+        resourceType: "store",
+        resourceId: id,
+        metadata: { printifyShopId: linkedShop.id, unpublishAfterShopifySync },
+        ...reqInfo,
+      });
+    } else if (printifyShopId) {
       // Link
       await linkPrintifyShop(id, printifyShopId, session.tenantId);
 
@@ -44,7 +85,7 @@ export async function POST(
         metadata: { printifyShopId },
         ...reqInfo,
       });
-    } else {
+    } else if (printifyShopId === null) {
       // Unlink
       await unlinkPrintifyShop(id);
 
@@ -57,6 +98,8 @@ export async function POST(
         resourceId: id,
         ...reqInfo,
       });
+    } else {
+      return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
     }
 
     return NextResponse.json({ success: true });

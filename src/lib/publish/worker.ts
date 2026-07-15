@@ -1457,6 +1457,30 @@ async function runPrintifyShopifyChannelPublish(input: {
     variantsBySku: syncMatch.variantsBySku,
   });
 
+  if (store.printifyShop?.unpublishAfterShopifySync) {
+    try {
+      await printifyClient.unpublishProduct(externalShopId, printifyProductResult.productId);
+      emitEvent("publish.printify.unpublished", {
+        printifyProductId: printifyProductResult.productId,
+        shopifyProductId: syncMatch.shopifyProductId,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[PublishWorker] Printify post-sync unpublish failed (non-fatal):", {
+        listingId,
+        storeId: store.id,
+        printifyProductId: printifyProductResult.productId,
+        shopifyProductId: syncMatch.shopifyProductId,
+        error: message,
+      });
+      emitEvent("publish.printify.unpublish_failed", {
+        printifyProductId: printifyProductResult.productId,
+        shopifyProductId: syncMatch.shopifyProductId,
+        error: message,
+      });
+    }
+  }
+
   await prisma.publishJob.update({
     where: { id: shopifyJob.id },
     data: { status: "SUCCEEDED", completedAt: new Date(), lastError: null },

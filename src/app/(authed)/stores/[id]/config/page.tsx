@@ -95,6 +95,13 @@ interface StoreDetail {
   shopifyDomain: string;
   printifyShopId: string | null;
   printifyShopTitle?: string;
+  printifyShop?: {
+    id: string;
+    title: string;
+    salesChannel: string | null;
+    disconnected: boolean;
+    unpublishAfterShopifySync: boolean;
+  } | null;
   status: string;
   defaultPriceUsd: number | string;
   publishMode: string;
@@ -393,7 +400,13 @@ function StoreConfigContent() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "printify" && <PrintifySection store={store} onSave={() => refreshAndGoTo("templates")} />}
+      {activeTab === "printify" && (
+        <PrintifySection
+          store={store}
+          onSave={() => refreshAndGoTo("templates")}
+          onRefreshSettings={() => fetchStore({ silent: true })}
+        />
+      )}
       {activeTab === "templates" && <TemplatesSection store={store} onRefreshStore={fetchStore} />}
       {activeTab === "overview" && <OverviewTab store={store} onRefresh={fetchStore} onGoToTab={setActiveTab} />}
     </div>
@@ -565,11 +578,24 @@ function OverviewTab({
 }
 
 /* ========== Printify Tab — Link a Printify shop to this store ========== */
-function PrintifySection({ store, onSave }: { store: StoreDetail; onSave: () => void }) {
+function PrintifySection({
+  store,
+  onSave,
+  onRefreshSettings,
+}: {
+  store: StoreDetail;
+  onSave: () => void;
+  onRefreshSettings: () => Promise<any>;
+}) {
   const [shops, setShops] = useState<Array<{ id: string; title: string; externalShopId: number; account: { nickname: string } }>>([]);
   const [loading, setLoading] = useState(false);
   const [linking, setLinking] = useState(false);
+  const [savingSetting, setSavingSetting] = useState(false);
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
+  const linkedPrintifyShop = store.printifyShop;
+  const isShopifyChannel =
+    linkedPrintifyShop?.salesChannel?.trim().toLowerCase() === "shopify" &&
+    linkedPrintifyShop.disconnected !== true;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -632,6 +658,26 @@ function PrintifySection({ store, onSave }: { store: StoreDetail; onSave: () => 
     }
   }
 
+  async function handleUnpublishAfterSyncChange(enabled: boolean) {
+    setSavingSetting(true);
+    try {
+      const res = await fetch(`/api/stores/${store.id}/printify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unpublishAfterShopifySync: enabled }),
+      });
+      if (res.ok) {
+        toast.success("Đã lưu cài đặt Printify");
+        await onRefreshSettings();
+      } else {
+        const e = await res.json();
+        toast.error(e.error || "Lỗi lưu cài đặt");
+      }
+    } finally {
+      setSavingSetting(false);
+    }
+  }
+
   // Already linked
   if (store.printifyShopId) {
     return (
@@ -641,7 +687,10 @@ function PrintifySection({ store, onSave }: { store: StoreDetail; onSave: () => 
           <div className="flex items-center justify-between">
             <div>
               <div style={{ fontWeight: 700 }}>{store.printifyShopTitle || `Shop #${store.printifyShopId}`}</div>
-              <div style={{ fontSize: "0.8rem", opacity: 0.5, marginTop: 4 }}>Đã kết nối</div>
+              <div style={{ fontSize: "0.8rem", opacity: 0.5, marginTop: 4 }}>
+                Đã kết nối
+                {linkedPrintifyShop?.salesChannel ? ` · ${linkedPrintifyShop.salesChannel}` : ""}
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <CheckCircle2 size={18} style={{ color: "var(--color-wise-green)" }} />
@@ -649,6 +698,37 @@ function PrintifySection({ store, onSave }: { store: StoreDetail; onSave: () => 
                 {linking ? <Loader2 size={12} className="animate-spin" /> : null} Ngắt kết nối
               </button>
             </div>
+          </div>
+          <div style={{ borderTop: "1px solid var(--border-default)", marginTop: 20, paddingTop: 18 }}>
+            <label
+              className="flex items-start gap-3"
+              style={{
+                cursor: isShopifyChannel && !savingSetting ? "pointer" : "not-allowed",
+                opacity: isShopifyChannel ? 1 : 0.55,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={Boolean(linkedPrintifyShop?.unpublishAfterShopifySync)}
+                disabled={!isShopifyChannel || savingSetting}
+                onChange={(event) => handleUnpublishAfterSyncChange(event.currentTarget.checked)}
+                style={{ marginTop: 3 }}
+              />
+              <span>
+                <span style={{ display: "block", fontWeight: 700, fontSize: "0.9rem" }}>
+                  Unpublish in Printify after sync
+                  {savingSetting ? <Loader2 size={12} className="animate-spin" style={{ marginLeft: 8, display: "inline" }} /> : null}
+                </span>
+                <span style={{ display: "block", fontSize: "0.78rem", opacity: 0.6, marginTop: 4, lineHeight: 1.45 }}>
+                  Keep Shopify live, then mark the Printify product unpublished.
+                </span>
+                {!isShopifyChannel ? (
+                  <span style={{ display: "block", fontSize: "0.75rem", color: "#b45309", marginTop: 6 }}>
+                    Setting này chỉ dùng cho Printify shop có sales channel Shopify.
+                  </span>
+                ) : null}
+              </span>
+            </label>
           </div>
         </div>
       </div>

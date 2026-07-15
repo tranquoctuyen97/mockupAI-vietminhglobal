@@ -32,6 +32,7 @@ export async function GET(
   const store = await prisma.store.findUnique({
     where: { id, tenantId: session.tenantId },
     include: {
+      printifyShop: true,
       colors: { orderBy: { sortOrder: "asc" } },
       templates: {
         orderBy: { sortOrder: "asc" },
