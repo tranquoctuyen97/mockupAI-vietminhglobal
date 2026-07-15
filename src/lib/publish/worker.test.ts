@@ -132,6 +132,21 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.match(source, /Shopify WebP media post-sync failed \(non-fatal\)/);
   });
 
+  it("uses one primary color for synced Shopify option order and media order", () => {
+    const syncIndex = source.indexOf("await waitForShopifyProductSync(");
+    const primaryIndex = source.indexOf(
+      "const primaryColorName = pickPrimaryColorName(mockupImages)",
+      syncIndex,
+    );
+    const optionReorderIndex = source.indexOf("await reorderProductOptionsByPrimaryColor(", primaryIndex);
+    const mediaOrderIndex = source.indexOf("orderMockupImagesByPrimary(", optionReorderIndex);
+    assert.ok(primaryIndex > syncIndex, "primary color should be selected after Shopify sync");
+    assert.ok(optionReorderIndex > primaryIndex, "Color option values should use the selected primary color");
+    assert.ok(mediaOrderIndex > optionReorderIndex, "media ordering should use the same primary color");
+    assert.match(source, /primaryColorName,\s*\}\);/);
+    assert.match(source, /Shopify color option reorder failed/);
+  });
+
   it("maps paired light and dark print areas across the full Printify variant catalog", () => {
     const resolverIndex = source.indexOf("async function resolvePrintifyProductPublishInput");
     const pairLoopIndex = source.indexOf("for (const variant of cachedVariants)", resolverIndex);
