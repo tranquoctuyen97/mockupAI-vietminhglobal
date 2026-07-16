@@ -60,16 +60,13 @@ import { publishToPrintify } from "./printify";
 import { waitForShopifyProductSync, type ShopifySyncMatch } from "./shopify-sync";
 import {
   attachProductToManualCollections,
-  productHasWebpMedia,
   publishToAllChannels,
   publishToShopify,
-  reorderProductOptionsByPrimaryColor,
-  reorderPrimaryMedia,
   updateProductCategory,
-  uploadProductImages,
   type ShopifyMockupImage,
   type ShopifyVariantInput,
 } from "./shopify";
+import { repairAndVerifyShopifyPostSync } from "./shopify-post-sync";
 import { resolvePublishStrategy } from "./strategy";
 
 const MAX_RETRIES = 5;
@@ -139,6 +136,24 @@ async function resolvePrintAreaByView(input: {
 
 function printAreaForView(printAreaByView: PrintAreaByView, view: ViewKey): PrintArea {
   return printAreaByView[view] ?? DEFAULT_PRINT_AREA;
+}
+
+function buildFullWidthPlacementData(input: {
+  printArea: PrintArea;
+  view?: ViewKey;
+}): PlacementData {
+  const view = input.view ?? "front";
+  return setPlacementForView(createEmptyPlacementData(), view, {
+    xMm: 0,
+    yMm: 0,
+    widthMm: input.printArea.widthMm,
+    heightMm: input.printArea.heightMm,
+    rotationDeg: 0,
+    lockAspect: false,
+    placementMode: "stretch",
+    mirrored: false,
+    presetKey: "full-width",
+  });
 }
 
 function toPlacementView(view: string | null | undefined): ViewKey | null {
@@ -1396,16 +1411,24 @@ async function runPrintifyShopifyChannelPublish(input: {
   }
 
   try {
-    await reorderProductOptionsByPrimaryColor({
+    const orderedMockupImages = orderMockupImagesByPrimary(
+      mockupImages,
+      listingColorNames,
+      primaryColorName,
+    );
+    await repairAndVerifyShopifyPostSync({
       client: shopifyClient,
       productId: syncMatch.shopifyProductId,
+      printifyRows,
+      mockupImages: orderedMockupImages,
       primaryColorName,
+      sizesInOrder: draft.enabledSizes ?? [],
     });
   } catch (err) {
     const message =
       err instanceof Error
-        ? `Shopify color option reorder failed: ${err.message}`
-        : "Shopify color option reorder failed";
+        ? `Shopify post-sync option/media verification failed: ${err.message}`
+        : "Shopify post-sync option/media verification failed";
     await prisma.publishJob.update({
       where: { id: shopifyJob.id },
       data: {
@@ -1417,36 +1440,6 @@ async function runPrintifyShopifyChannelPublish(input: {
     await prisma.listing.update({ where: { id: listingId }, data: { status: "PARTIAL_FAILURE" } });
     emitEvent("publish.complete", { status: "PARTIAL_FAILURE", reason: message });
     return;
-  }
-
-  try {
-    const alreadyHasWebp = await productHasWebpMedia(shopifyClient, syncMatch.shopifyProductId);
-    if (!alreadyHasWebp && mockupImages.length > 0) {
-      const orderedMockupImages = orderMockupImagesByPrimary(
-        mockupImages,
-        listingColorNames,
-        primaryColorName,
-      );
-      const uploadedMedia = await uploadProductImages(
-        shopifyClient,
-        syncMatch.shopifyProductId,
-        orderedMockupImages,
-      );
-      if (uploadedMedia.length > 0 && primaryColorName) {
-        const primaryMedia = uploadedMedia.find(
-          (media) => media.colorName?.toLowerCase() === primaryColorName.toLowerCase(),
-        );
-        if (primaryMedia) {
-          await reorderPrimaryMedia(shopifyClient, syncMatch.shopifyProductId, primaryMedia.mediaId);
-        }
-      }
-    }
-  } catch (err) {
-    console.warn("[PublishWorker] Shopify WebP media post-sync failed (non-fatal):", {
-      listingId,
-      shopifyProductId: syncMatch.shopifyProductId,
-      error: err instanceof Error ? err.message : String(err),
-    });
   }
 
   await persistPrintifyShopifyVariantMapping({
@@ -1842,24 +1835,13 @@ async function resolvePrintifyProductPublishInput(input: {
     throw new Error("Design file not found");
   }
 
-  const effectivePlacementData = resolveEffectivePlacementData(
-    input.draft.placementOverride,
-    template.defaultPlacement,
-  );
   const printAreaByView = await resolvePrintAreaByView({
     blueprintId: template.printifyBlueprintId,
-    views: effectivePlacementData ? resolvePlacementViews(effectivePlacementData) : ["front"],
+    views: ["front"],
   });
-  const customMockupPlacementData = !effectivePlacementData
-    ? await resolveCustomMockupPlacementData({
-        draftId: input.draft.id,
-        colorIds: input.draft.enabledColorIds ?? [],
-        design: targetDesign
-          ? { width: targetDesign.width, height: targetDesign.height }
-          : null,
-        printAreaByView,
-      })
-    : null;
+  const placementData = buildFullWidthPlacementData({
+    printArea: printAreaForView(printAreaByView, "front"),
+  });
 
   return {
     productId: input.productId,
@@ -1869,20 +1851,7 @@ async function resolvePrintifyProductPublishInput(input: {
     variants,
     imageId,
     imageGroups,
-    placementData:
-      effectivePlacementData ??
-      customMockupPlacementData ??
-      (targetDesign
-        ? buildListingReadyPlacementData({
-            design: { widthPx: targetDesign.width, heightPx: targetDesign.height },
-            printArea: printAreaForView(printAreaByView, "front"),
-            template: {
-              productType: input.draft.productType,
-              blueprintTitle: template.blueprintTitle,
-              blueprintBrand: template.blueprintBrand,
-            },
-          })
-        : defaultPlacementData()),
+    placementData,
     printAreaByView,
   };
 }

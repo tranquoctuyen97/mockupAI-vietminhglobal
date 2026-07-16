@@ -123,13 +123,14 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.match(source, /status:\s*"PARTIAL_FAILURE"/);
   });
 
-  it("uploads existing WebP mockup media to Shopify after sync without duplicating retries", () => {
+  it("repairs and verifies Shopify options and media after sync", () => {
     const syncIndex = source.indexOf("await waitForShopifyProductSync(");
-    const hasWebpIndex = source.indexOf("await productHasWebpMedia(");
-    const uploadIndex = source.indexOf("await uploadProductImages(");
-    assert.ok(hasWebpIndex > syncIndex, "WebP check should run after Shopify sync");
-    assert.ok(uploadIndex > hasWebpIndex, "WebP upload should run after idempotency check");
-    assert.match(source, /Shopify WebP media post-sync failed \(non-fatal\)/);
+    const repairIndex = source.indexOf("await repairAndVerifyShopifyPostSync(", syncIndex);
+    const mappingIndex = source.indexOf("await persistPrintifyShopifyVariantMapping(", repairIndex);
+    assert.ok(repairIndex > syncIndex, "post-sync repair should run after Shopify sync");
+    assert.ok(mappingIndex > repairIndex, "variant mapping should persist only after Shopify verification");
+    assert.match(source, /Shopify post-sync option\/media verification failed/);
+    assert.match(source, /status:\s*"PARTIAL_FAILURE"/);
   });
 
   it("uses one primary color for synced Shopify option order and media order", () => {
@@ -138,13 +139,13 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
       "const primaryColorName = pickPrimaryColorName(mockupImages)",
       syncIndex,
     );
-    const optionReorderIndex = source.indexOf("await reorderProductOptionsByPrimaryColor(", primaryIndex);
-    const mediaOrderIndex = source.indexOf("orderMockupImagesByPrimary(", optionReorderIndex);
+    const mediaOrderIndex = source.indexOf("orderMockupImagesByPrimary(", primaryIndex);
+    const repairIndex = source.indexOf("await repairAndVerifyShopifyPostSync(", mediaOrderIndex);
     assert.ok(primaryIndex > syncIndex, "primary color should be selected after Shopify sync");
-    assert.ok(optionReorderIndex > primaryIndex, "Color option values should use the selected primary color");
-    assert.ok(mediaOrderIndex > optionReorderIndex, "media ordering should use the same primary color");
-    assert.match(source, /primaryColorName,\s*\}\);/);
-    assert.match(source, /Shopify color option reorder failed/);
+    assert.ok(mediaOrderIndex > primaryIndex, "media ordering should use the selected primary color");
+    assert.ok(repairIndex > mediaOrderIndex, "post-sync repair should use the ordered media and same primary color");
+    assert.match(source, /primaryColorName,\s*sizesInOrder:\s*draft\.enabledSizes \?\? \[\],\s*\}\);/);
+    assert.match(source, /repairAndVerifyShopifyPostSync/);
   });
 
   it("optionally unpublishes Printify after Shopify sync while keeping Shopify active", () => {
@@ -167,15 +168,13 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.doesNotMatch(pairLoopSource, /enabledSet\.has\(variant\.variantId\).*continue/s);
   });
 
-  it("derives Printify placement from selected custom mockup regions before ratio fallback", () => {
-    assert.match(source, /resolveCustomMockupPlacementData/);
-    const customPlacementIndex = source.indexOf("await resolveCustomMockupPlacementData(");
-    const ratioFallbackIndex = source.indexOf("buildListingReadyPlacementData", customPlacementIndex);
-    assert.ok(customPlacementIndex > -1, "custom mockup placement resolver should be used");
-    assert.ok(
-      ratioFallbackIndex > customPlacementIndex,
-      "custom mockup placement should be attempted before listing-ready ratio fallback",
-    );
+  it("uses explicit full-width Printify placement for Shopify-channel products", () => {
+    const resolverIndex = source.indexOf("async function resolvePrintifyProductPublishInput");
+    const fullWidthIndex = source.indexOf("buildFullWidthPlacementData", resolverIndex);
+    const customPlacementIndex = source.indexOf("await resolveCustomMockupPlacementData(", resolverIndex);
+    assert.ok(fullWidthIndex > resolverIndex, "Shopify-channel publish input should use full-width placement");
+    assert.equal(customPlacementIndex, -1, "Shopify-channel publish input should not derive placement from custom mockup region");
+    assert.match(source, /presetKey:\s*"full-width"/);
   });
 
   it("does not let transient Printify create recovery leave jobs stuck running", () => {
