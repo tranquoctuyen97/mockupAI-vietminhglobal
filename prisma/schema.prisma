@@ -836,15 +836,19 @@ model ListingVariant {
 }
 
 model PublishJob {
-  id             String       @id @default(cuid())
-  listingId      String       @map("listing_id")
-  idempotencyKey String       @unique @map("idempotency_key")
-  stage          PublishStage
-  status         String       @default("PENDING")
-  attempts       Int          @default(0)
-  lastError      String?      @map("last_error")
-  createdAt      DateTime     @default(now()) @map("created_at")
-  completedAt    DateTime?    @map("completed_at")
+  id              String       @id @default(cuid())
+  listingId       String       @map("listing_id")
+  idempotencyKey  String       @unique @map("idempotency_key")
+  stage           PublishStage
+  status          String       @default("PENDING")
+  attempts        Int          @default(0)
+  phase           String?
+  progressMessage String?    @map("progress_message")
+  progressData    Json?      @map("progress_data")
+  phaseStartedAt  DateTime?  @map("phase_started_at")
+  lastError       String?      @map("last_error")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  completedAt     DateTime?    @map("completed_at")
 
   listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
 

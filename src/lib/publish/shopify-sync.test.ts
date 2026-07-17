@@ -206,6 +206,7 @@ describe("Printify external Shopify sync", () => {
   it("polls Printify external before falling back to Shopify search", async () => {
     let now = 0;
     let productPolls = 0;
+    const foundProducts: Array<{ shopifyProductId: string; source: string }> = [];
     const result = await waitForPrintifyShopifySync({
       printifyRows,
       printifyShopId: 1,
@@ -252,9 +253,15 @@ describe("Printify external Shopify sync", () => {
           } as any;
         },
       },
+      onShopifyProductFound: async (product) => {
+        foundProducts.push(product);
+      },
     });
 
     assert.equal(result.shopifyProductId, "gid://shopify/Product/10");
     assert.equal(productPolls, 2);
+    assert.deepEqual(foundProducts, [
+      { shopifyProductId: "gid://shopify/Product/10", source: "printify_external" },
+    ]);
   });
 });

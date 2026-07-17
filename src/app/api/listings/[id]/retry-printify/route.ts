@@ -3,6 +3,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { validateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { getClientForStore } from "@/lib/printify/account";
@@ -97,13 +98,31 @@ export async function POST(
     if (!resumeAfterPrintify && printifyJob) {
       await prisma.publishJob.update({
         where: { id: printifyJob.id },
-        data: { status: "PENDING", attempts: 0, lastError: null, completedAt: null },
+        data: {
+          status: "PENDING",
+          attempts: 0,
+          lastError: null,
+          completedAt: null,
+          phase: null,
+          progressMessage: null,
+          progressData: Prisma.DbNull,
+          phaseStartedAt: null,
+        },
       });
     }
     if (shopifyJob) {
       await prisma.publishJob.update({
         where: { id: shopifyJob.id },
-        data: { status: "PENDING", attempts: 0, lastError: null, completedAt: null },
+        data: {
+          status: "PENDING",
+          attempts: 0,
+          lastError: null,
+          completedAt: null,
+          phase: null,
+          progressMessage: null,
+          progressData: Prisma.DbNull,
+          phaseStartedAt: null,
+        },
       });
     }
 
@@ -135,7 +154,16 @@ export async function POST(
   if (printifyJob) {
     await prisma.publishJob.update({
       where: { id: printifyJob.id },
-      data: { status: "PENDING", attempts: 0, lastError: null, completedAt: null },
+      data: {
+        status: "PENDING",
+        attempts: 0,
+        lastError: null,
+        completedAt: null,
+        phase: null,
+        progressMessage: null,
+        progressData: Prisma.DbNull,
+        phaseStartedAt: null,
+      },
     });
   }
 

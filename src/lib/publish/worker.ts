@@ -7,6 +7,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { isPublishDryRun, PRODUCT_DEFAULTS } from "@/lib/config/runtime-controls";
 import { decrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
@@ -73,6 +74,39 @@ const MAX_RETRIES = 5;
 const BACKOFF_BASE_MS = 2000;
 const INTERNAL_TAG_DENYLIST = new Set(["mockupai", "draft-preview"]);
 const CUSTOM_MOCKUP_REFERENCE_PRINT_AREA = { widthMm: 340, heightMm: 420 };
+const CLEAR_PUBLISH_JOB_PHASE = {
+  phase: null,
+  progressMessage: null,
+  progressData: Prisma.DbNull,
+  phaseStartedAt: null,
+};
+
+type ShopifyPublishPhase =
+  | "WAITING_EXTERNAL"
+  | "SHOPIFY_ID_PERSISTED"
+  | "WAITING_VARIANTS"
+  | "UPDATING_ORGANIZATION"
+  | "REPAIRING_OPTIONS"
+  | "SYNCING_MEDIA"
+  | "VERIFYING"
+  | "PUBLISHING_CHANNELS";
+
+async function setPublishJobPhase(input: {
+  jobId: string;
+  phase: ShopifyPublishPhase;
+  message: string;
+  data?: Prisma.InputJsonObject;
+}): Promise<void> {
+  await prisma.publishJob.update({
+    where: { id: input.jobId },
+    data: {
+      phase: input.phase,
+      progressMessage: input.message,
+      progressData: input.data ?? Prisma.DbNull,
+      phaseStartedAt: new Date(),
+    },
+  });
+}
 
 export function generateIdempotencyKey(draftId: string, tenantId: string, scope = ""): string {
   return createHash("sha256").update(`${draftId}|${tenantId}|${scope}`).digest("hex");
@@ -1137,12 +1171,19 @@ async function runPrintifyShopifyChannelPublish(input: {
   if (!resumeExistingPrintify) {
     await prisma.publishJob.update({
       where: { id: printifyJob.id },
-      data: { status: "RUNNING" },
+      data: { status: "RUNNING", ...CLEAR_PUBLISH_JOB_PHASE },
     });
   }
   await prisma.publishJob.update({
     where: { id: shopifyJob.id },
-    data: { status: "PENDING", lastError: "Waiting for Printify Shopify-channel sync" },
+    data: {
+      status: "PENDING",
+      lastError: "Waiting for Printify Shopify-channel sync",
+      phase: "WAITING_EXTERNAL",
+      progressMessage: "Đang chờ Printify đồng bộ Shopify product",
+      progressData: Prisma.DbNull,
+      phaseStartedAt: new Date(),
+    },
   });
   emitEvent("publish.printify.start", { stage: "PRINTIFY" });
 
@@ -1293,10 +1334,46 @@ async function runPrintifyShopifyChannelPublish(input: {
 
   let printifyRows: ReturnType<typeof extractEnabledPrintifyVariantMatrix>;
   try {
-    const printifyProduct = await printifyClient.getProduct(
-      externalShopId,
-      printifyProductResult.productId,
-    );
+    let printifyProduct: Awaited<ReturnType<typeof printifyClient.getProduct>>;
+    try {
+      printifyProduct = await printifyClient.getProduct(
+        externalShopId,
+        printifyProductResult.productId,
+      );
+    } catch (err) {
+      if (!resumeExistingPrintify || !(err instanceof PrintifyNotFoundError)) {
+        throw err;
+      }
+
+      const expectedSkuSet = skuSetFromListingVariants(listing);
+      const recovered = await recoverPrintifyProductByExactSkuSet({
+        client: printifyClient,
+        shopId: externalShopId,
+        listing,
+        expectedSkuSet,
+      });
+      if (!recovered) {
+        throw new Error(
+          expectedSkuSet.size === 0
+            ? `MISSING_PRINTIFY_PRODUCT: ${printifyProductResult.productId} was not found and listing has no SKU set for recovery`
+            : `MISSING_PRINTIFY_PRODUCT: ${printifyProductResult.productId} was not found and no exact SKU-set replacement was found`,
+        );
+      }
+
+      printifyProductResult = { productId: recovered.id, images: [] };
+      await persistPrintifyProductRefs({
+        listingId,
+        draftId: draft.id,
+        draftDesignId: draftDesign?.id ?? null,
+        productId: recovered.id,
+      });
+      printifyProduct = recovered.product;
+      console.warn("[PublishWorker] Recovered missing Printify product by exact SKU set", {
+        listingId,
+        oldPrintifyProductId: listing.printifyProductId,
+        recoveredPrintifyProductId: recovered.id,
+      });
+    }
     printifyRows = extractEnabledPrintifyVariantMatrix(printifyProduct);
     if (!resumeExistingPrintify) {
       await printifyClient.publishProduct(externalShopId, printifyProductResult.productId, {
@@ -1326,14 +1403,21 @@ async function runPrintifyShopifyChannelPublish(input: {
   });
   await prisma.publishJob.update({
     where: { id: printifyJob.id },
-    data: { status: "SUCCEEDED", completedAt: new Date(), lastError: null },
+    data: { status: "SUCCEEDED", completedAt: new Date(), lastError: null, ...CLEAR_PUBLISH_JOB_PHASE },
   });
   emitEvent("publish.printify.done", { printifyProductId: printifyProductResult.productId });
 
   emitEvent("publish.shopify.start", { stage: "SHOPIFY" });
   await prisma.publishJob.update({
     where: { id: shopifyJob.id },
-    data: { status: "RUNNING", lastError: null },
+    data: {
+      status: "RUNNING",
+      lastError: null,
+      phase: "WAITING_EXTERNAL",
+      progressMessage: "Đang chờ Printify đồng bộ Shopify product",
+      progressData: Prisma.DbNull,
+      phaseStartedAt: new Date(),
+    },
   });
 
   let syncMatch: ShopifySyncMatch;
@@ -1348,6 +1432,24 @@ async function runPrintifyShopifyChannelPublish(input: {
       title: listing.title,
       timeoutMs: 600_000,
       intervalMs: 5_000,
+      onShopifyProductFound: async ({ shopifyProductId, source }) => {
+        await prisma.listing.update({
+          where: { id: listingId },
+          data: { shopifyProductId },
+        });
+        await setPublishJobPhase({
+          jobId: shopifyJob.id,
+          phase: "SHOPIFY_ID_PERSISTED",
+          message: "Đã tìm thấy Shopify product",
+          data: { shopifyProductId, source },
+        });
+        await setPublishJobPhase({
+          jobId: shopifyJob.id,
+          phase: "WAITING_VARIANTS",
+          message: "Đang chờ Shopify variants/SKU đồng bộ đủ",
+          data: { shopifyProductId },
+        });
+      },
       log: (message, data) => console.log(message, { listingId, ...data }),
     });
   } catch (err) {
@@ -1368,34 +1470,12 @@ async function runPrintifyShopifyChannelPublish(input: {
   const shopifyClient = new ShopifyClient(store.shopifyDomain!, shopifyAccessToken);
   const primaryColorName = pickPrimaryColorName(mockupImages);
 
-  try {
-    const channelResult = await publishToAllChannels(shopifyClient, syncMatch.shopifyProductId);
-    if (channelResult.attempted === 0 || channelResult.failed.length > 0) {
-      const failures = channelResult.failed
-        .map((failure) => `${failure.publicationId}: ${failure.message}`)
-        .join("; ");
-      throw new Error(
-        failures ||
-          `No Shopify publications were available for product ${syncMatch.shopifyProductId}`,
-      );
-    }
-  } catch (err) {
-    const message =
-      err instanceof Error
-        ? `Shopify sales-channel publish failed: ${err.message}`
-        : "Shopify sales-channel publish failed";
-    await prisma.publishJob.update({
-      where: { id: shopifyJob.id },
-      data: {
-        status: "FAILED",
-        lastError: message,
-        completedAt: new Date(),
-      },
-    });
-    await prisma.listing.update({ where: { id: listingId }, data: { status: "PARTIAL_FAILURE" } });
-    emitEvent("publish.complete", { status: "PARTIAL_FAILURE", reason: message });
-    return;
-  }
+  await setPublishJobPhase({
+    jobId: shopifyJob.id,
+    phase: "UPDATING_ORGANIZATION",
+    message: "Đang cập nhật category và collections",
+    data: { shopifyProductId: syncMatch.shopifyProductId },
+  });
 
   try {
     await updateProductCategory({
@@ -1433,11 +1513,23 @@ async function runPrintifyShopifyChannelPublish(input: {
   }
 
   try {
+    await setPublishJobPhase({
+      jobId: shopifyJob.id,
+      phase: "REPAIRING_OPTIONS",
+      message: "Đang chuẩn hóa Color/Size",
+      data: { shopifyProductId: syncMatch.shopifyProductId },
+    });
     const orderedMockupImages = orderMockupImagesByPrimary(
       mockupImages,
       listingColorNames,
       primaryColorName,
     );
+    await setPublishJobPhase({
+      jobId: shopifyJob.id,
+      phase: "SYNCING_MEDIA",
+      message: "Đang gắn ảnh theo màu và sắp xếp gallery",
+      data: { shopifyProductId: syncMatch.shopifyProductId },
+    });
     await repairAndVerifyShopifyPostSync({
       client: shopifyClient,
       productId: syncMatch.shopifyProductId,
@@ -1445,6 +1537,12 @@ async function runPrintifyShopifyChannelPublish(input: {
       mockupImages: orderedMockupImages,
       primaryColorName,
       sizesInOrder: draft.enabledSizes ?? [],
+    });
+    await setPublishJobPhase({
+      jobId: shopifyJob.id,
+      phase: "VERIFYING",
+      message: "Đã xác minh options, variants, media và gallery",
+      data: { shopifyProductId: syncMatch.shopifyProductId },
     });
   } catch (err) {
     const message =
@@ -1472,6 +1570,41 @@ async function runPrintifyShopifyChannelPublish(input: {
     variantsBySku: syncMatch.variantsBySku,
   });
 
+  await setPublishJobPhase({
+    jobId: shopifyJob.id,
+    phase: "PUBLISHING_CHANNELS",
+    message: "Đang publish Shopify product đã verify ra sales channels",
+    data: { shopifyProductId: syncMatch.shopifyProductId },
+  });
+  try {
+    const channelResult = await publishToAllChannels(shopifyClient, syncMatch.shopifyProductId);
+    if (channelResult.attempted === 0 || channelResult.failed.length > 0) {
+      const failures = channelResult.failed
+        .map((failure) => `${failure.publicationId}: ${failure.message}`)
+        .join("; ");
+      throw new Error(
+        failures ||
+          `No Shopify publications were available for product ${syncMatch.shopifyProductId}`,
+      );
+    }
+  } catch (err) {
+    const message =
+      err instanceof Error
+        ? `Shopify sales-channel publish failed: ${err.message}`
+        : "Shopify sales-channel publish failed";
+    await prisma.publishJob.update({
+      where: { id: shopifyJob.id },
+      data: {
+        status: "FAILED",
+        lastError: message,
+        completedAt: new Date(),
+      },
+    });
+    await prisma.listing.update({ where: { id: listingId }, data: { status: "PARTIAL_FAILURE" } });
+    emitEvent("publish.complete", { status: "PARTIAL_FAILURE", reason: message });
+    return;
+  }
+
   if (store.printifyShop?.unpublishAfterShopifySync) {
     try {
       await printifyClient.unpublishProduct(externalShopId, printifyProductResult.productId);
@@ -1498,7 +1631,12 @@ async function runPrintifyShopifyChannelPublish(input: {
 
   await prisma.publishJob.update({
     where: { id: shopifyJob.id },
-    data: { status: "SUCCEEDED", completedAt: new Date(), lastError: null },
+    data: {
+      status: "SUCCEEDED",
+      completedAt: new Date(),
+      lastError: null,
+      ...CLEAR_PUBLISH_JOB_PHASE,
+    },
   });
   await prisma.listing.update({
     where: { id: listingId },
@@ -1599,6 +1737,62 @@ async function findRecentPrintifyProductCandidate(input: {
       );
     });
     if (candidate) return { id: candidate.id };
+  }
+  return null;
+}
+
+function skuSetFromListingVariants(listing: any): Set<string> {
+  const variants = Array.isArray(listing?.variants) ? listing.variants : [];
+  return new Set(
+    variants
+      .map((variant: any) => (typeof variant.sku === "string" ? variant.sku.trim() : ""))
+      .filter(Boolean),
+  );
+}
+
+function enabledSkuSetFromPrintifyProduct(product: any): Set<string> {
+  const variants = Array.isArray(product?.variants) ? product.variants : [];
+  return new Set(
+    variants
+      .filter((variant: any) => variant?.is_enabled !== false)
+      .map((variant: any) => (typeof variant.sku === "string" ? variant.sku.trim() : ""))
+      .filter(Boolean),
+  );
+}
+
+function sameStringSet(left: Set<string>, right: Set<string>): boolean {
+  if (left.size === 0 || left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
+}
+
+async function recoverPrintifyProductByExactSkuSet(input: {
+  client: Awaited<ReturnType<typeof getClientForStore>>["client"];
+  shopId: number;
+  listing: any;
+  expectedSkuSet: Set<string>;
+}): Promise<{ id: string; product: any } | null> {
+  if (input.expectedSkuSet.size === 0) return null;
+
+  const matches: Array<{ id: string; product: any }> = [];
+  for (let page = 1; page <= 5; page += 1) {
+    const result = await input.client.getProducts(input.shopId, page);
+    for (const product of result.data ?? []) {
+      if (product.title?.trim() !== input.listing.title?.trim()) continue;
+      const productSkuSet = enabledSkuSetFromPrintifyProduct(product);
+      if (sameStringSet(input.expectedSkuSet, productSkuSet)) {
+        matches.push({ id: product.id, product });
+      }
+    }
+  }
+
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) {
+    throw new Error(
+      `AMBIGUOUS_PRINTIFY_PRODUCT: found ${matches.length} products with exact SKU set for listing ${input.listing.id}`,
+    );
   }
   return null;
 }

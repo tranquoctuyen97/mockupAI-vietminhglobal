@@ -201,6 +201,10 @@ export async function waitForPrintifyShopifySync(input: {
   intervalMs: number;
   title?: string;
   log?: (message: string, data?: Record<string, unknown>) => void;
+  onShopifyProductFound?: (product: {
+    shopifyProductId: string;
+    source: "printify_external" | "sku_search";
+  }) => Promise<void> | void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }): Promise<ShopifySyncMatch> {
@@ -220,6 +224,10 @@ export async function waitForPrintifyShopifySync(input: {
       const productId = toShopifyProductGid(externalId);
       const match = await fetchShopifyProductById(input.shopifyClient, productId);
       if (!match) continue;
+      await input.onShopifyProductFound?.({
+        shopifyProductId: match.id,
+        source: "printify_external",
+      });
       const syncMatch = selectShopifyProductCandidate(input.printifyRows, productVariantsToCandidates(match));
       if (syncMatch) {
         input.log?.("[PublishWorker] Shopify sync matched by Printify external id", {
@@ -241,6 +249,10 @@ export async function waitForPrintifyShopifySync(input: {
     lastBestOverlap = bestSkuOverlap(input.printifyRows, candidates);
     const searchMatch = selectShopifyProductCandidate(input.printifyRows, candidates);
     if (searchMatch) {
+      await input.onShopifyProductFound?.({
+        shopifyProductId: searchMatch.shopifyProductId,
+        source: "sku_search",
+      });
       input.log?.("[PublishWorker] Shopify sync matched by SKU search", {
         printifyProductId: input.printifyProductId,
         shopifyProductId: searchMatch.shopifyProductId,

@@ -114,12 +114,16 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.match(source, /productType:\s*draft\.template\?\.blueprintTitle\s*\?\?\s*draft\.productType/);
   });
 
-  it("publishes the synced Shopify product to all publications before marking it active", () => {
+  it("publishes the verified Shopify product to all publications before marking it active", () => {
     const syncIndex = source.indexOf("await waitForPrintifyShopifySync(");
+    const repairIndex = source.indexOf("await repairAndVerifyShopifyPostSync(", syncIndex);
+    const mappingIndex = source.indexOf("await persistPrintifyShopifyVariantMapping(", repairIndex);
     const publishChannelsIndex = source.indexOf("await publishToAllChannels(");
     const activeUpdateIndex = source.indexOf('data: { status: "ACTIVE", publishedAt: new Date() }', publishChannelsIndex);
     assert.ok(syncIndex > -1, "Shopify sync should be awaited");
-    assert.ok(publishChannelsIndex > syncIndex, "sales-channel publish should run after Shopify sync");
+    assert.ok(repairIndex > syncIndex, "post-sync repair should run after Shopify sync");
+    assert.ok(mappingIndex > repairIndex, "variant mapping should persist after Shopify verification");
+    assert.ok(publishChannelsIndex > mappingIndex, "sales-channel publish should run after Shopify verification and mapping");
     assert.ok(activeUpdateIndex > publishChannelsIndex, "listing should only become active after sales-channel publish");
     assert.match(source, /Shopify sales-channel publish failed/);
     assert.match(source, /status:\s*"PARTIAL_FAILURE"/);
@@ -148,6 +152,33 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.ok(repairIndex > mediaOrderIndex, "post-sync repair should use the ordered media and same primary color");
     assert.match(source, /primaryColorName,\s*sizesInOrder:\s*draft\.enabledSizes \?\? \[\],\s*\}\);/);
     assert.match(source, /repairAndVerifyShopifyPostSync/);
+  });
+
+  it("persists Shopify product id as soon as Printify external resolves", () => {
+    const syncIndex = source.indexOf("await waitForPrintifyShopifySync(");
+    const foundIndex = source.indexOf("onShopifyProductFound", syncIndex);
+    const updateIndex = source.indexOf("data: { shopifyProductId }", foundIndex);
+    assert.ok(foundIndex > syncIndex, "sync wait should receive an early product-found callback");
+    assert.ok(updateIndex > foundIndex, "callback should persist listing.shopifyProductId immediately");
+    assert.match(source, /phase:\s*"SHOPIFY_ID_PERSISTED"/);
+    assert.match(source, /phase:\s*"WAITING_VARIANTS"/);
+  });
+
+  it("tracks durable Shopify publish phases", () => {
+    assert.match(source, /type ShopifyPublishPhase/);
+    assert.match(source, /async function setPublishJobPhase/);
+    assert.match(source, /phase:\s*"UPDATING_ORGANIZATION"/);
+    assert.match(source, /phase:\s*"REPAIRING_OPTIONS"/);
+    assert.match(source, /phase:\s*"SYNCING_MEDIA"/);
+    assert.match(source, /phase:\s*"VERIFYING"/);
+    assert.match(source, /phase:\s*"PUBLISHING_CHANNELS"/);
+  });
+
+  it("recovers a missing resumed Printify product only by exact SKU set", () => {
+    assert.match(source, /recoverPrintifyProductByExactSkuSet/);
+    assert.match(source, /MISSING_PRINTIFY_PRODUCT/);
+    assert.match(source, /AMBIGUOUS_PRINTIFY_PRODUCT/);
+    assert.match(source, /sameStringSet\(input\.expectedSkuSet, productSkuSet\)/);
   });
 
   it("optionally unpublishes Printify after Shopify sync while keeping Shopify active", () => {

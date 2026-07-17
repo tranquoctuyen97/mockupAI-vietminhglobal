@@ -130,6 +130,8 @@ interface PublishResponseEntry {
 interface PersistedPublishJob {
   stage: string;
   status: string;
+  phase?: string | null;
+  progressMessage?: string | null;
   lastError?: string | null;
 }
 
@@ -256,6 +258,13 @@ function jobToPublishLog(job: PersistedPublishJob): PublishLog | null {
         stage: "SHOPIFY",
         message: job.lastError || "Publish lên Shopify bị lỗi",
         status: "error",
+      };
+    }
+    if (job.progressMessage) {
+      return {
+        stage: job.phase || "SHOPIFY",
+        message: job.progressMessage,
+        status: "pending",
       };
     }
     return { stage: "SHOPIFY", message: "Đang publish lên Shopify...", status: "pending" };

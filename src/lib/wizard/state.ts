@@ -195,6 +195,10 @@ export async function getDraft(id: string, tenantId: string) {
               select: {
                 stage: true,
                 status: true,
+                phase: true,
+                progressMessage: true,
+                progressData: true,
+                phaseStartedAt: true,
                 lastError: true,
               },
             },
@@ -492,6 +496,10 @@ export async function listDrafts(tenantId: string) {
             select: {
               stage: true,
               status: true,
+              phase: true,
+              progressMessage: true,
+              progressData: true,
+              phaseStartedAt: true,
             },
           },
         },
