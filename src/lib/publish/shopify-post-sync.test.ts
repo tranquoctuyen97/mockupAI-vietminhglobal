@@ -39,7 +39,10 @@ describe("Shopify post-sync repair source contract", () => {
   it("does not derive Size order directly from Printify row order", () => {
     assert.match(source, /sizesInOrder/);
     assert.match(source, /APPAREL_SIZE_ORDER/);
-    assert.doesNotMatch(source, /const orderedSizes = uniqueInOrder\(input\.printifyRows\.map\(\(row\) => row\.size\)\);/);
+    assert.doesNotMatch(
+      source,
+      /const orderedSizes = uniqueInOrder\(input\.printifyRows\.map\(\(row\) => row\.size\)\);/,
+    );
   });
 
   it("emits phase changes at the actual post-sync step boundaries", () => {
@@ -57,8 +60,14 @@ describe("Shopify post-sync repair source contract", () => {
     assert.ok(mediaIndex > repairCallIndex, "media phase should start after option repair");
     assert.ok(mediaCallIndex > mediaIndex, "media sync should run after SYNCING_MEDIA");
     assert.ok(galleryIndex > mediaCallIndex, "gallery phase should start after media sync");
-    assert.ok(galleryCallIndex > galleryIndex, "gallery reorder should run after REORDERING_GALLERY");
+    assert.ok(
+      galleryCallIndex > galleryIndex,
+      "gallery reorder should run after REORDERING_GALLERY",
+    );
     assert.ok(verifyingIndex > galleryCallIndex, "verify phase should start after gallery reorder");
-    assert.ok(verifyCallIndex > verifyingIndex, "final gallery assertion should run after VERIFYING");
+    assert.ok(
+      verifyCallIndex > verifyingIndex,
+      "final gallery assertion should run after VERIFYING",
+    );
   });
 });

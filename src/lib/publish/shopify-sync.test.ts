@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { EnabledPrintifyVariantMatrixRow } from "@/lib/printify/product-matrix";
 import {
-  ShopifySyncTimeoutError,
   extractExternalProductIds,
+  ShopifySyncTimeoutError,
   selectShopifyProductCandidate,
   toShopifyProductGid,
   waitForPrintifyShopifySync,
@@ -189,7 +189,10 @@ describe("waitForShopifyProductSync", () => {
 
 describe("Printify external Shopify sync", () => {
   it("normalizes Printify external product references", () => {
-    assert.deepEqual(extractExternalProductIds({ external: { id: "123", handle: "/products/a" } }), ["123"]);
+    assert.deepEqual(
+      extractExternalProductIds({ external: { id: "123", handle: "/products/a" } }),
+      ["123"],
+    );
     assert.deepEqual(
       extractExternalProductIds({
         external: [
@@ -307,10 +310,24 @@ describe("Printify external Shopify sync", () => {
               variants: {
                 nodes:
                   shopifyProductFetches < 3
-                    ? [{ id: "gid://shopify/ProductVariant/1", sku: "BLACK-S", selectedOptions: [] }]
+                    ? [
+                        {
+                          id: "gid://shopify/ProductVariant/1",
+                          sku: "BLACK-S",
+                          selectedOptions: [],
+                        },
+                      ]
                     : [
-                        { id: "gid://shopify/ProductVariant/1", sku: "BLACK-S", selectedOptions: [] },
-                        { id: "gid://shopify/ProductVariant/2", sku: "BLACK-M", selectedOptions: [] },
+                        {
+                          id: "gid://shopify/ProductVariant/1",
+                          sku: "BLACK-S",
+                          selectedOptions: [],
+                        },
+                        {
+                          id: "gid://shopify/ProductVariant/2",
+                          sku: "BLACK-M",
+                          selectedOptions: [],
+                        },
                       ],
                 pageInfo: { hasNextPage: false, endCursor: null },
               },

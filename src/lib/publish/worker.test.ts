@@ -17,15 +17,22 @@ import {
 
 describe("runPublishWorker organization collections source", () => {
   const source = readFileSync(new URL("./worker.ts", import.meta.url), "utf8");
+  const shopifySource = readFileSync(new URL("./shopify.ts", import.meta.url), "utf8");
 
   it("passes Listing organizationCollections to Shopify publish", () => {
-    assert.match(source, /organizationCollections:\s*listing\.organizationCollections\s*\?\?\s*\[\]/);
+    assert.match(
+      source,
+      /organizationCollections:\s*listing\.organizationCollections\s*\?\?\s*\[\]/,
+    );
   });
 
   it("persists Shopify product id during productSet before later retryable steps", () => {
     assert.match(source, /onProductCreated:\s*async\s*\(productId,\s*variantNodes\)/);
     assert.match(source, /data:\s*\{\s*shopifyProductId:\s*productId\s*\}/);
-    assert.match(source, /let createdProductId:\s*string\s*\|\s*null\s*=\s*listing\.shopifyProductId/);
+    assert.match(
+      source,
+      /let createdProductId:\s*string\s*\|\s*null\s*=\s*listing\.shopifyProductId/,
+    );
   });
 
   it("does not force-create a new Printify product after 5xx", () => {
@@ -38,6 +45,48 @@ describe("runPublishWorker organization collections source", () => {
     assert.match(source, /mergeDraftAndTemplatePriceMaps/);
     assert.match(source, /templatePriceBySizeDefault:\s*template\?\.priceBySizeDefault/);
     assert.doesNotMatch(source, /productPricingTemplate\.findFirst/);
+  });
+
+  it("persists Shopify Direct variants by SKU instead of index", () => {
+    assert.match(source, /persistDirectShopifyVariantMapping/);
+    assert.match(source, /shopifyVariantBySku/);
+    assert.match(source, /prisma\.listingVariant\.deleteMany/);
+    assert.match(source, /prisma\.listingVariant\.createMany/);
+    assert.doesNotMatch(
+      source,
+      /listing\.variants\[i\]\.id[\s\S]{0,180}shopifyResult\.shopifyVariantIds\[i\]/,
+    );
+  });
+
+  it("verifies Shopify Direct media and publications before marking Shopify success", () => {
+    const resultIndex = source.indexOf("if (!shopifyResult)");
+    const verifyIndex = source.indexOf("await repairAndVerifyShopifyPostSync(", resultIndex);
+    const mappingIndex = source.indexOf("await persistDirectShopifyVariantMapping(", verifyIndex);
+    const publishIndex = source.indexOf("await publishShopifyChannelsStrict(", mappingIndex);
+    const successIndex = source.indexOf(
+      'data: { status: "SUCCEEDED", completedAt: new Date() }',
+      publishIndex,
+    );
+    assert.ok(
+      verifyIndex > resultIndex,
+      "Direct should run shared Shopify verifier after productSet/reuse",
+    );
+    assert.ok(mappingIndex > verifyIndex, "Direct should persist DB mapping after verification");
+    assert.ok(publishIndex > mappingIndex, "Direct should publish channels after mapping");
+    assert.ok(
+      successIndex > publishIndex,
+      "Direct Shopify job should succeed only after strict channel publish",
+    );
+  });
+
+  it("reuses existing Shopify Direct products by fetching current variants", () => {
+    assert.match(shopifySource, /fetchProductVariantNodes/);
+    assert.match(
+      shopifySource,
+      /variantNodes = await fetchProductVariantNodes\(client, productId\)/,
+    );
+    assert.doesNotMatch(shopifySource, /variantIds = \[\]; \/\/ variants already exist/);
+    assert.doesNotMatch(shopifySource, /productVariantsBulkUpdate failed \(non-fatal\)/);
   });
 });
 
@@ -71,7 +120,10 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.ok(publishIndex > -1, "Printify publishProduct should be called");
     assert.ok(syncIndex > -1, "Shopify sync should be called");
     assert.ok(publishIndex < syncIndex, "Printify publish must happen before Shopify sync");
-    assert.match(source, /printifyClient,\s*printifyShopId:\s*externalShopId,\s*printifyProductId:\s*printifyProductResult\.productId/s);
+    assert.match(
+      source,
+      /printifyClient,\s*printifyShopId:\s*externalShopId,\s*printifyProductId:\s*printifyProductResult\.productId/s,
+    );
     assert.match(source, /timeoutMs:\s*600_000/);
   });
 
@@ -91,7 +143,10 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
   });
 
   it("passes Listing organizationCollections into Printify Shopify sales channel properties", () => {
-    assert.match(source, /salesChannelCollections:\s*normalizeOrganizationCollections\(listing\.organizationCollections\)/);
+    assert.match(
+      source,
+      /salesChannelCollections:\s*normalizeOrganizationCollections\(\s*listing\.organizationCollections,\s*\)/,
+    );
   });
 
   it("attaches Shopify collections after Printify Shopify-channel sync", () => {
@@ -111,20 +166,38 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.ok(categoryIndex > syncIndex, "category update should run after Shopify sync");
     assert.ok(categoryIndex < attachIndex, "category update should run before collection attach");
     assert.match(source, /Shopify category post-sync failed \(non-fatal\)/);
-    assert.match(source, /productType:\s*draft\.template\?\.blueprintTitle\s*\?\?\s*draft\.productType/);
+    assert.match(
+      source,
+      /productType:\s*draft\.template\?\.blueprintTitle\s*\?\?\s*draft\.productType/,
+    );
   });
 
   it("publishes the verified Shopify product to all publications before marking it active", () => {
     const syncIndex = source.indexOf("await waitForPrintifyShopifySync(");
     const repairIndex = source.indexOf("await repairAndVerifyShopifyPostSync(", syncIndex);
     const mappingIndex = source.indexOf("await persistPrintifyShopifyVariantMapping(", repairIndex);
-    const publishChannelsIndex = source.indexOf("await publishToAllChannels(");
-    const activeUpdateIndex = source.indexOf('data: { status: "ACTIVE", publishedAt: new Date() }', publishChannelsIndex);
+    const publishChannelsIndex = source.indexOf(
+      "await publishShopifyChannelsStrict(",
+      mappingIndex,
+    );
+    const activeUpdateIndex = source.indexOf(
+      'data: { status: "ACTIVE", publishedAt: new Date() }',
+      publishChannelsIndex,
+    );
     assert.ok(syncIndex > -1, "Shopify sync should be awaited");
     assert.ok(repairIndex > syncIndex, "post-sync repair should run after Shopify sync");
-    assert.ok(mappingIndex > repairIndex, "variant mapping should persist after Shopify verification");
-    assert.ok(publishChannelsIndex > mappingIndex, "sales-channel publish should run after Shopify verification and mapping");
-    assert.ok(activeUpdateIndex > publishChannelsIndex, "listing should only become active after sales-channel publish");
+    assert.ok(
+      mappingIndex > repairIndex,
+      "variant mapping should persist after Shopify verification",
+    );
+    assert.ok(
+      publishChannelsIndex > mappingIndex,
+      "sales-channel publish should run after Shopify verification and mapping",
+    );
+    assert.ok(
+      activeUpdateIndex > publishChannelsIndex,
+      "listing should only become active after sales-channel publish",
+    );
     assert.match(source, /Đưa sản phẩm lên các kênh bán hàng Shopify thất bại/);
     assert.match(source, /status:\s*"PARTIAL_FAILURE"/);
   });
@@ -134,7 +207,10 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     const repairIndex = source.indexOf("await repairAndVerifyShopifyPostSync(", syncIndex);
     const mappingIndex = source.indexOf("await persistPrintifyShopifyVariantMapping(", repairIndex);
     assert.ok(repairIndex > syncIndex, "post-sync repair should run after Shopify sync");
-    assert.ok(mappingIndex > repairIndex, "variant mapping should persist only after Shopify verification");
+    assert.ok(
+      mappingIndex > repairIndex,
+      "variant mapping should persist only after Shopify verification",
+    );
     assert.match(source, /Chuẩn hóa tùy chọn, phiên bản và hình ảnh Shopify thất bại/);
     assert.match(source, /status:\s*"PARTIAL_FAILURE"/);
   });
@@ -148,8 +224,14 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     const mediaOrderIndex = source.indexOf("orderMockupImagesByPrimary(", primaryIndex);
     const repairIndex = source.indexOf("await repairAndVerifyShopifyPostSync(", mediaOrderIndex);
     assert.ok(primaryIndex > syncIndex, "primary color should be selected after Shopify sync");
-    assert.ok(mediaOrderIndex > primaryIndex, "media ordering should use the selected primary color");
-    assert.ok(repairIndex > mediaOrderIndex, "post-sync repair should use the ordered media and same primary color");
+    assert.ok(
+      mediaOrderIndex > primaryIndex,
+      "media ordering should use the selected primary color",
+    );
+    assert.ok(
+      repairIndex > mediaOrderIndex,
+      "post-sync repair should use the ordered media and same primary color",
+    );
     assert.match(source, /primaryColorName,\s*sizesInOrder:\s*draft\.enabledSizes \?\? \[\],/);
     assert.match(source, /repairAndVerifyShopifyPostSync/);
   });
@@ -159,7 +241,10 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     const foundIndex = source.indexOf("onShopifyProductFound", syncIndex);
     const updateIndex = source.indexOf("data: { shopifyProductId }", foundIndex);
     assert.ok(foundIndex > syncIndex, "sync wait should receive an early product-found callback");
-    assert.ok(updateIndex > foundIndex, "callback should persist listing.shopifyProductId immediately");
+    assert.ok(
+      updateIndex > foundIndex,
+      "callback should persist listing.shopifyProductId immediately",
+    );
     assert.doesNotMatch(source, /phase:\s*"SHOPIFY_ID_PERSISTED"/);
     assert.match(source, /phase:\s*"WAITING_VARIANTS"/);
   });
@@ -184,16 +269,28 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.match(source, /MISSING_PRINTIFY_PRODUCT/);
     assert.match(source, /AMBIGUOUS_PRINTIFY_PRODUCT/);
     assert.match(source, /sameStringSet\(input\.expectedSkuSet, productSkuSet\)/);
-    assert.match(source, /matchesPrintifyCatalog\(product, input\.blueprintId, input\.printProviderId\)/);
+    assert.match(
+      source,
+      /matchesPrintifyCatalog\(product, input\.blueprintId, input\.printProviderId\)/,
+    );
   });
 
   it("optionally unpublishes Printify after Shopify sync while keeping Shopify active", () => {
     const mappingIndex = source.indexOf("await persistPrintifyShopifyVariantMapping(");
     const unpublishIndex = source.indexOf("await printifyClient.unpublishProduct(", mappingIndex);
-    const activeUpdateIndex = source.indexOf('data: { status: "ACTIVE", publishedAt: new Date() }', unpublishIndex);
+    const activeUpdateIndex = source.indexOf(
+      'data: { status: "ACTIVE", publishedAt: new Date() }',
+      unpublishIndex,
+    );
     assert.ok(mappingIndex > -1, "variant mapping should be persisted");
-    assert.ok(unpublishIndex > mappingIndex, "Printify unpublish should run after mapping is persisted");
-    assert.ok(activeUpdateIndex > unpublishIndex, "Shopify/listing ACTIVE finalization should remain after unpublish");
+    assert.ok(
+      unpublishIndex > mappingIndex,
+      "Printify unpublish should run after mapping is persisted",
+    );
+    assert.ok(
+      activeUpdateIndex > unpublishIndex,
+      "Shopify/listing ACTIVE finalization should remain after unpublish",
+    );
     assert.match(source, /store\.printifyShop\?\.unpublishAfterShopifySync/);
     assert.match(source, /Printify post-sync unpublish failed \(non-fatal\)/);
     assert.doesNotMatch(source, /status:\s*"DRAFT"/);
@@ -203,22 +300,38 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     const resolverIndex = source.indexOf("async function resolvePrintifyProductPublishInput");
     const pairLoopIndex = source.indexOf("for (const variant of cachedVariants)", resolverIndex);
     assert.ok(pairLoopIndex > -1, "pair variant loop should exist");
-    const pairLoopSource = source.slice(pairLoopIndex, source.indexOf("imageGroups = [", pairLoopIndex));
+    const pairLoopSource = source.slice(
+      pairLoopIndex,
+      source.indexOf("imageGroups = [", pairLoopIndex),
+    );
     assert.doesNotMatch(pairLoopSource, /enabledSet\.has\(variant\.variantId\).*continue/s);
   });
 
   it("uses explicit full-width Printify placement for Shopify-channel products", () => {
     const resolverIndex = source.indexOf("async function resolvePrintifyProductPublishInput");
     const fullWidthIndex = source.indexOf("buildFullWidthPlacementData", resolverIndex);
-    const customPlacementIndex = source.indexOf("await resolveCustomMockupPlacementData(", resolverIndex);
-    assert.ok(fullWidthIndex > resolverIndex, "Shopify-channel publish input should use full-width placement");
-    assert.equal(customPlacementIndex, -1, "Shopify-channel publish input should not derive placement from custom mockup region");
+    const customPlacementIndex = source.indexOf(
+      "await resolveCustomMockupPlacementData(",
+      resolverIndex,
+    );
+    assert.ok(
+      fullWidthIndex > resolverIndex,
+      "Shopify-channel publish input should use full-width placement",
+    );
+    assert.equal(
+      customPlacementIndex,
+      -1,
+      "Shopify-channel publish input should not derive placement from custom mockup region",
+    );
     assert.match(source, /presetKey:\s*"full-width"/);
   });
 
   it("does not let transient Printify create recovery leave jobs stuck running", () => {
     assert.match(source, /Failed to check recent Printify product after transient create error/);
-    assert.match(source, /where:\s*\{\s*id:\s*printifyJob\.id\s*\}[\s\S]*status:\s*"FAILED"[\s\S]*completedAt:\s*new Date\(\)/);
+    assert.match(
+      source,
+      /where:\s*\{\s*id:\s*printifyJob\.id\s*\}[\s\S]*status:\s*"FAILED"[\s\S]*completedAt:\s*new Date\(\)/,
+    );
   });
 
   it("marks Shopify sync timeout as partial failure without Shopify productSet fallback", () => {
@@ -365,17 +478,19 @@ describe("resolvePrintifyTagsForShopify", () => {
 
 describe("selectTagsForShopify", () => {
   it("merges and deduplicates printify tags and listing tags", () => {
-    assert.deepEqual(
-      selectTagsForShopify(["Unisex", "Printify"], ["summer", "unisex", "Cotton"]),
-      ["Unisex", "Printify", "summer", "Cotton"]
-    );
+    assert.deepEqual(selectTagsForShopify(["Unisex", "Printify"], ["summer", "unisex", "Cotton"]), [
+      "Unisex",
+      "Printify",
+      "summer",
+      "Cotton",
+    ]);
   });
 
   it("filters out internal mockup draft tags from listing tags", () => {
-    assert.deepEqual(
-      selectTagsForShopify(["Unisex"], ["draft-preview", "Cotton", "unisex"]),
-      ["Unisex", "Cotton"]
-    );
+    assert.deepEqual(selectTagsForShopify(["Unisex"], ["draft-preview", "Cotton", "unisex"]), [
+      "Unisex",
+      "Cotton",
+    ]);
   });
 
   it("handles null or empty listing tags gracefully", () => {

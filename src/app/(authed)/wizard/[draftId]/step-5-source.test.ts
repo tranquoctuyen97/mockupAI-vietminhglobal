@@ -23,15 +23,24 @@ test("step 5 renders one publish progress entry per pair listing", () => {
   assert.match(source, /const pairEntries = designPairs\.map/);
   assert.match(source, /publishKey:\s*pair\.id/);
   assert.match(source, /listing\.designPairId \?\? listing\.draftDesignId \?\? listing\.designId/);
-  assert.doesNotMatch(source, /selectedDraftDesigns\.map\(\(entry\) => \{\s*const pair = designPairs\.find/s);
+  assert.doesNotMatch(
+    source,
+    /selectedDraftDesigns\.map\(\(entry\) => \{\s*const pair = designPairs\.find/s,
+  );
 });
 
 test("step 5 hydrates publish progress from persisted listing jobs after reload", () => {
   assert.match(source, /interface PersistedPublishListing/);
   assert.match(source, /publishStateFromPersistedListing/);
   assert.match(source, /persistedPublishListings/);
-  assert.match(source, /listing\.wizardDraftDesignPairId \?\? listing\.wizardDraftDesignId \?\? listing\.designId/);
-  assert.match(source, /setPublishing\(Object\.values\(nextState\)\.some\(\(state\) => state\.status === "PUBLISHING"\)\)/);
+  assert.match(
+    source,
+    /listing\.wizardDraftDesignPairId \?\? listing\.wizardDraftDesignId \?\? listing\.designId/,
+  );
+  assert.match(
+    source,
+    /setPublishing\(Object\.values\(nextState\)\.some\(\(state\) => state\.status === "PUBLISHING"\)\)/,
+  );
   assert.match(source, /hasPublishingListings/);
 });
 
@@ -46,5 +55,8 @@ test("publish phase user-facing labels are Vietnamese", () => {
     phaseSource.indexOf("export const PUBLISH_PHASE_LABELS"),
     phaseSource.indexOf("export function getPublishPhaseLabel"),
   );
-  assert.doesNotMatch(labelBlock, /\b(product|variants|options|media|gallery|category|collections|verify|sales channels)\b/i);
+  assert.doesNotMatch(
+    labelBlock,
+    /\b(product|variants|options|media|gallery|category|collections|verify|sales channels)\b/i,
+  );
 });
