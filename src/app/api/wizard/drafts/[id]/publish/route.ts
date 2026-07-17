@@ -37,6 +37,30 @@ type PublishListingResponse = {
   alreadyPublished: boolean;
 };
 
+type ExistingListingForPublish = {
+  id: string;
+  status: string;
+  wizardDraftDesignId: string | null;
+  designId: string | null;
+  publishJobs?: Array<{ stage: string; status: string }>;
+};
+
+function hasRunningPublishJob(listing: ExistingListingForPublish): boolean {
+  return Boolean(
+    listing.publishJobs?.some((job) => job.status === "PENDING" || job.status === "RUNNING"),
+  );
+}
+
+function shouldRetryExistingListing(listing: ExistingListingForPublish): boolean {
+  if (!["FAILED", "PARTIAL_FAILURE"].includes(listing.status)) return false;
+  return !hasRunningPublishJob(listing);
+}
+
+function statusForExistingListing(listing: ExistingListingForPublish): string {
+  if (hasRunningPublishJob(listing)) return "PUBLISHING";
+  return shouldRetryExistingListing(listing) ? "PUBLISHING" : listing.status;
+}
+
 function resolveSelectedDraftDesigns(draft: any): DraftDesignSelection[] {
   if (Array.isArray(draft.draftDesigns) && draft.draftDesigns.length > 0) {
     return [...draft.draftDesigns]
@@ -180,17 +204,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     const existingListing = await prisma.listing.findUnique({
       where: { wizardDraftDesignPairId: pair.id },
+      include: { publishJobs: { select: { stage: true, status: true } } },
     });
 
     if (existingListing) {
-      const retryExisting = ["FAILED", "PARTIAL_FAILURE"].includes(existingListing.status);
+      const retryExisting = shouldRetryExistingListing(existingListing);
       listings.push({
         listingId: existingListing.id,
         designPairId: pair.id,
         draftDesignId: existingListing.wizardDraftDesignId ?? null,
         designId: existingListing.designId ?? pair.lightDesign.designId,
         designName: pair.baseName,
-        status: retryExisting ? "PUBLISHING" : existingListing.status,
+        status: statusForExistingListing(existingListing),
         alreadyPublished: !retryExisting,
       });
       if (retryExisting) workersToStart.push({ listingId: existingListing.id });
@@ -255,17 +280,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     const existingListing = await prisma.listing.findUnique({
       where: { wizardDraftDesignId: draftDesign.id },
+      include: { publishJobs: { select: { stage: true, status: true } } },
     });
 
     if (existingListing) {
-      const retryExisting = ["FAILED", "PARTIAL_FAILURE"].includes(existingListing.status);
+      const retryExisting = shouldRetryExistingListing(existingListing);
       listings.push({
         listingId: existingListing.id,
         designPairId: null,
         draftDesignId: existingListing.wizardDraftDesignId ?? null,
         designId: existingListing.designId ?? draftDesign.designId,
         designName: draftDesign.design?.name ?? "Design",
-        status: retryExisting ? "PUBLISHING" : existingListing.status,
+        status: statusForExistingListing(existingListing),
         alreadyPublished: !retryExisting,
       });
       if (retryExisting) workersToStart.push({ listingId: existingListing.id });

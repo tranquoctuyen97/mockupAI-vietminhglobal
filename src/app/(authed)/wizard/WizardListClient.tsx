@@ -2,17 +2,30 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Wand2, Trash2, Loader2, ChevronRight, CheckCircle2, Pencil } from "lucide-react";
+import { Plus, Wand2, Trash2, Loader2, ChevronRight, CheckCircle2, Pencil, Clock3, AlertCircle } from "lucide-react";
 
 interface Draft {
   id: string;
   designId: string | null;
   storeId: string | null;
+  store?: {
+    name?: string | null;
+    shopifyDomain?: string | null;
+    printifyShopTitle?: string | null;
+  } | null;
   productType: string | null;
   currentStep: number;
   status: string;
   updatedAt: string;
   mockupJobs: { id: string; status: string }[];
+  listings?: Array<{
+    id: string;
+    status: string;
+    publishJobs?: Array<{
+      stage: string;
+      status: string;
+    }>;
+  }>;
 }
 
 const STEP_LABELS = ["Store", "Design", "Preview", "Content", "Review"];
@@ -21,10 +34,100 @@ const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }
   GENERATING: { label: "Đang tạo mockup", color: "#f59e0b", bg: "rgba(245,158,11,0.12)" },
   READY: { label: "Sẵn sàng", color: "#22c55e", bg: "rgba(34,197,94,0.12)" },
   PUBLISHED: { label: "Đã publish", color: "#3b82f6", bg: "rgba(59,130,246,0.12)" },
+  PUBLISHING: { label: "Đang publish", color: "#f59e0b", bg: "rgba(245,158,11,0.14)" },
+  SYNCING_SHOPIFY: { label: "Đang sync Shopify", color: "#f59e0b", bg: "rgba(245,158,11,0.14)" },
+  PUBLISH_FAILED: { label: "Publish lỗi", color: "#dc2626", bg: "rgba(220,38,38,0.12)" },
 };
 
 interface Props {
   initialDrafts: Draft[];
+}
+
+function getDraftPublishDisplayStatus(draft: Draft): {
+  key: string;
+  subLabel: string;
+  complete: boolean;
+  running: boolean;
+  failed: boolean;
+} {
+  const listings = draft.listings ?? [];
+  if (listings.length === 0) {
+    return {
+      key: draft.status,
+      subLabel:
+        draft.status === "PUBLISHED"
+          ? "Hoàn thành"
+          : `Step ${draft.currentStep}/${STEP_LABELS.length}: ${STEP_LABELS[draft.currentStep - 1]}`,
+      complete: draft.status === "PUBLISHED",
+      running: false,
+      failed: false,
+    };
+  }
+
+  const jobs = listings.flatMap((listing) => listing.publishJobs ?? []);
+  const hasRunningJob = jobs.some((job) => job.status === "PENDING" || job.status === "RUNNING");
+  const hasFailed = listings.some((listing) => listing.status === "FAILED" || listing.status === "PARTIAL_FAILURE") ||
+    jobs.some((job) => job.status === "FAILED");
+  const allActive = listings.every((listing) => listing.status === "ACTIVE");
+  const printifyDone = jobs.some((job) => job.stage === "PRINTIFY" && job.status === "SUCCEEDED");
+  const shopifyRunning = jobs.some(
+    (job) => job.stage === "SHOPIFY" && (job.status === "PENDING" || job.status === "RUNNING"),
+  );
+
+  if (hasFailed) {
+    return {
+      key: "PUBLISH_FAILED",
+      subLabel: "Cần kiểm tra",
+      complete: false,
+      running: false,
+      failed: true,
+    };
+  }
+
+  if (printifyDone && shopifyRunning) {
+    return {
+      key: "SYNCING_SHOPIFY",
+      subLabel: "Printify đã xong",
+      complete: false,
+      running: true,
+      failed: false,
+    };
+  }
+
+  if (hasRunningJob || listings.some((listing) => listing.status === "PUBLISHING")) {
+    return {
+      key: "PUBLISHING",
+      subLabel: "Đang xử lý",
+      complete: false,
+      running: true,
+      failed: false,
+    };
+  }
+
+  if (allActive) {
+    return {
+      key: "PUBLISHED",
+      subLabel: "Hoàn thành",
+      complete: true,
+      running: false,
+      failed: false,
+    };
+  }
+
+  return {
+    key: draft.status,
+    subLabel: `Step ${draft.currentStep}/${STEP_LABELS.length}: ${STEP_LABELS[draft.currentStep - 1]}`,
+    complete: draft.status === "PUBLISHED",
+    running: false,
+    failed: false,
+  };
+}
+
+function getDraftStoreLabel(draft: Draft): string | null {
+  const store = draft.store;
+  if (!store) return null;
+
+  return store.name || store.printifyShopTitle || store.shopifyDomain || null;
 }
 
 export default function WizardListClient({ initialDrafts }: Props) {
@@ -105,8 +208,12 @@ export default function WizardListClient({ initialDrafts }: Props) {
       {drafts.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {drafts.map((d) => {
-            const statusInfo = STATUS_LABELS[d.status] || STATUS_LABELS.DRAFT;
-            const isPublished = d.status === "PUBLISHED";
+            const displayStatus = getDraftPublishDisplayStatus(d);
+            const statusInfo = STATUS_LABELS[displayStatus.key] || STATUS_LABELS.DRAFT;
+            const isPublished = displayStatus.complete;
+            const isRunning = displayStatus.running;
+            const isFailed = displayStatus.failed;
+            const storeLabel = getDraftStoreLabel(d);
             return (
               <div
                 key={d.id}
@@ -116,7 +223,13 @@ export default function WizardListClient({ initialDrafts }: Props) {
                   display: "flex", alignItems: "center", justifyContent: "space-between",
                   cursor: "pointer",
                   transition: "transform 0.15s, box-shadow 0.15s",
-                  borderLeft: isPublished ? `3px solid #3b82f6` : "3px solid transparent",
+                  borderLeft: isPublished
+                    ? `3px solid #3b82f6`
+                    : isFailed
+                      ? "3px solid #dc2626"
+                      : isRunning
+                        ? "3px solid #f59e0b"
+                        : "3px solid transparent",
                 }}
                 onClick={() => router.push(`/wizard/${d.id}/step-${d.currentStep}`)}
                 onMouseEnter={(e) => {
@@ -132,14 +245,25 @@ export default function WizardListClient({ initialDrafts }: Props) {
                   <div
                     style={{
                       width: 40, height: 40, borderRadius: "var(--radius-sm)",
-                      backgroundColor: isPublished ? "rgba(59,130,246,0.1)" : "var(--bg-tertiary)",
+                      backgroundColor: isPublished
+                        ? "rgba(59,130,246,0.1)"
+                        : isFailed
+                          ? "rgba(220,38,38,0.1)"
+                          : isRunning
+                            ? "rgba(245,158,11,0.12)"
+                            : "var(--bg-tertiary)",
                       display: "flex", alignItems: "center", justifyContent: "center",
                     }}
                   >
-                    {isPublished
-                      ? <CheckCircle2 size={18} style={{ color: "#3b82f6" }} />
-                      : <Wand2 size={18} style={{ opacity: 0.4 }} />
-                    }
+                    {isPublished ? (
+                      <CheckCircle2 size={18} style={{ color: "#3b82f6" }} />
+                    ) : isFailed ? (
+                      <AlertCircle size={18} style={{ color: "#dc2626" }} />
+                    ) : isRunning ? (
+                      <Clock3 size={18} style={{ color: "#f59e0b" }} />
+                    ) : (
+                      <Wand2 size={18} style={{ opacity: 0.4 }} />
+                    )}
                   </div>
                   <div>
                     <p style={{ fontWeight: 600, fontSize: "0.9rem", margin: 0 }}>
@@ -147,10 +271,7 @@ export default function WizardListClient({ initialDrafts }: Props) {
                     </p>
                     <div className="flex items-center gap-3" style={{ fontSize: "0.75rem", marginTop: 4 }}>
                       <span style={{ opacity: 0.5 }}>
-                        {isPublished
-                          ? "Hoàn thành"
-                          : `Step ${d.currentStep}/${STEP_LABELS.length}: ${STEP_LABELS[d.currentStep - 1]}`
-                        }
+                        {displayStatus.subLabel}
                       </span>
                       <span style={{
                         color: statusInfo.color,
@@ -167,7 +288,27 @@ export default function WizardListClient({ initialDrafts }: Props) {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
+                  {storeLabel && (
+                    <span
+                      title={storeLabel}
+                      style={{
+                        color: "var(--text-secondary)",
+                        backgroundColor: "var(--bg-secondary)",
+                        border: "1px solid var(--border-default)",
+                        fontWeight: 700,
+                        padding: "4px 10px",
+                        borderRadius: 999,
+                        fontSize: "0.76rem",
+                        maxWidth: 220,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {storeLabel}
+                    </span>
+                  )}
                   <button
                     onClick={(e) => { e.stopPropagation(); handleDelete(d.id); }}
                     style={{

@@ -18,7 +18,14 @@ test("publish route does not require selected design count to equal pairs times 
 });
 
 test("publish route retries existing failed listings instead of treating them as done", () => {
-  assert.match(source, /\["FAILED", "PARTIAL_FAILURE"\]\.includes\(existingListing\.status\)/);
+  assert.match(source, /\["FAILED", "PARTIAL_FAILURE"\]\.includes\(listing\.status\)/);
   assert.match(source, /if \(retryExisting\) workersToStart\.push\(\{ listingId: existingListing\.id \}\)/);
   assert.match(source, /alreadyPublished:\s*!retryExisting/);
+});
+
+test("publish route does not enqueue a duplicate worker for an existing running listing", () => {
+  assert.match(source, /function hasRunningPublishJob/);
+  assert.match(source, /job\.status === "PENDING" \|\| job\.status === "RUNNING"/);
+  assert.match(source, /if \(hasRunningPublishJob\(listing\)\) return "PUBLISHING"/);
+  assert.match(source, /return !hasRunningPublishJob\(listing\)/);
 });

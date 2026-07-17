@@ -127,6 +127,21 @@ interface PublishResponseEntry {
   alreadyPublished: boolean;
 }
 
+interface PersistedPublishJob {
+  stage: string;
+  status: string;
+  lastError?: string | null;
+}
+
+interface PersistedPublishListing {
+  id: string;
+  status: string;
+  wizardDraftDesignId?: string | null;
+  wizardDraftDesignPairId?: string | null;
+  designId?: string | null;
+  publishJobs?: PersistedPublishJob[];
+}
+
 interface PublishDisplayEntry {
   id: string;
   publishKey: string;
@@ -214,6 +229,112 @@ function compactPublishLogs(state: PublishDesignState): PublishLog[] {
   return logs;
 }
 
+function jobToPublishLog(job: PersistedPublishJob): PublishLog | null {
+  const stage = job.stage.toUpperCase();
+  const status = job.status.toUpperCase();
+
+  if (stage === "PRINTIFY") {
+    if (status === "SUCCEEDED") {
+      return { stage: "PRINTIFY", message: "Đã publish lên Printify", status: "success" };
+    }
+    if (status === "FAILED") {
+      return {
+        stage: "PRINTIFY",
+        message: job.lastError || "Publish lên Printify bị lỗi",
+        status: "error",
+      };
+    }
+    return { stage: "PRINTIFY", message: "Đang publish lên Printify...", status: "pending" };
+  }
+
+  if (stage === "SHOPIFY") {
+    if (status === "SUCCEEDED") {
+      return { stage: "SHOPIFY", message: "Đã publish lên Shopify", status: "success" };
+    }
+    if (status === "FAILED") {
+      return {
+        stage: "SHOPIFY",
+        message: job.lastError || "Publish lên Shopify bị lỗi",
+        status: "error",
+      };
+    }
+    return { stage: "SHOPIFY", message: "Đang publish lên Shopify...", status: "pending" };
+  }
+
+  return null;
+}
+
+function publishStateFromPersistedListing(listing: PersistedPublishListing): PublishDesignState {
+  const jobs = listing.publishJobs ?? [];
+  const hasRunningJob = jobs.some((job) => job.status === "PENDING" || job.status === "RUNNING");
+  const hasFailedJob = jobs.some((job) => job.status === "FAILED");
+  const logs = jobs.map(jobToPublishLog).filter((log): log is PublishLog => Boolean(log));
+
+  if (listing.status === "ACTIVE") {
+    return {
+      listingId: listing.id,
+      status: "SUCCESS",
+      alreadyPublished: true,
+      logs: logs.length > 0 ? logs : [{ stage: "DONE", message: "Publish hoàn tất!", status: "success" }],
+    };
+  }
+
+  if (hasRunningJob || listing.status === "PUBLISHING") {
+    return {
+      listingId: listing.id,
+      status: "PUBLISHING",
+      alreadyPublished: true,
+      logs: logs.length > 0 ? logs : [{ stage: "INIT", message: "Đang publish...", status: "pending" }],
+    };
+  }
+
+  if (hasFailedJob || listing.status === "FAILED" || listing.status === "PARTIAL_FAILURE") {
+    const failedJob = jobs.find((job) => job.status === "FAILED");
+    return {
+      listingId: listing.id,
+      status: "ERROR",
+      alreadyPublished: true,
+      logs:
+        logs.length > 0
+          ? logs
+          : [
+              {
+                stage: "ERROR",
+                message: failedJob?.lastError || "Publish trước đó bị lỗi.",
+                status: "error",
+              },
+            ],
+    };
+  }
+
+  return {
+    listingId: listing.id,
+    status: "IDLE",
+    alreadyPublished: true,
+    logs: [],
+  };
+}
+
+function initialLogsFromPublishResponse(listing: PublishResponseEntry): PublishLog[] {
+  if (listing.status === "ACTIVE") {
+    return [{ stage: "DONE", message: "Publish hoàn tất!", status: "success" }];
+  }
+
+  if (listing.status === "PARTIAL_FAILURE" || listing.status === "FAILED") {
+    return [{ stage: "ERROR", message: "Publish trước đó bị lỗi.", status: "error" }];
+  }
+
+  if (listing.status === "PUBLISHING") {
+    return [{ stage: "INIT", message: "Đang publish...", status: "pending" }];
+  }
+
+  if (listing.alreadyPublished) {
+    return [{ stage: "DONE", message: "Listing đã tồn tại.", status: "success" }];
+  }
+
+  return [{ stage: "INIT", message: "Đang publish...", status: "pending" }];
+}
+
 export default function Step5ReviewPage() {
   const { draftId } = useParams<{ draftId: string }>();
   const { draft, checklist: storeChecklist } = useWizardStore();
@@ -249,6 +370,11 @@ export default function Step5ReviewPage() {
       aiContent?: any;
     }>;
   }, [draft?.designPairs]);
+
+  const persistedPublishListings = useMemo(
+    () => ((draft as { listings?: PersistedPublishListing[] } | null)?.listings ?? []),
+    [draft],
+  );
 
   const hasPairs = designPairs.length > 0;
   const storeColors = (draft?.store?.colors ?? []) as StoreColor[];
@@ -476,6 +602,27 @@ export default function Step5ReviewPage() {
     return [...pairEntries, ...independentEntries] satisfies PublishDisplayEntry[];
   }, [publishStateByDesignId, selectedDraftDesigns, designPairs]);
 
+  useEffect(() => {
+    if (persistedPublishListings.length === 0) return;
+
+    const nextMapping = new Map<string, string>();
+    const nextState: Record<string, PublishDesignState> = {};
+
+    for (const listing of persistedPublishListings) {
+      const designKey = listing.wizardDraftDesignPairId ?? listing.wizardDraftDesignId ?? listing.designId;
+      if (!designKey) continue;
+
+      nextMapping.set(listing.id, designKey);
+      nextState[designKey] = publishStateFromPersistedListing(listing);
+    }
+
+    if (Object.keys(nextState).length === 0) return;
+
+    listingIdToDesignIdRef.current = nextMapping;
+    setPublishStateByDesignId(nextState);
+    setPublishing(Object.values(nextState).some((state) => state.status === "PUBLISHING"));
+  }, [persistedPublishListings]);
+
   const overallPublishStatus = useMemo(() => {
     const states = designPublishEntries.map((entry) => entry.publish.status);
     if (states.some((status) => status === "ERROR")) return "ERROR";
@@ -517,8 +664,13 @@ export default function Step5ReviewPage() {
 
   const isLoadingPage = loading || !draft;
   const allListingsPublished = overallPublishStatus === "SUCCESS";
-  const canPublish = Boolean(localChecklist?.readyToPublish && selectedDraftDesigns.length > 0 && !publishing && !allListingsPublished);
-  const publishButtonLabel = allListingsPublished ? `Đã publish ${summaryListingsCount} listings` : `Publish ${summaryListingsCount} listings`;
+  const hasPublishingListings = publishing || overallPublishStatus === "PUBLISHING";
+  const canPublish = Boolean(localChecklist?.readyToPublish && selectedDraftDesigns.length > 0 && !hasPublishingListings && !allListingsPublished);
+  const publishButtonLabel = hasPublishingListings
+    ? "Đang publish..."
+    : allListingsPublished
+      ? `Đã publish ${summaryListingsCount} listings`
+      : `Publish ${summaryListingsCount} listings`;
 
   function updatePublishStateByListingId(
     listingId: string | null | undefined,
@@ -692,13 +844,7 @@ export default function Step5ReviewPage() {
         const designKey = listing.designPairId ?? listing.draftDesignId ?? listing.designId;
         nextMapping.set(listing.listingId, designKey);
 
-        const baseLogs: PublishLog[] = listing.alreadyPublished
-          ? [{ stage: "DONE", message: "Listing đã tồn tại.", status: "success" }]
-          : listing.status === "ACTIVE"
-            ? [{ stage: "DONE", message: "Publish hoàn tất!", status: "success" }]
-            : listing.status === "PARTIAL_FAILURE" || listing.status === "FAILED"
-              ? [{ stage: "ERROR", message: "Publish trước đó bị lỗi.", status: "error" }]
-              : [{ stage: "INIT", message: "Đang publish...", status: "pending" }];
+        const baseLogs = initialLogsFromPublishResponse(listing);
 
         nextState[designKey] = {
           listingId: listing.listingId,
@@ -1353,7 +1499,7 @@ export default function Step5ReviewPage() {
                 cursor: !canPublish ? "not-allowed" : "pointer",
               }}
             >
-              {publishing ? <Loader2 size={16} className="animate-spin" /> : allListingsPublished ? <Check size={16} /> : <Play size={16} />}
+              {hasPublishingListings ? <Loader2 size={16} className="animate-spin" /> : allListingsPublished ? <Check size={16} /> : <Play size={16} />}
               {publishButtonLabel}
             </button>
           </div>

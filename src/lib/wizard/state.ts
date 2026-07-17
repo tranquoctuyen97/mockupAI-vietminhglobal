@@ -182,6 +182,24 @@ export async function getDraft(id: string, tenantId: string) {
             listing: true,
           },
         },
+        listings: {
+          orderBy: { createdAt: "asc" },
+          select: {
+            id: true,
+            status: true,
+            wizardDraftDesignId: true,
+            wizardDraftDesignPairId: true,
+            designId: true,
+            publishJobs: {
+              orderBy: { createdAt: "asc" },
+              select: {
+                stage: true,
+                status: true,
+                lastError: true,
+              },
+            },
+          },
+        },
         draftDesigns: draftDesignsWithRelationsInclude,
         mockupJobs: {
           orderBy: { createdAt: "asc" },
@@ -450,12 +468,33 @@ export async function listDrafts(tenantId: string) {
       updatedAt: true,
       designId: true,
       storeId: true,
+      store: {
+        select: {
+          name: true,
+          shopifyDomain: true,
+          printifyShopTitle: true,
+        },
+      },
       templateId: true,
       enabledColorIds: true,
       mockupsStale: true,
       mockupSourceMode: true,
       mockupJobs: {
         select: { id: true, status: true },
+      },
+      listings: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          status: true,
+          publishJobs: {
+            orderBy: { createdAt: "asc" },
+            select: {
+              stage: true,
+              status: true,
+            },
+          },
+        },
       },
     },
   });

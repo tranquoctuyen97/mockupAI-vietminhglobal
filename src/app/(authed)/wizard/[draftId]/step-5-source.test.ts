@@ -24,3 +24,12 @@ test("step 5 renders one publish progress entry per pair listing", () => {
   assert.match(source, /listing\.designPairId \?\? listing\.draftDesignId \?\? listing\.designId/);
   assert.doesNotMatch(source, /selectedDraftDesigns\.map\(\(entry\) => \{\s*const pair = designPairs\.find/s);
 });
+
+test("step 5 hydrates publish progress from persisted listing jobs after reload", () => {
+  assert.match(source, /interface PersistedPublishListing/);
+  assert.match(source, /publishStateFromPersistedListing/);
+  assert.match(source, /persistedPublishListings/);
+  assert.match(source, /listing\.wizardDraftDesignPairId \?\? listing\.wizardDraftDesignId \?\? listing\.designId/);
+  assert.match(source, /setPublishing\(Object\.values\(nextState\)\.some\(\(state\) => state\.status === "PUBLISHING"\)\)/);
+  assert.match(source, /hasPublishingListings/);
+});

@@ -59,7 +59,7 @@ export interface PrintifyProductResponse {
   images?: PrintifyProductImage[];
   variants?: PrintifyProductVariant[];
   options?: PrintifyProductOption[];
-  external?: { id: string; handle?: string };
+  external?: { id: string; handle?: string } | Array<{ id: string; handle?: string }>;
 }
 
 export interface PrintifyPublishPayload {

@@ -1,4 +1,5 @@
 import type { EnabledPrintifyVariantMatrixRow } from "@/lib/printify/product-matrix";
+import type { PrintifyProductResponse } from "@/lib/printify/client";
 import type { ShopifyClient } from "@/lib/shopify/client";
 
 export type ShopifyVariantCandidate = {
@@ -32,9 +33,27 @@ type ShopifyProductVariantsResponse = {
   };
 };
 
+type ShopifyProductByIdResponse = {
+  product: {
+    id: string;
+    title: string;
+    handle?: string | null;
+    createdAt?: string | null;
+    updatedAt?: string | null;
+    variants: {
+      nodes: Array<{
+        id: string;
+        sku: string | null;
+        selectedOptions: Array<{ name: string; value: string }>;
+      }>;
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    };
+  } | null;
+};
+
 export class ShopifySyncTimeoutError extends Error {
-  constructor(timeoutMs: number) {
-    super(`Timed out waiting ${timeoutMs}ms for Shopify product sync`);
+  constructor(timeoutMs: number, detail?: string) {
+    super(`Timed out waiting ${timeoutMs}ms for Shopify product sync${detail ? `: ${detail}` : ""}`);
     this.name = "ShopifySyncTimeoutError";
   }
 }
@@ -169,6 +188,161 @@ export async function waitForShopifyProductSync(input: {
   }
 
   throw new ShopifySyncTimeoutError(input.timeoutMs);
+}
+
+export async function waitForPrintifyShopifySync(input: {
+  printifyRows: EnabledPrintifyVariantMatrixRow[];
+  printifyShopId: number;
+  printifyProductId: string;
+  printifyClient: { getProduct: (shopId: number, productId: string) => Promise<PrintifyProductResponse> };
+  shopifyClient: Pick<ShopifyClient, "graphql">;
+  updatedAfterIso: string;
+  timeoutMs: number;
+  intervalMs: number;
+  title?: string;
+  log?: (message: string, data?: Record<string, unknown>) => void;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<ShopifySyncMatch> {
+  const now = input.now ?? Date.now;
+  const sleep = input.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const startedAt = now();
+  let lastExternalCount = 0;
+  let lastCandidateCount = 0;
+  let lastBestOverlap = 0;
+
+  while (now() - startedAt <= input.timeoutMs) {
+    const printifyProduct = await input.printifyClient.getProduct(input.printifyShopId, input.printifyProductId);
+    const externalIds = extractExternalProductIds(printifyProduct);
+    lastExternalCount = externalIds.length;
+
+    for (const externalId of externalIds) {
+      const productId = toShopifyProductGid(externalId);
+      const match = await fetchShopifyProductById(input.shopifyClient, productId);
+      if (!match) continue;
+      const syncMatch = selectShopifyProductCandidate(input.printifyRows, productVariantsToCandidates(match));
+      if (syncMatch) {
+        input.log?.("[PublishWorker] Shopify sync matched by Printify external id", {
+          printifyProductId: input.printifyProductId,
+          shopifyProductId: syncMatch.shopifyProductId,
+          externalCount: externalIds.length,
+        });
+        return syncMatch;
+      }
+    }
+
+    const candidates = await fetchRecentShopifyVariantCandidates({
+      client: input.shopifyClient,
+      updatedAfterIso: input.updatedAfterIso,
+      title: input.title,
+      maxPages: 10,
+    });
+    lastCandidateCount = candidates.length;
+    lastBestOverlap = bestSkuOverlap(input.printifyRows, candidates);
+    const searchMatch = selectShopifyProductCandidate(input.printifyRows, candidates);
+    if (searchMatch) {
+      input.log?.("[PublishWorker] Shopify sync matched by SKU search", {
+        printifyProductId: input.printifyProductId,
+        shopifyProductId: searchMatch.shopifyProductId,
+        candidateCount: candidates.length,
+        bestOverlap: lastBestOverlap,
+      });
+      return searchMatch;
+    }
+
+    input.log?.("[PublishWorker] Waiting for Shopify sync", {
+      printifyProductId: input.printifyProductId,
+      externalCount: lastExternalCount,
+      candidateCount: lastCandidateCount,
+      bestOverlap: lastBestOverlap,
+    });
+    await sleep(input.intervalMs);
+  }
+
+  throw new ShopifySyncTimeoutError(
+    input.timeoutMs,
+    `externalCount=${lastExternalCount}, candidateCount=${lastCandidateCount}, bestOverlap=${lastBestOverlap}`,
+  );
+}
+
+export function extractExternalProductIds(product: Pick<PrintifyProductResponse, "external">): string[] {
+  const entries = Array.isArray(product.external)
+    ? product.external
+    : product.external
+      ? [product.external]
+      : [];
+  return entries
+    .map((entry) => entry?.id?.trim())
+    .filter((id): id is string => Boolean(id));
+}
+
+export function toShopifyProductGid(id: string): string {
+  const trimmed = id.trim();
+  return trimmed.startsWith("gid://") ? trimmed : `gid://shopify/Product/${trimmed}`;
+}
+
+async function fetchShopifyProductById(
+  client: Pick<ShopifyClient, "graphql">,
+  productId: string,
+): Promise<ShopifyProductByIdResponse["product"]> {
+  const query = `
+    query ProductForPrintifyExternal($id: ID!) {
+      product(id: $id) {
+        id
+        title
+        handle
+        createdAt
+        updatedAt
+        variants(first: 100) {
+          nodes {
+            id
+            sku
+            selectedOptions { name value }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  `;
+  const data = await client.graphql<ShopifyProductByIdResponse>(query, { id: productId });
+  return data.product;
+}
+
+function productVariantsToCandidates(product: NonNullable<ShopifyProductByIdResponse["product"]>): ShopifyVariantCandidate[] {
+  return product.variants.nodes.map((variant) => ({
+    id: variant.id,
+    sku: variant.sku,
+    selectedOptions: variant.selectedOptions,
+    product: {
+      id: product.id,
+      title: product.title,
+      handle: product.handle,
+      createdAt: product.createdAt,
+      updatedAt: product.updatedAt,
+    },
+  }));
+}
+
+function bestSkuOverlap(
+  printifyRows: EnabledPrintifyVariantMatrixRow[],
+  candidates: ShopifyVariantCandidate[],
+): number {
+  const expectedSkus = new Set(printifyRows.map((row) => row.sku.trim()).filter(Boolean));
+  const byProduct = new Map<string, Set<string>>();
+  for (const candidate of candidates) {
+    const sku = candidate.sku?.trim();
+    if (!sku) continue;
+    const skus = byProduct.get(candidate.product.id) ?? new Set<string>();
+    skus.add(sku);
+    byProduct.set(candidate.product.id, skus);
+  }
+  let best = 0;
+  for (const skus of byProduct.values()) {
+    let overlap = 0;
+    for (const sku of skus) if (expectedSkus.has(sku)) overlap += 1;
+    if (overlap > best) best = overlap;
+  }
+  return best;
 }
 
 function sameSkuSet(a: Set<string>, b: Set<string>): boolean {

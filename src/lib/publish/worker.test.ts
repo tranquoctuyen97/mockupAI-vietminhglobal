@@ -67,10 +67,12 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
 
   it("publishes through Printify publishProduct before Shopify sync", () => {
     const publishIndex = source.indexOf("await printifyClient.publishProduct(");
-    const syncIndex = source.indexOf("await waitForShopifyProductSync(");
+    const syncIndex = source.indexOf("await waitForPrintifyShopifySync(");
     assert.ok(publishIndex > -1, "Printify publishProduct should be called");
     assert.ok(syncIndex > -1, "Shopify sync should be called");
     assert.ok(publishIndex < syncIndex, "Printify publish must happen before Shopify sync");
+    assert.match(source, /printifyClient,\s*printifyShopId:\s*externalShopId,\s*printifyProductId:\s*printifyProductResult\.productId/s);
+    assert.match(source, /timeoutMs:\s*600_000/);
   });
 
   it("does not let Printify sync mockup images to Shopify", () => {
@@ -93,7 +95,7 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
   });
 
   it("attaches Shopify collections after Printify Shopify-channel sync", () => {
-    const syncIndex = source.indexOf("await waitForShopifyProductSync(");
+    const syncIndex = source.indexOf("await waitForPrintifyShopifySync(");
     const attachIndex = source.indexOf("await attachProductToManualCollections(");
     assert.ok(syncIndex > -1, "Shopify sync should be awaited");
     assert.ok(attachIndex > -1, "Shopify collection attach should be called");
@@ -102,7 +104,7 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
   });
 
   it("updates Shopify category after Printify Shopify-channel sync without failing publish", () => {
-    const syncIndex = source.indexOf("await waitForShopifyProductSync(");
+    const syncIndex = source.indexOf("await waitForPrintifyShopifySync(");
     const categoryIndex = source.indexOf("await updateProductCategory(");
     const attachIndex = source.indexOf("await attachProductToManualCollections(");
     assert.ok(syncIndex > -1, "Shopify sync should be awaited");
@@ -113,7 +115,7 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
   });
 
   it("publishes the synced Shopify product to all publications before marking it active", () => {
-    const syncIndex = source.indexOf("await waitForShopifyProductSync(");
+    const syncIndex = source.indexOf("await waitForPrintifyShopifySync(");
     const publishChannelsIndex = source.indexOf("await publishToAllChannels(");
     const activeUpdateIndex = source.indexOf('data: { status: "ACTIVE", publishedAt: new Date() }', publishChannelsIndex);
     assert.ok(syncIndex > -1, "Shopify sync should be awaited");
@@ -124,7 +126,7 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
   });
 
   it("repairs and verifies Shopify options and media after sync", () => {
-    const syncIndex = source.indexOf("await waitForShopifyProductSync(");
+    const syncIndex = source.indexOf("await waitForPrintifyShopifySync(");
     const repairIndex = source.indexOf("await repairAndVerifyShopifyPostSync(", syncIndex);
     const mappingIndex = source.indexOf("await persistPrintifyShopifyVariantMapping(", repairIndex);
     assert.ok(repairIndex > syncIndex, "post-sync repair should run after Shopify sync");
@@ -134,7 +136,7 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
   });
 
   it("uses one primary color for synced Shopify option order and media order", () => {
-    const syncIndex = source.indexOf("await waitForShopifyProductSync(");
+    const syncIndex = source.indexOf("await waitForPrintifyShopifySync(");
     const primaryIndex = source.indexOf(
       "const primaryColorName = pickPrimaryColorName(mockupImages)",
       syncIndex,

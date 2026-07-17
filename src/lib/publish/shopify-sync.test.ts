@@ -3,7 +3,10 @@ import { describe, it } from "node:test";
 import type { EnabledPrintifyVariantMatrixRow } from "@/lib/printify/product-matrix";
 import {
   ShopifySyncTimeoutError,
+  extractExternalProductIds,
   selectShopifyProductCandidate,
+  toShopifyProductGid,
+  waitForPrintifyShopifySync,
   waitForShopifyProductSync,
 } from "./shopify-sync";
 
@@ -181,5 +184,77 @@ describe("waitForShopifyProductSync", () => {
       }),
       ShopifySyncTimeoutError,
     );
+  });
+});
+
+describe("Printify external Shopify sync", () => {
+  it("normalizes Printify external product references", () => {
+    assert.deepEqual(extractExternalProductIds({ external: { id: "123", handle: "/products/a" } }), ["123"]);
+    assert.deepEqual(
+      extractExternalProductIds({
+        external: [
+          { id: "123", handle: "/products/a" },
+          { id: "456", handle: "/products/b" },
+        ],
+      }),
+      ["123", "456"],
+    );
+    assert.equal(toShopifyProductGid("123"), "gid://shopify/Product/123");
+    assert.equal(toShopifyProductGid("gid://shopify/Product/123"), "gid://shopify/Product/123");
+  });
+
+  it("polls Printify external before falling back to Shopify search", async () => {
+    let now = 0;
+    let productPolls = 0;
+    const result = await waitForPrintifyShopifySync({
+      printifyRows,
+      printifyShopId: 1,
+      printifyProductId: "printify-product",
+      updatedAfterIso: "2026-07-07T00:00:00Z",
+      timeoutMs: 100,
+      intervalMs: 5,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      printifyClient: {
+        getProduct: async () => {
+          productPolls += 1;
+          return productPolls === 1
+            ? ({ id: "printify-product", external: [] } as any)
+            : ({ id: "printify-product", external: [{ id: "10" }] } as any);
+        },
+      },
+      shopifyClient: {
+        graphql: async (_query: string, variables?: Record<string, unknown>) => {
+          if (!variables?.id) {
+            return {
+              productVariants: {
+                nodes: [],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            } as any;
+          }
+          assert.equal(variables?.id, "gid://shopify/Product/10");
+          return {
+            product: {
+              id: "gid://shopify/Product/10",
+              title: "Product",
+              updatedAt: "2026-07-07T00:00:05Z",
+              variants: {
+                nodes: [
+                  { id: "gid://shopify/ProductVariant/1", sku: "BLACK-S", selectedOptions: [] },
+                  { id: "gid://shopify/ProductVariant/2", sku: "BLACK-M", selectedOptions: [] },
+                ],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          } as any;
+        },
+      },
+    });
+
+    assert.equal(result.shopifyProductId, "gid://shopify/Product/10");
+    assert.equal(productPolls, 2);
   });
 });

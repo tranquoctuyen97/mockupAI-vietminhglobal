@@ -80,12 +80,29 @@ export async function POST(
   }
 
   if (resolvePublishStrategy(store) === "PRINTIFY_SHOPIFY_CHANNEL") {
-    const jobs = listing.publishJobs.filter(
-      (job) => job.stage === "SHOPIFY" || job.stage === "PRINTIFY",
+    const hasRunningJob = listing.publishJobs.some(
+      (job) => job.status === "PENDING" || job.status === "RUNNING",
     );
-    for (const job of jobs) {
+    if (hasRunningJob) {
+      return NextResponse.json({ ok: true, status: "already_running" });
+    }
+
+    const printifyJob = listing.publishJobs.find((job) => job.stage === "PRINTIFY");
+    const shopifyJob = listing.publishJobs.find((job) => job.stage === "SHOPIFY");
+    const resumeAfterPrintify =
+      printifyJob?.status === "SUCCEEDED" &&
+      typeof listing.printifyProductId === "string" &&
+      listing.printifyProductId.length > 0;
+
+    if (!resumeAfterPrintify && printifyJob) {
       await prisma.publishJob.update({
-        where: { id: job.id },
+        where: { id: printifyJob.id },
+        data: { status: "PENDING", attempts: 0, lastError: null, completedAt: null },
+      });
+    }
+    if (shopifyJob) {
+      await prisma.publishJob.update({
+        where: { id: shopifyJob.id },
         data: { status: "PENDING", attempts: 0, lastError: null, completedAt: null },
       });
     }
@@ -96,7 +113,11 @@ export async function POST(
       tenantId: session.tenantId,
     }).catch((err) => console.error("[RetryPrintify] Full worker error:", err));
 
-    return NextResponse.json({ ok: true, status: "retrying" });
+    return NextResponse.json({
+      ok: true,
+      status: resumeAfterPrintify ? "resuming_shopify_sync" : "retrying",
+      printifyProductId: resumeAfterPrintify ? listing.printifyProductId : null,
+    });
   }
 
   let printifyApiKey: string;
