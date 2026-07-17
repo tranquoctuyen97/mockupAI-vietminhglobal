@@ -264,4 +264,69 @@ describe("Printify external Shopify sync", () => {
       { shopifyProductId: "gid://shopify/Product/10", source: "printify_external" },
     ]);
   });
+
+  it("notifies product found only once while waiting for full SKU sync", async () => {
+    let now = 0;
+    let productPolls = 0;
+    let shopifyProductFetches = 0;
+    const foundProducts: Array<{ shopifyProductId: string; source: string }> = [];
+
+    const result = await waitForPrintifyShopifySync({
+      printifyRows,
+      printifyShopId: 1,
+      printifyProductId: "printify-product",
+      updatedAfterIso: "2026-07-07T00:00:00Z",
+      timeoutMs: 100,
+      intervalMs: 5,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      printifyClient: {
+        getProduct: async () => {
+          productPolls += 1;
+          return { id: "printify-product", external: [{ id: "10" }] } as any;
+        },
+      },
+      shopifyClient: {
+        graphql: async (_query: string, variables?: Record<string, unknown>) => {
+          if (!variables?.id) {
+            return {
+              productVariants: {
+                nodes: [],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            } as any;
+          }
+          shopifyProductFetches += 1;
+          return {
+            product: {
+              id: "gid://shopify/Product/10",
+              title: "Product",
+              updatedAt: "2026-07-07T00:00:05Z",
+              variants: {
+                nodes:
+                  shopifyProductFetches < 3
+                    ? [{ id: "gid://shopify/ProductVariant/1", sku: "BLACK-S", selectedOptions: [] }]
+                    : [
+                        { id: "gid://shopify/ProductVariant/1", sku: "BLACK-S", selectedOptions: [] },
+                        { id: "gid://shopify/ProductVariant/2", sku: "BLACK-M", selectedOptions: [] },
+                      ],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          } as any;
+        },
+      },
+      onShopifyProductFound: async (product) => {
+        foundProducts.push(product);
+      },
+    });
+
+    assert.equal(result.shopifyProductId, "gid://shopify/Product/10");
+    assert.equal(productPolls, 3);
+    assert.deepEqual(foundProducts, [
+      { shopifyProductId: "gid://shopify/Product/10", source: "printify_external" },
+    ]);
+  });
 });

@@ -1,4 +1,5 @@
 import type { EnabledPrintifyVariantMatrixRow } from "@/lib/printify/product-matrix";
+import type { ShopifyPublishPhase } from "@/lib/publish/phases";
 import type { ShopifyClient } from "@/lib/shopify/client";
 
 import {
@@ -70,6 +71,7 @@ export async function repairAndVerifyShopifyPostSync(input: {
   mockupImages: ShopifyMockupImage[];
   primaryColorName: string | null;
   sizesInOrder?: string[];
+  onPhaseChange?: (phase: ShopifyPublishPhase) => Promise<void> | void;
 }): Promise<ShopifyPostSyncResult> {
   const expectedBySku = buildExpectedBySku(input.printifyRows);
   let product = await fetchShopifyPostSyncProduct(input.client, input.productId);
@@ -81,9 +83,10 @@ export async function repairAndVerifyShopifyPostSync(input: {
   const orderedSizes = orderSizeValues(
     input.sizesInOrder?.length
       ? input.sizesInOrder
-      : uniqueInOrder(input.printifyRows.map((row) => row.size)),
+    : uniqueInOrder(input.printifyRows.map((row) => row.size)),
   );
 
+  await input.onPhaseChange?.("REPAIRING_OPTIONS");
   const repairedOptions = await repairShopifyOptionSemantics({
     client: input.client,
     productId: input.productId,
@@ -99,6 +102,7 @@ export async function repairAndVerifyShopifyPostSync(input: {
 
   assertShopifyOptions(product, orderedColors, orderedSizes);
 
+  await input.onPhaseChange?.("SYNCING_MEDIA");
   const mediaResult = await syncShopifyVariantMedia({
     client: input.client,
     product,
@@ -120,6 +124,7 @@ export async function repairAndVerifyShopifyPostSync(input: {
 
   product = await fetchShopifyPostSyncProduct(input.client, input.productId);
   assertShopifyVariantMedia(product, expectedBySku);
+  await input.onPhaseChange?.("REORDERING_GALLERY");
   const reorderedGallery = await reorderShopifyMediaGallery({
     client: input.client,
     productId: input.productId,
@@ -131,6 +136,7 @@ export async function repairAndVerifyShopifyPostSync(input: {
     productId: input.productId,
     orderedColors,
   });
+  await input.onPhaseChange?.("VERIFYING");
   assertShopifyMediaGallery(product, orderedColors);
 
   return {

@@ -214,6 +214,7 @@ export async function waitForPrintifyShopifySync(input: {
   let lastExternalCount = 0;
   let lastCandidateCount = 0;
   let lastBestOverlap = 0;
+  let notifiedShopifyProductId: string | null = null;
 
   while (now() - startedAt <= input.timeoutMs) {
     const printifyProduct = await input.printifyClient.getProduct(input.printifyShopId, input.printifyProductId);
@@ -224,10 +225,13 @@ export async function waitForPrintifyShopifySync(input: {
       const productId = toShopifyProductGid(externalId);
       const match = await fetchShopifyProductById(input.shopifyClient, productId);
       if (!match) continue;
-      await input.onShopifyProductFound?.({
-        shopifyProductId: match.id,
-        source: "printify_external",
-      });
+      if (match.id !== notifiedShopifyProductId) {
+        notifiedShopifyProductId = match.id;
+        await input.onShopifyProductFound?.({
+          shopifyProductId: match.id,
+          source: "printify_external",
+        });
+      }
       const syncMatch = selectShopifyProductCandidate(input.printifyRows, productVariantsToCandidates(match));
       if (syncMatch) {
         input.log?.("[PublishWorker] Shopify sync matched by Printify external id", {
@@ -249,10 +253,13 @@ export async function waitForPrintifyShopifySync(input: {
     lastBestOverlap = bestSkuOverlap(input.printifyRows, candidates);
     const searchMatch = selectShopifyProductCandidate(input.printifyRows, candidates);
     if (searchMatch) {
-      await input.onShopifyProductFound?.({
-        shopifyProductId: searchMatch.shopifyProductId,
-        source: "sku_search",
-      });
+      if (searchMatch.shopifyProductId !== notifiedShopifyProductId) {
+        notifiedShopifyProductId = searchMatch.shopifyProductId;
+        await input.onShopifyProductFound?.({
+          shopifyProductId: searchMatch.shopifyProductId,
+          source: "sku_search",
+        });
+      }
       input.log?.("[PublishWorker] Shopify sync matched by SKU search", {
         printifyProductId: input.printifyProductId,
         shopifyProductId: searchMatch.shopifyProductId,

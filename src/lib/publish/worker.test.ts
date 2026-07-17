@@ -125,7 +125,7 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.ok(mappingIndex > repairIndex, "variant mapping should persist after Shopify verification");
     assert.ok(publishChannelsIndex > mappingIndex, "sales-channel publish should run after Shopify verification and mapping");
     assert.ok(activeUpdateIndex > publishChannelsIndex, "listing should only become active after sales-channel publish");
-    assert.match(source, /Shopify sales-channel publish failed/);
+    assert.match(source, /Đưa sản phẩm lên các kênh bán hàng Shopify thất bại/);
     assert.match(source, /status:\s*"PARTIAL_FAILURE"/);
   });
 
@@ -135,7 +135,7 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     const mappingIndex = source.indexOf("await persistPrintifyShopifyVariantMapping(", repairIndex);
     assert.ok(repairIndex > syncIndex, "post-sync repair should run after Shopify sync");
     assert.ok(mappingIndex > repairIndex, "variant mapping should persist only after Shopify verification");
-    assert.match(source, /Shopify post-sync option\/media verification failed/);
+    assert.match(source, /Chuẩn hóa tùy chọn, phiên bản và hình ảnh Shopify thất bại/);
     assert.match(source, /status:\s*"PARTIAL_FAILURE"/);
   });
 
@@ -150,7 +150,7 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.ok(primaryIndex > syncIndex, "primary color should be selected after Shopify sync");
     assert.ok(mediaOrderIndex > primaryIndex, "media ordering should use the selected primary color");
     assert.ok(repairIndex > mediaOrderIndex, "post-sync repair should use the ordered media and same primary color");
-    assert.match(source, /primaryColorName,\s*sizesInOrder:\s*draft\.enabledSizes \?\? \[\],\s*\}\);/);
+    assert.match(source, /primaryColorName,\s*sizesInOrder:\s*draft\.enabledSizes \?\? \[\],/);
     assert.match(source, /repairAndVerifyShopifyPostSync/);
   });
 
@@ -160,25 +160,31 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     const updateIndex = source.indexOf("data: { shopifyProductId }", foundIndex);
     assert.ok(foundIndex > syncIndex, "sync wait should receive an early product-found callback");
     assert.ok(updateIndex > foundIndex, "callback should persist listing.shopifyProductId immediately");
-    assert.match(source, /phase:\s*"SHOPIFY_ID_PERSISTED"/);
+    assert.doesNotMatch(source, /phase:\s*"SHOPIFY_ID_PERSISTED"/);
     assert.match(source, /phase:\s*"WAITING_VARIANTS"/);
   });
 
   it("tracks durable Shopify publish phases", () => {
     assert.match(source, /type ShopifyPublishPhase/);
     assert.match(source, /async function setPublishJobPhase/);
+    assert.match(source, /PUBLISH_PHASE_LABELS/);
+    assert.match(source, /publish\.progress/);
     assert.match(source, /phase:\s*"UPDATING_ORGANIZATION"/);
-    assert.match(source, /phase:\s*"REPAIRING_OPTIONS"/);
-    assert.match(source, /phase:\s*"SYNCING_MEDIA"/);
-    assert.match(source, /phase:\s*"VERIFYING"/);
+    assert.match(source, /onPhaseChange/);
     assert.match(source, /phase:\s*"PUBLISHING_CHANNELS"/);
   });
 
   it("recovers a missing resumed Printify product only by exact SKU set", () => {
+    assert.match(source, /buildPrintifyRecoveryData/);
+    assert.match(source, /getPrintifyRecoveryDataFromJob/);
+    assert.match(source, /expectedSkus/);
+    assert.match(source, /blueprintId/);
+    assert.match(source, /printProviderId/);
     assert.match(source, /recoverPrintifyProductByExactSkuSet/);
     assert.match(source, /MISSING_PRINTIFY_PRODUCT/);
     assert.match(source, /AMBIGUOUS_PRINTIFY_PRODUCT/);
     assert.match(source, /sameStringSet\(input\.expectedSkuSet, productSkuSet\)/);
+    assert.match(source, /matchesPrintifyCatalog\(product, input\.blueprintId, input\.printProviderId\)/);
   });
 
   it("optionally unpublishes Printify after Shopify sync while keeping Shopify active", () => {
@@ -216,7 +222,7 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
   });
 
   it("marks Shopify sync timeout as partial failure without Shopify productSet fallback", () => {
-    assert.match(source, /Printify published but Shopify sync was not confirmed/);
+    assert.match(source, /Chưa xác nhận được sản phẩm Shopify sau khi Printify publish/);
     assert.doesNotMatch(source, /catch[\s\S]{0,400}publishToShopify/);
   });
 });

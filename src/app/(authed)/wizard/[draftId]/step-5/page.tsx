@@ -17,6 +17,7 @@ import {
   resolveBaseTemplatePrice,
   resolvePriceForSize,
 } from "@/lib/pricing/template-pricing";
+import { getPublishPhaseLabel } from "@/lib/publish/phases";
 import {
   formatContentChecklistLabel,
   formatListingSummaryLabel,
@@ -261,9 +262,10 @@ function jobToPublishLog(job: PersistedPublishJob): PublishLog | null {
       };
     }
     if (job.progressMessage) {
+      const phaseMessage = getPublishPhaseLabel(job.phase) ?? job.progressMessage;
       return {
         stage: job.phase || "SHOPIFY",
-        message: job.progressMessage,
+        message: phaseMessage,
         status: "pending",
       };
     }
@@ -744,7 +746,16 @@ export default function Step5ReviewPage() {
       try {
         const data = JSON.parse(event.data) as {
           type?: string;
-          data?: { listingId?: string; draftDesignId?: string; designId?: string; status?: string; reason?: string; error?: string };
+          data?: {
+            listingId?: string;
+            draftDesignId?: string;
+            designId?: string;
+            status?: string;
+            reason?: string;
+            error?: string;
+            phase?: string;
+            message?: string;
+          };
         };
         const listingId = data.data?.listingId;
         const designKeyFallback = data.data?.draftDesignId ?? data.data?.designId ?? null;
@@ -758,6 +769,16 @@ export default function Step5ReviewPage() {
             return appendPublishLog(next, {
               stage: "SHOPIFY",
               message: "Đang publish lên Shopify...",
+              status: "pending",
+            });
+          }
+
+          if (eventType === "publish.progress") {
+            const phase = data.data?.phase ?? null;
+            const message = getPublishPhaseLabel(phase) ?? data.data?.message ?? "Đang xử lý publish...";
+            return appendPublishLog(next, {
+              stage: phase || "SHOPIFY",
+              message,
               status: "pending",
             });
           }

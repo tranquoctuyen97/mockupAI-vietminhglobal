@@ -45,6 +45,7 @@ import { getClientForStore } from "@/lib/printify/account";
 import { PrintifyApiError, PrintifyNotFoundError } from "@/lib/printify/client";
 import { extractEnabledPrintifyVariantMatrix } from "@/lib/printify/product-matrix";
 import { createOrUpdatePrintifyProduct, ensurePrintifyImage } from "@/lib/printify/product";
+import { PUBLISH_PHASE_LABELS, type ShopifyPublishPhase } from "@/lib/publish/phases";
 import {
   buildVariantPayload,
   computeVariantMatrixPerColor,
@@ -81,30 +82,27 @@ const CLEAR_PUBLISH_JOB_PHASE = {
   phaseStartedAt: null,
 };
 
-type ShopifyPublishPhase =
-  | "WAITING_EXTERNAL"
-  | "SHOPIFY_ID_PERSISTED"
-  | "WAITING_VARIANTS"
-  | "UPDATING_ORGANIZATION"
-  | "REPAIRING_OPTIONS"
-  | "SYNCING_MEDIA"
-  | "VERIFYING"
-  | "PUBLISHING_CHANNELS";
-
 async function setPublishJobPhase(input: {
   jobId: string;
   phase: ShopifyPublishPhase;
-  message: string;
   data?: Prisma.InputJsonObject;
+  emitEvent?: (type: string, data?: Record<string, unknown>) => void;
 }): Promise<void> {
+  const message = PUBLISH_PHASE_LABELS[input.phase];
   await prisma.publishJob.update({
     where: { id: input.jobId },
     data: {
       phase: input.phase,
-      progressMessage: input.message,
+      progressMessage: message,
       progressData: input.data ?? Prisma.DbNull,
       phaseStartedAt: new Date(),
     },
+  });
+  input.emitEvent?.("publish.progress", {
+    stage: "SHOPIFY",
+    phase: input.phase,
+    message,
+    data: input.data ?? null,
   });
 }
 
@@ -1178,9 +1176,9 @@ async function runPrintifyShopifyChannelPublish(input: {
     where: { id: shopifyJob.id },
     data: {
       status: "PENDING",
-      lastError: "Waiting for Printify Shopify-channel sync",
+      lastError: null,
       phase: "WAITING_EXTERNAL",
-      progressMessage: "Đang chờ Printify đồng bộ Shopify product",
+      progressMessage: PUBLISH_PHASE_LABELS.WAITING_EXTERNAL,
       progressData: Prisma.DbNull,
       phaseStartedAt: new Date(),
     },
@@ -1228,6 +1226,13 @@ async function runPrintifyShopifyChannelPublish(input: {
           draft.printifyDraftProductId ??
           null,
       });
+  const printifyRecoveryData = publishInput ? buildPrintifyRecoveryData(publishInput) : null;
+  if (printifyRecoveryData) {
+    await prisma.publishJob.update({
+      where: { id: printifyJob.id },
+      data: { progressData: printifyRecoveryData },
+    });
+  }
 
   let productIdForAttempt = publishInput?.productId ?? listing.printifyProductId ?? null;
   let printifyProductResult: { productId: string; images: unknown[] } | null = null;
@@ -1305,10 +1310,16 @@ async function runPrintifyShopifyChannelPublish(input: {
         "PRINTIFY",
       );
     } catch (err) {
-      const error = err instanceof Error ? err.message : "Printify product create/update failed";
+      const technicalError = err instanceof Error ? err.message : null;
+      const error = formatPrintifyPublishError(technicalError);
       await prisma.publishJob.update({
         where: { id: printifyJob.id },
-        data: { status: "FAILED", lastError: error, completedAt: new Date() },
+        data: {
+          status: "FAILED",
+          lastError: error,
+          progressData: technicalError ? { technicalError } : Prisma.DbNull,
+          completedAt: new Date(),
+        },
       });
       await prisma.listing.update({ where: { id: listingId }, data: { status: "FAILED" } });
       emitEvent("publish.failed", { stage: "PRINTIFY", error });
@@ -1317,10 +1328,11 @@ async function runPrintifyShopifyChannelPublish(input: {
   }
 
   if (!printifyProductResult) {
+    const error = "Tạo hoặc cập nhật sản phẩm Printify thất bại";
     await prisma.listing.update({ where: { id: listingId }, data: { status: "FAILED" } });
     emitEvent("publish.failed", {
       stage: "PRINTIFY",
-      error: "Printify product create/update failed",
+      error,
     });
     return;
   }
@@ -1345,12 +1357,17 @@ async function runPrintifyShopifyChannelPublish(input: {
         throw err;
       }
 
-      const expectedSkuSet = skuSetFromListingVariants(listing);
+      const recoveryData = getPrintifyRecoveryDataFromJob(printifyJob);
+      const expectedSkuSet = recoveryData
+        ? new Set(recoveryData.expectedSkus)
+        : skuSetFromListingVariants(listing);
       const recovered = await recoverPrintifyProductByExactSkuSet({
         client: printifyClient,
         shopId: externalShopId,
         listing,
         expectedSkuSet,
+        blueprintId: recoveryData?.blueprintId ?? null,
+        printProviderId: recoveryData?.printProviderId ?? null,
       });
       if (!recovered) {
         throw new Error(
@@ -1387,10 +1404,16 @@ async function runPrintifyShopifyChannelPublish(input: {
       });
     }
   } catch (err) {
-    const error = err instanceof Error ? err.message : "Printify publish failed";
+    const technicalError = err instanceof Error ? err.message : null;
+    const error = formatPrintifyPublishError(technicalError);
     await prisma.publishJob.update({
       where: { id: printifyJob.id },
-      data: { status: "FAILED", lastError: error, completedAt: new Date() },
+      data: {
+        status: "FAILED",
+        lastError: error,
+        progressData: technicalError ? { technicalError } : Prisma.DbNull,
+        completedAt: new Date(),
+      },
     });
     await prisma.listing.update({ where: { id: listingId }, data: { status: "FAILED" } });
     emitEvent("publish.failed", { stage: "PRINTIFY", error });
@@ -1403,7 +1426,14 @@ async function runPrintifyShopifyChannelPublish(input: {
   });
   await prisma.publishJob.update({
     where: { id: printifyJob.id },
-    data: { status: "SUCCEEDED", completedAt: new Date(), lastError: null, ...CLEAR_PUBLISH_JOB_PHASE },
+    data: {
+      status: "SUCCEEDED",
+      completedAt: new Date(),
+      lastError: null,
+      phase: null,
+      progressMessage: null,
+      phaseStartedAt: null,
+    },
   });
   emitEvent("publish.printify.done", { printifyProductId: printifyProductResult.productId });
 
@@ -1414,7 +1444,7 @@ async function runPrintifyShopifyChannelPublish(input: {
       status: "RUNNING",
       lastError: null,
       phase: "WAITING_EXTERNAL",
-      progressMessage: "Đang chờ Printify đồng bộ Shopify product",
+      progressMessage: PUBLISH_PHASE_LABELS.WAITING_EXTERNAL,
       progressData: Prisma.DbNull,
       phaseStartedAt: new Date(),
     },
@@ -1439,26 +1469,22 @@ async function runPrintifyShopifyChannelPublish(input: {
         });
         await setPublishJobPhase({
           jobId: shopifyJob.id,
-          phase: "SHOPIFY_ID_PERSISTED",
-          message: "Đã tìm thấy Shopify product",
-          data: { shopifyProductId, source },
-        });
-        await setPublishJobPhase({
-          jobId: shopifyJob.id,
           phase: "WAITING_VARIANTS",
-          message: "Đang chờ Shopify variants/SKU đồng bộ đủ",
-          data: { shopifyProductId },
+          data: { shopifyProductId, source },
+          emitEvent,
         });
       },
       log: (message, data) => console.log(message, { listingId, ...data }),
     });
   } catch (err) {
-    const message = "Printify published but Shopify sync was not confirmed";
+    const technicalError = err instanceof Error ? err.message : null;
+    const message = "Chưa xác nhận được sản phẩm Shopify sau khi Printify publish";
     await prisma.publishJob.update({
       where: { id: shopifyJob.id },
       data: {
         status: "FAILED",
-        lastError: err instanceof Error ? `${message}: ${err.message}` : message,
+        lastError: message,
+        progressData: technicalError ? { technicalError } : Prisma.DbNull,
         completedAt: new Date(),
       },
     });
@@ -1473,8 +1499,8 @@ async function runPrintifyShopifyChannelPublish(input: {
   await setPublishJobPhase({
     jobId: shopifyJob.id,
     phase: "UPDATING_ORGANIZATION",
-    message: "Đang cập nhật category và collections",
     data: { shopifyProductId: syncMatch.shopifyProductId },
+    emitEvent,
   });
 
   try {
@@ -1498,12 +1524,14 @@ async function runPrintifyShopifyChannelPublish(input: {
       collections: listing.organizationCollections ?? [],
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Shopify collection attach failed";
+    const technicalError = err instanceof Error ? err.message : null;
+    const message = "Cập nhật bộ sưu tập Shopify thất bại";
     await prisma.publishJob.update({
       where: { id: shopifyJob.id },
       data: {
         status: "FAILED",
         lastError: message,
+        progressData: technicalError ? { technicalError } : Prisma.DbNull,
         completedAt: new Date(),
       },
     });
@@ -1513,23 +1541,11 @@ async function runPrintifyShopifyChannelPublish(input: {
   }
 
   try {
-    await setPublishJobPhase({
-      jobId: shopifyJob.id,
-      phase: "REPAIRING_OPTIONS",
-      message: "Đang chuẩn hóa Color/Size",
-      data: { shopifyProductId: syncMatch.shopifyProductId },
-    });
     const orderedMockupImages = orderMockupImagesByPrimary(
       mockupImages,
       listingColorNames,
       primaryColorName,
     );
-    await setPublishJobPhase({
-      jobId: shopifyJob.id,
-      phase: "SYNCING_MEDIA",
-      message: "Đang gắn ảnh theo màu và sắp xếp gallery",
-      data: { shopifyProductId: syncMatch.shopifyProductId },
-    });
     await repairAndVerifyShopifyPostSync({
       client: shopifyClient,
       productId: syncMatch.shopifyProductId,
@@ -1537,23 +1553,24 @@ async function runPrintifyShopifyChannelPublish(input: {
       mockupImages: orderedMockupImages,
       primaryColorName,
       sizesInOrder: draft.enabledSizes ?? [],
-    });
-    await setPublishJobPhase({
-      jobId: shopifyJob.id,
-      phase: "VERIFYING",
-      message: "Đã xác minh options, variants, media và gallery",
-      data: { shopifyProductId: syncMatch.shopifyProductId },
+      onPhaseChange: (phase) =>
+        setPublishJobPhase({
+          jobId: shopifyJob.id,
+          phase,
+          data: { shopifyProductId: syncMatch.shopifyProductId },
+          emitEvent,
+        }),
     });
   } catch (err) {
+    const technicalError = err instanceof Error ? err.message : null;
     const message =
-      err instanceof Error
-        ? `Shopify post-sync option/media verification failed: ${err.message}`
-        : "Shopify post-sync option/media verification failed";
+      "Chuẩn hóa tùy chọn, phiên bản và hình ảnh Shopify thất bại";
     await prisma.publishJob.update({
       where: { id: shopifyJob.id },
       data: {
         status: "FAILED",
         lastError: message,
+        progressData: technicalError ? { technicalError } : Prisma.DbNull,
         completedAt: new Date(),
       },
     });
@@ -1573,8 +1590,8 @@ async function runPrintifyShopifyChannelPublish(input: {
   await setPublishJobPhase({
     jobId: shopifyJob.id,
     phase: "PUBLISHING_CHANNELS",
-    message: "Đang publish Shopify product đã verify ra sales channels",
     data: { shopifyProductId: syncMatch.shopifyProductId },
+    emitEvent,
   });
   try {
     const channelResult = await publishToAllChannels(shopifyClient, syncMatch.shopifyProductId);
@@ -1588,15 +1605,15 @@ async function runPrintifyShopifyChannelPublish(input: {
       );
     }
   } catch (err) {
+    const technicalError = err instanceof Error ? err.message : null;
     const message =
-      err instanceof Error
-        ? `Shopify sales-channel publish failed: ${err.message}`
-        : "Shopify sales-channel publish failed";
+      "Đưa sản phẩm lên các kênh bán hàng Shopify thất bại";
     await prisma.publishJob.update({
       where: { id: shopifyJob.id },
       data: {
         status: "FAILED",
         lastError: message,
+        progressData: technicalError ? { technicalError } : Prisma.DbNull,
         completedAt: new Date(),
       },
     });
@@ -1750,6 +1767,56 @@ function skuSetFromListingVariants(listing: any): Set<string> {
   );
 }
 
+function formatPrintifyPublishError(message: string | null): string {
+  if (message?.startsWith("MISSING_PRINTIFY_PRODUCT")) {
+    return "Không tìm thấy sản phẩm Printify để tiếp tục publish";
+  }
+  if (message?.startsWith("AMBIGUOUS_PRINTIFY_PRODUCT")) {
+    return "Tìm thấy nhiều sản phẩm Printify trùng dữ liệu, cần kiểm tra thủ công";
+  }
+  return "Tạo hoặc cập nhật sản phẩm Printify thất bại";
+}
+
+type PrintifyRecoveryData = {
+  expectedSkus: string[];
+  blueprintId: number;
+  printProviderId: number;
+};
+
+function buildPrintifyRecoveryData(input: {
+  blueprintId: number;
+  printProviderId: number;
+  variants?: Array<{ sku?: string; is_enabled: boolean }>;
+}): Prisma.InputJsonObject {
+  const expectedSkus = Array.from(
+    new Set(
+      (input.variants ?? [])
+        .filter((variant) => variant.is_enabled)
+        .map((variant) => variant.sku?.trim() ?? "")
+        .filter(Boolean),
+    ),
+  );
+  return {
+    expectedSkus,
+    blueprintId: input.blueprintId,
+    printProviderId: input.printProviderId,
+  };
+}
+
+function getPrintifyRecoveryDataFromJob(job: any): PrintifyRecoveryData | null {
+  const data = job?.progressData;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const expectedSkus = Array.isArray((data as any).expectedSkus)
+    ? (data as any).expectedSkus.filter((sku: unknown): sku is string => typeof sku === "string" && sku.trim().length > 0)
+    : [];
+  const blueprintId = Number((data as any).blueprintId);
+  const printProviderId = Number((data as any).printProviderId);
+  if (expectedSkus.length === 0 || !Number.isFinite(blueprintId) || !Number.isFinite(printProviderId)) {
+    return null;
+  }
+  return { expectedSkus, blueprintId, printProviderId };
+}
+
 function enabledSkuSetFromPrintifyProduct(product: any): Set<string> {
   const variants = Array.isArray(product?.variants) ? product.variants : [];
   return new Set(
@@ -1768,11 +1835,35 @@ function sameStringSet(left: Set<string>, right: Set<string>): boolean {
   return true;
 }
 
+function productCatalogId(product: any, snakeKey: string, camelKey: string): number | null {
+  const raw = product?.[snakeKey] ?? product?.[camelKey];
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function matchesPrintifyCatalog(
+  product: any,
+  blueprintId: number | null,
+  printProviderId: number | null,
+): boolean {
+  if (blueprintId !== null) {
+    const productBlueprintId = productCatalogId(product, "blueprint_id", "blueprintId");
+    if (productBlueprintId !== blueprintId) return false;
+  }
+  if (printProviderId !== null) {
+    const productPrintProviderId = productCatalogId(product, "print_provider_id", "printProviderId");
+    if (productPrintProviderId !== printProviderId) return false;
+  }
+  return true;
+}
+
 async function recoverPrintifyProductByExactSkuSet(input: {
   client: Awaited<ReturnType<typeof getClientForStore>>["client"];
   shopId: number;
   listing: any;
   expectedSkuSet: Set<string>;
+  blueprintId: number | null;
+  printProviderId: number | null;
 }): Promise<{ id: string; product: any } | null> {
   if (input.expectedSkuSet.size === 0) return null;
 
@@ -1780,7 +1871,7 @@ async function recoverPrintifyProductByExactSkuSet(input: {
   for (let page = 1; page <= 5; page += 1) {
     const result = await input.client.getProducts(input.shopId, page);
     for (const product of result.data ?? []) {
-      if (product.title?.trim() !== input.listing.title?.trim()) continue;
+      if (!matchesPrintifyCatalog(product, input.blueprintId, input.printProviderId)) continue;
       const productSkuSet = enabledSkuSetFromPrintifyProduct(product);
       if (sameStringSet(input.expectedSkuSet, productSkuSet)) {
         matches.push({ id: product.id, product });
