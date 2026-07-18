@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { finalizeFailedPublishAttemptIdempotently } from "@/lib/jobs/workers/publish-worker";
+import { finalizeFailedPublishAttemptInTransaction } from "@/lib/jobs/workers/publish-worker";
 import { enqueuePublishJob } from "@/lib/publish/queue";
 
 const PUBLISH_OUTBOX_BATCH_SIZE = Number(process.env.PUBLISH_OUTBOX_BATCH_SIZE ?? 25);
@@ -57,13 +57,23 @@ export async function dispatchPendingPublishOutbox(
       dispatched += 1;
     } catch (enqueueError) {
       if (row.attempts >= PUBLISH_OUTBOX_MAX_ATTEMPTS) {
-        await finalizeFailedPublishAttemptIdempotently({
-          listingId: row.listing_id,
-          publishAttemptId: row.publish_attempt_id,
-          error: enqueueError,
-          errorCode: "PUBLISH_ENQUEUE_FAILED",
+        await prisma.$transaction(async (tx) => {
+          await finalizeFailedPublishAttemptInTransaction(tx, {
+            listingId: row.listing_id,
+            publishAttemptId: row.publish_attempt_id,
+            error: enqueueError,
+            errorCode: "PUBLISH_ENQUEUE_FAILED",
+          });
+          await tx.publishOutbox.update({
+            where: { id: row.id },
+            data: {
+              status: "DEAD",
+              lockedAt: null,
+              lockedBy: null,
+              lastError: sanitizeOutboxError(enqueueError),
+            },
+          });
         });
-        await markPublishOutboxDead(row.id, enqueueError);
       } else {
         await reschedulePublishOutbox(row.id, enqueueError, row.attempts);
       }

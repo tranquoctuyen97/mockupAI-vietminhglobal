@@ -25,18 +25,21 @@ describe("publish outbox contract", () => {
     assert.match(source, /enqueuePublishJob/);
     assert.match(source, /publishAttemptId:\s*row\.publish_attempt_id/);
     assert.match(source, /markPublishOutboxDead/);
-    assert.match(source, /finalizeFailedPublishAttemptIdempotently/);
+    assert.match(source, /finalizeFailedPublishAttemptInTransaction/);
     assert.match(source, /errorCode:\s*"PUBLISH_ENQUEUE_FAILED"/);
   });
 
-  it("finalizes the attempt before marking the outbox row dead", () => {
+  it("finalizes the attempt and marks the outbox row dead atomically", () => {
     const terminalBranchIndex = source.indexOf("row.attempts >= PUBLISH_OUTBOX_MAX_ATTEMPTS");
     const terminalBranch = source.slice(terminalBranchIndex, terminalBranchIndex + 600);
+    assert.match(terminalBranch, /prisma\.\$transaction\(async \(tx\) =>/);
     const finalizeIndex = terminalBranch.indexOf("finalizeFailedPublishAttemptIdempotently");
-    const deadIndex = terminalBranch.indexOf("markPublishOutboxDead");
-    assert.ok(finalizeIndex >= 0, "terminal branch should call finalizer");
+    const inTxFinalizeIndex = terminalBranch.indexOf("finalizeFailedPublishAttemptInTransaction");
+    const deadIndex = terminalBranch.indexOf("tx.publishOutbox.update");
+    assert.equal(finalizeIndex, -1, "terminal branch should not call non-transactional finalizer");
+    assert.ok(inTxFinalizeIndex >= 0, "terminal branch should call transactional finalizer");
     assert.ok(deadIndex >= 0, "terminal branch should mark outbox dead");
-    assert.ok(finalizeIndex < deadIndex, "finalizer must run before marking outbox dead");
+    assert.ok(inTxFinalizeIndex < deadIndex, "finalizer must run before marking outbox dead");
   });
 
   it("uses hostname pid and worker instance uuid for lockedBy", () => {

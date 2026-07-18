@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { DelayedError, type Job, UnrecoverableError, Worker } from "bullmq";
 import { prisma } from "@/lib/db";
 import {
@@ -23,6 +24,7 @@ type PublishJobStatus =
   | "FAILED";
 
 type ListingFinalStatus = "ACTIVE" | "FAILED" | "PARTIAL_FAILURE";
+type PublishTransaction = Prisma.TransactionClient;
 
 class PublishAttemptDidNotCompleteError extends Error {
   constructor(message: string) {
@@ -73,8 +75,15 @@ export function resolveFinalListingStatus(input: {
 export async function finalizeFailedPublishAttemptIdempotently(
   input: FinalizeFailedPublishAttemptInput,
 ): Promise<void> {
+  await prisma.$transaction((tx) => finalizeFailedPublishAttemptInTransaction(tx, input));
+}
+
+export async function finalizeFailedPublishAttemptInTransaction(
+  tx: PublishTransaction,
+  input: FinalizeFailedPublishAttemptInput,
+): Promise<void> {
   const [listing, attempt, jobs] = await Promise.all([
-    prisma.listing.findUnique({
+    tx.listing.findUnique({
       where: { id: input.listingId },
       select: {
         id: true,
@@ -88,7 +97,7 @@ export async function finalizeFailedPublishAttemptIdempotently(
         },
       },
     }),
-    prisma.publishAttempt.findUnique({
+    tx.publishAttempt.findUnique({
       where: { id: input.publishAttemptId },
       select: {
         id: true,
@@ -97,13 +106,13 @@ export async function finalizeFailedPublishAttemptIdempotently(
         firstExternalWriteStartedAt: true,
       },
     }),
-    prisma.publishJob.findMany({
+    tx.publishJob.findMany({
       where: { publishAttemptId: input.publishAttemptId },
       select: { stage: true, status: true },
     }),
   ]);
 
-  if (!listing || !attempt || ["SUCCEEDED", "FAILED"].includes(attempt.status)) return;
+  if (!listing || !attempt) return;
 
   const shopifyStatus =
     (jobs.find((job: { stage: string }) => job.stage === "SHOPIFY")?.status as PublishJobStatus) ??
@@ -126,23 +135,26 @@ export async function finalizeFailedPublishAttemptIdempotently(
   const errorCode = input.errorCode ?? "UNKNOWN";
   const lastError = input.userMessage ?? publishUserMessageForCode(errorCode);
 
-  await prisma.publishJob.updateMany({
-    where: {
-      publishAttemptId: input.publishAttemptId,
-      status: { not: "SUCCEEDED" },
-    },
-    data: {
-      status: "FAILED",
-      lastErrorCode: errorCode,
-      lastError,
-      completedAt: new Date(),
-    },
-  });
-  await prisma.publishAttempt.updateMany({
-    where: { id: input.publishAttemptId, status: { notIn: ["SUCCEEDED", "FAILED"] } },
-    data: { status: "FAILED", completedAt: new Date() },
-  });
-  await prisma.listing.updateMany({
+  if (!["SUCCEEDED", "FAILED"].includes(attempt.status)) {
+    await tx.publishJob.updateMany({
+      where: {
+        publishAttemptId: input.publishAttemptId,
+        status: { not: "SUCCEEDED" },
+      },
+      data: {
+        status: "FAILED",
+        lastErrorCode: errorCode,
+        lastError,
+        completedAt: new Date(),
+      },
+    });
+    await tx.publishAttempt.updateMany({
+      where: { id: input.publishAttemptId, status: { notIn: ["SUCCEEDED", "FAILED"] } },
+      data: { status: "FAILED", completedAt: new Date() },
+    });
+  }
+
+  await tx.listing.updateMany({
     where: {
       id: input.listingId,
       activePublishAttemptId: input.publishAttemptId,
@@ -154,10 +166,61 @@ export async function finalizeFailedPublishAttemptIdempotently(
   });
 }
 
-async function markPublishAttemptRunning(publishAttemptId: string): Promise<void> {
-  await prisma.publishAttempt.updateMany({
-    where: { id: publishAttemptId, status: "PENDING" },
-    data: { status: "RUNNING", startedAt: new Date() },
+async function preparePublishAttemptForRun(input: {
+  listingId: string;
+  publishAttemptId: string;
+}): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    const [listing, attempt] = await Promise.all([
+      tx.listing.findUnique({
+        where: { id: input.listingId },
+        select: {
+          id: true,
+          activePublishAttemptId: true,
+        },
+      }),
+      tx.publishAttempt.findUnique({
+        where: { id: input.publishAttemptId },
+        select: {
+          id: true,
+          status: true,
+        },
+      }),
+    ]);
+
+    if (!listing || !attempt) return false;
+
+    if (attempt.status === "SUCCEEDED") {
+      await tx.listing.updateMany({
+        where: {
+          id: input.listingId,
+          activePublishAttemptId: input.publishAttemptId,
+        },
+        data: {
+          activePublishAttemptId: null,
+          status: "ACTIVE",
+        },
+      });
+      return false;
+    }
+
+    if (attempt.status === "FAILED") {
+      await finalizeFailedPublishAttemptInTransaction(tx, {
+        listingId: input.listingId,
+        publishAttemptId: input.publishAttemptId,
+        error: new PublishAttemptDidNotCompleteError("Publish attempt already failed."),
+      });
+      return false;
+    }
+
+    if (listing.activePublishAttemptId !== input.publishAttemptId) return false;
+    if (!["PENDING", "RUNNING"].includes(attempt.status)) return false;
+
+    await tx.publishAttempt.updateMany({
+      where: { id: input.publishAttemptId, status: "PENDING" },
+      data: { status: "RUNNING", startedAt: new Date() },
+    });
+    return true;
   });
 }
 
@@ -165,19 +228,27 @@ async function finalizeSucceededPublishAttemptIdempotently(input: {
   listingId: string;
   publishAttemptId: string;
 }): Promise<void> {
-  await prisma.publishAttempt.updateMany({
-    where: { id: input.publishAttemptId, status: { notIn: ["SUCCEEDED", "FAILED"] } },
-    data: { status: "SUCCEEDED", completedAt: new Date() },
-  });
-  await prisma.listing.updateMany({
-    where: {
-      id: input.listingId,
-      activePublishAttemptId: input.publishAttemptId,
-    },
-    data: {
-      activePublishAttemptId: null,
-      status: "ACTIVE",
-    },
+  await prisma.$transaction(async (tx) => {
+    const attempt = await tx.publishAttempt.findUnique({
+      where: { id: input.publishAttemptId },
+      select: { status: true },
+    });
+    if (!attempt || attempt.status === "FAILED") return;
+
+    await tx.publishAttempt.updateMany({
+      where: { id: input.publishAttemptId, status: { notIn: ["SUCCEEDED", "FAILED"] } },
+      data: { status: "SUCCEEDED", completedAt: new Date() },
+    });
+    await tx.listing.updateMany({
+      where: {
+        id: input.listingId,
+        activePublishAttemptId: input.publishAttemptId,
+      },
+      data: {
+        activePublishAttemptId: null,
+        status: "ACTIVE",
+      },
+    });
   });
 }
 
@@ -209,7 +280,19 @@ async function reconcilePublishAttemptAfterRun(input: {
   });
 
   const attempt = listing?.publishAttempts[0] ?? null;
-  if (!listing || !attempt || ["SUCCEEDED", "FAILED"].includes(attempt.status)) return;
+  if (!listing || !attempt) return;
+  if (attempt.status === "SUCCEEDED") {
+    await finalizeSucceededPublishAttemptIdempotently(input);
+    return;
+  }
+  if (attempt.status === "FAILED") {
+    await finalizeFailedPublishAttemptIdempotently({
+      listingId: input.listingId,
+      publishAttemptId: input.publishAttemptId,
+      error: new PublishAttemptDidNotCompleteError("Publish attempt already failed."),
+    });
+    return;
+  }
 
   const shopifyStatus =
     (listing.publishJobs.find((job) => job.stage === "SHOPIFY")?.status as PublishJobStatus) ??
@@ -261,7 +344,12 @@ export function startPublishWorker(): Worker<PublishJobPayload> {
           retryOwner: "bullmq",
           publishAttemptId: job.data.publishAttemptId,
         };
-        await markPublishAttemptRunning(job.data.publishAttemptId);
+        const shouldRun = await preparePublishAttemptForRun({
+          listingId: job.data.listingId,
+          publishAttemptId: job.data.publishAttemptId,
+        });
+        if (!shouldRun) return;
+
         await runPublishWorker(workerInput, options);
         await reconcilePublishAttemptAfterRun({
           listingId: job.data.listingId,
