@@ -29,6 +29,16 @@ describe("publish outbox contract", () => {
     assert.match(source, /errorCode:\s*"PUBLISH_ENQUEUE_FAILED"/);
   });
 
+  it("finalizes the attempt before marking the outbox row dead", () => {
+    const terminalBranchIndex = source.indexOf("row.attempts >= PUBLISH_OUTBOX_MAX_ATTEMPTS");
+    const terminalBranch = source.slice(terminalBranchIndex, terminalBranchIndex + 600);
+    const finalizeIndex = terminalBranch.indexOf("finalizeFailedPublishAttemptIdempotently");
+    const deadIndex = terminalBranch.indexOf("markPublishOutboxDead");
+    assert.ok(finalizeIndex >= 0, "terminal branch should call finalizer");
+    assert.ok(deadIndex >= 0, "terminal branch should mark outbox dead");
+    assert.ok(finalizeIndex < deadIndex, "finalizer must run before marking outbox dead");
+  });
+
   it("uses hostname pid and worker instance uuid for lockedBy", () => {
     assert.match(source, /hostname\(\)/);
     assert.match(source, /process\.pid/);

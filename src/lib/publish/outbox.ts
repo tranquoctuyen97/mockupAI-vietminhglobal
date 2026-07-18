@@ -57,13 +57,13 @@ export async function dispatchPendingPublishOutbox(
       dispatched += 1;
     } catch (enqueueError) {
       if (row.attempts >= PUBLISH_OUTBOX_MAX_ATTEMPTS) {
-        await markPublishOutboxDead(row.id, enqueueError);
         await finalizeFailedPublishAttemptIdempotently({
           listingId: row.listing_id,
           publishAttemptId: row.publish_attempt_id,
           error: enqueueError,
           errorCode: "PUBLISH_ENQUEUE_FAILED",
         });
+        await markPublishOutboxDead(row.id, enqueueError);
       } else {
         await reschedulePublishOutbox(row.id, enqueueError, row.attempts);
       }

@@ -23,10 +23,13 @@ describe("listing retry route queue contract", () => {
   });
 
   it("carries forward only succeeded stages with durable product ids", () => {
-    assert.match(source, /previousJob\?\.status !== "SUCCEEDED"/);
+    assert.match(source, /latestSucceededJobForStage/);
+    assert.match(source, /job\.status === "SUCCEEDED"/);
     assert.match(source, /listing\.shopifyProductId/);
     assert.match(source, /listing\.printifyProductId/);
-    assert.match(source, /resumeFromAttemptId/);
+    assert.match(source, /shopifyResumeFromAttemptId/);
+    assert.match(source, /printifyResumeFromAttemptId/);
+    assert.match(source, /orderBy:\s*\{\s*createdAt:\s*"desc"\s*\}/);
   });
 
   it("does not run publish workers inline", () => {

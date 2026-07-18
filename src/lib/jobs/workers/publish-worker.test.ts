@@ -13,13 +13,29 @@ test("publish worker rethrows retryable errors so BullMQ owns retries", () => {
   assert.match(source, /UnrecoverableError/);
   assert.match(source, /attemptsMade/);
   assert.match(source, /opts\.attempts/);
+  assert.match(source, /reconcilePublishAttemptAfterRun/);
+  assert.match(source, /PublishAttemptDidNotCompleteError/);
 });
 
 test("publish worker terminal finalizer is idempotent and failed event is caught", () => {
   assert.match(source, /finalizeFailedPublishAttemptIdempotently/);
   assert.match(source, /activePublishAttemptId:\s*input\.publishAttemptId/);
+  assert.match(source, /finalizeSucceededPublishAttemptIdempotently/);
+  assert.match(source, /status:\s*"SUCCEEDED"/);
   assert.match(source, /worker\.on\("failed"/);
   assert.match(source, /\.catch\(\(finalizeError\)/);
+});
+
+test("publish worker marks attempts running and clears active pointer on success", () => {
+  assert.match(source, /markPublishAttemptRunning/);
+  assert.match(source, /status:\s*"RUNNING"/);
+  assert.match(source, /startedAt:\s*new Date\(\)/);
+  assert.match(source, /activePublishAttemptId:\s*null/);
+});
+
+test("publish worker resolves final status from store strategy instead of stage guessing", () => {
+  assert.match(source, /resolvePublishStrategy\(listing\.store\)/);
+  assert.doesNotMatch(source, /shopifyStatus === "SUCCEEDED" && printifyStatus !== "SUCCEEDED"/);
 });
 
 test("publish worker uses durable first external write marker for final status", () => {

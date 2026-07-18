@@ -76,13 +76,27 @@ function shouldCarryForwardStage(input: {
   listing: ExistingListingForPublish;
   stage: "SHOPIFY" | "PRINTIFY";
 }): boolean {
-  const previousJob = input.listing.publishJobs?.find((job) => job.stage === input.stage);
+  const previousJob = latestSucceededJobForStage(input.listing, input.stage);
   if (previousJob?.status !== "SUCCEEDED") return false;
 
   if (input.stage === "SHOPIFY") {
     return Boolean(input.listing.shopifyProductId);
   }
   return Boolean(input.listing.printifyProductId);
+}
+
+function latestSucceededJobForStage(
+  listing: ExistingListingForPublish,
+  stage: "SHOPIFY" | "PRINTIFY",
+): NonNullable<ExistingListingForPublish["publishJobs"]>[number] | null {
+  return (
+    listing.publishJobs?.find(
+      (job) =>
+        job.stage === stage &&
+        job.status === "SUCCEEDED" &&
+        (stage === "SHOPIFY" ? listing.shopifyProductId : listing.printifyProductId),
+    ) ?? null
+  );
 }
 
 async function createPublishAttemptForListing(input: {
@@ -110,11 +124,15 @@ async function createPublishAttemptForListing(input: {
   const printifyStatus = shouldCarryForwardStage({ listing: input.listing, stage: "PRINTIFY" })
     ? "SUCCEEDED"
     : "PENDING";
-  const resumedFromAttemptId =
-    shopifyStatus === "SUCCEEDED" || printifyStatus === "SUCCEEDED"
-      ? (input.listing.publishJobs?.find((job) => job.status === "SUCCEEDED")?.publishAttemptId ??
-        null)
+  const shopifyResumeFromAttemptId =
+    shopifyStatus === "SUCCEEDED"
+      ? latestSucceededJobForStage(input.listing, "SHOPIFY")?.publishAttemptId
       : null;
+  const printifyResumeFromAttemptId =
+    printifyStatus === "SUCCEEDED"
+      ? latestSucceededJobForStage(input.listing, "PRINTIFY")?.publishAttemptId
+      : null;
+  const resumedFromAttemptId = shopifyResumeFromAttemptId ?? printifyResumeFromAttemptId ?? null;
 
   if (resumedFromAttemptId) {
     await input.tx.publishAttempt.update({
@@ -132,7 +150,9 @@ async function createPublishAttemptForListing(input: {
         stage: "SHOPIFY",
         status: shopifyStatus,
         completedAt: shopifyStatus === "SUCCEEDED" ? new Date() : null,
-        progressData: resumedFromAttemptId ? { resumedFromAttemptId } : Prisma.DbNull,
+        progressData: shopifyResumeFromAttemptId
+          ? { resumedFromAttemptId: shopifyResumeFromAttemptId }
+          : Prisma.DbNull,
       },
       {
         listingId: input.listing.id,
@@ -141,7 +161,9 @@ async function createPublishAttemptForListing(input: {
         stage: "PRINTIFY",
         status: printifyStatus,
         completedAt: printifyStatus === "SUCCEEDED" ? new Date() : null,
-        progressData: resumedFromAttemptId ? { resumedFromAttemptId } : Prisma.DbNull,
+        progressData: printifyResumeFromAttemptId
+          ? { resumedFromAttemptId: printifyResumeFromAttemptId }
+          : Prisma.DbNull,
       },
     ],
   });
@@ -318,7 +340,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         where: { wizardDraftDesignPairId: pair.id },
         include: {
           publishAttempts: { select: { id: true, attemptNo: true } },
-          publishJobs: { select: { stage: true, status: true, publishAttemptId: true } },
+          publishJobs: {
+            select: { stage: true, status: true, publishAttemptId: true },
+            orderBy: { createdAt: "desc" },
+          },
         },
       });
 
@@ -398,7 +423,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         where: { wizardDraftDesignId: draftDesign.id },
         include: {
           publishAttempts: { select: { id: true, attemptNo: true } },
-          publishJobs: { select: { stage: true, status: true, publishAttemptId: true } },
+          publishJobs: {
+            select: { stage: true, status: true, publishAttemptId: true },
+            orderBy: { createdAt: "desc" },
+          },
         },
       });
 

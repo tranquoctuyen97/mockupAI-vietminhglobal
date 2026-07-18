@@ -68,6 +68,9 @@ ON "publish_outbox"("publish_attempt_id");
 CREATE INDEX "publish_outbox_status_next_attempt_at_idx"
 ON "publish_outbox"("status", "next_attempt_at");
 
+CREATE INDEX "publish_outbox_status_locked_at_idx"
+ON "publish_outbox"("status", "locked_at");
+
 ALTER TABLE "listings"
 ADD CONSTRAINT "listings_active_publish_attempt_id_fkey"
 FOREIGN KEY ("active_publish_attempt_id") REFERENCES "publish_attempts"("id")

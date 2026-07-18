@@ -22,6 +22,13 @@ describe("wizard publish route queue contract", () => {
     assert.match(source, /activePublishAttemptId:\s*attempt\.id/);
   });
 
+  it("carries forward latest succeeded stage jobs deterministically", () => {
+    assert.match(source, /latestSucceededJobForStage/);
+    assert.match(source, /orderBy:\s*\{\s*createdAt:\s*"desc"\s*\}/);
+    assert.match(source, /shopifyResumeFromAttemptId/);
+    assert.match(source, /printifyResumeFromAttemptId/);
+  });
+
   it("does not run publish workers inline in the web process", () => {
     assert.doesNotMatch(source, /runPublishWorker/);
     assert.doesNotMatch(source, /runPublishWorkersWithConcurrency/);

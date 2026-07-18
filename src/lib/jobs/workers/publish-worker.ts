@@ -6,6 +6,7 @@ import {
   publishUserMessageForCode,
 } from "@/lib/publish/errors";
 import { PUBLISH_QUEUE_NAME, type PublishJobPayload } from "@/lib/publish/queue";
+import { type PublishStrategy, resolvePublishStrategy } from "@/lib/publish/strategy";
 import {
   type PublishInput,
   type PublishWorkerOptions,
@@ -22,6 +23,13 @@ type PublishJobStatus =
   | "FAILED";
 
 type ListingFinalStatus = "ACTIVE" | "FAILED" | "PARTIAL_FAILURE";
+
+class PublishAttemptDidNotCompleteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PublishAttemptDidNotCompleteError";
+  }
+}
 
 export type FinalizeFailedPublishAttemptInput = {
   listingId: string;
@@ -73,6 +81,11 @@ export async function finalizeFailedPublishAttemptIdempotently(
         shopifyProductId: true,
         printifyProductId: true,
         activePublishAttemptId: true,
+        store: {
+          include: {
+            printifyShop: true,
+          },
+        },
       },
     }),
     prisma.publishAttempt.findUnique({
@@ -98,10 +111,9 @@ export async function finalizeFailedPublishAttemptIdempotently(
   const printifyStatus =
     (jobs.find((job: { stage: string }) => job.stage === "PRINTIFY")?.status as PublishJobStatus) ??
     "FAILED";
-  const strategy =
-    shopifyStatus === "SUCCEEDED" && printifyStatus !== "SUCCEEDED"
-      ? "EXISTING_SHOPIFY_DIRECT"
-      : "PRINTIFY_SHOPIFY_CHANNEL";
+  const strategy = listing.store
+    ? resolvePublishStrategy(listing.store)
+    : "EXISTING_SHOPIFY_DIRECT";
   const finalStatus = resolveFinalListingStatus({
     strategy,
     shopifyStatus,
@@ -142,6 +154,98 @@ export async function finalizeFailedPublishAttemptIdempotently(
   });
 }
 
+async function markPublishAttemptRunning(publishAttemptId: string): Promise<void> {
+  await prisma.publishAttempt.updateMany({
+    where: { id: publishAttemptId, status: "PENDING" },
+    data: { status: "RUNNING", startedAt: new Date() },
+  });
+}
+
+async function finalizeSucceededPublishAttemptIdempotently(input: {
+  listingId: string;
+  publishAttemptId: string;
+}): Promise<void> {
+  await prisma.publishAttempt.updateMany({
+    where: { id: input.publishAttemptId, status: { notIn: ["SUCCEEDED", "FAILED"] } },
+    data: { status: "SUCCEEDED", completedAt: new Date() },
+  });
+  await prisma.listing.updateMany({
+    where: {
+      id: input.listingId,
+      activePublishAttemptId: input.publishAttemptId,
+    },
+    data: {
+      activePublishAttemptId: null,
+      status: "ACTIVE",
+    },
+  });
+}
+
+async function reconcilePublishAttemptAfterRun(input: {
+  listingId: string;
+  publishAttemptId: string;
+}): Promise<void> {
+  const listing = await prisma.listing.findUnique({
+    where: { id: input.listingId },
+    select: {
+      id: true,
+      status: true,
+      shopifyProductId: true,
+      printifyProductId: true,
+      store: {
+        include: {
+          printifyShop: true,
+        },
+      },
+      publishAttempts: {
+        where: { id: input.publishAttemptId },
+        select: { id: true, status: true },
+      },
+      publishJobs: {
+        where: { publishAttemptId: input.publishAttemptId },
+        select: { stage: true, status: true, lastError: true },
+      },
+    },
+  });
+
+  const attempt = listing?.publishAttempts[0] ?? null;
+  if (!listing || !attempt || ["SUCCEEDED", "FAILED"].includes(attempt.status)) return;
+
+  const shopifyStatus =
+    (listing.publishJobs.find((job) => job.stage === "SHOPIFY")?.status as PublishJobStatus) ??
+    "FAILED";
+  const printifyStatus =
+    (listing.publishJobs.find((job) => job.stage === "PRINTIFY")?.status as PublishJobStatus) ??
+    "FAILED";
+  const failedJob = listing.publishJobs.find((job) => job.status === "FAILED");
+  if (failedJob) {
+    throw new PublishAttemptDidNotCompleteError(
+      failedJob.lastError || `Publish stage ${failedJob.stage} failed.`,
+    );
+  }
+
+  const strategy: PublishStrategy = listing.store
+    ? resolvePublishStrategy(listing.store)
+    : "EXISTING_SHOPIFY_DIRECT";
+  const finalStatus = resolveFinalListingStatus({
+    strategy,
+    shopifyStatus,
+    printifyStatus,
+    shopifyProductId: listing.shopifyProductId,
+    printifyProductId: listing.printifyProductId,
+    baselineListingStatus: "PUBLISHING",
+    firstExternalWriteStartedAt: new Date(),
+  });
+
+  if (finalStatus !== "ACTIVE" || shopifyStatus !== "SUCCEEDED" || printifyStatus !== "SUCCEEDED") {
+    throw new PublishAttemptDidNotCompleteError(
+      `Publish attempt returned before all required stages completed. listingStatus=${listing.status} shopifyStatus=${shopifyStatus} printifyStatus=${printifyStatus}`,
+    );
+  }
+
+  await finalizeSucceededPublishAttemptIdempotently(input);
+}
+
 export function startPublishWorker(): Worker<PublishJobPayload> {
   const worker = new Worker<PublishJobPayload>(
     PUBLISH_QUEUE_NAME,
@@ -157,7 +261,12 @@ export function startPublishWorker(): Worker<PublishJobPayload> {
           retryOwner: "bullmq",
           publishAttemptId: job.data.publishAttemptId,
         };
+        await markPublishAttemptRunning(job.data.publishAttemptId);
         await runPublishWorker(workerInput, options);
+        await reconcilePublishAttemptAfterRun({
+          listingId: job.data.listingId,
+          publishAttemptId: job.data.publishAttemptId,
+        });
       } catch (error) {
         if (error instanceof DelayedError) {
           throw error;

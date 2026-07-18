@@ -32,19 +32,23 @@ function shouldCarryForwardStage(input: {
   listing: RetryListing;
   stage: "SHOPIFY" | "PRINTIFY";
 }): boolean {
-  const previousJob = input.listing.publishJobs.find((job) => job.stage === input.stage);
+  const previousJob = latestSucceededJobForStage(input.listing, input.stage);
   if (previousJob?.status !== "SUCCEEDED") return false;
   if (input.stage === "SHOPIFY") return Boolean(input.listing.shopifyProductId);
   return Boolean(input.listing.printifyProductId);
 }
 
-function resumedFromAttemptId(listing: RetryListing): string | null {
+function latestSucceededJobForStage(
+  listing: RetryListing,
+  stage: "SHOPIFY" | "PRINTIFY",
+): RetryListing["publishJobs"][number] | null {
   return (
     listing.publishJobs.find(
       (job) =>
+        job.stage === stage &&
         job.status === "SUCCEEDED" &&
-        (job.stage === "SHOPIFY" ? listing.shopifyProductId : listing.printifyProductId),
-    )?.publishAttemptId ?? null
+        (stage === "SHOPIFY" ? listing.shopifyProductId : listing.printifyProductId),
+    ) ?? null
   );
 }
 
@@ -107,7 +111,15 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     const printifyStatus = shouldCarryForwardStage({ listing, stage: "PRINTIFY" })
       ? "SUCCEEDED"
       : "PENDING";
-    const resumeFromAttemptId = resumedFromAttemptId(listing);
+    const shopifyResumeFromAttemptId =
+      shopifyStatus === "SUCCEEDED"
+        ? latestSucceededJobForStage(listing, "SHOPIFY")?.publishAttemptId
+        : null;
+    const printifyResumeFromAttemptId =
+      printifyStatus === "SUCCEEDED"
+        ? latestSucceededJobForStage(listing, "PRINTIFY")?.publishAttemptId
+        : null;
+    const resumeFromAttemptId = shopifyResumeFromAttemptId ?? printifyResumeFromAttemptId ?? null;
     const attempt = await tx.publishAttempt.create({
       data: {
         listingId: listing.id,
@@ -128,8 +140,8 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
           stage: "SHOPIFY",
           status: shopifyStatus,
           completedAt: shopifyStatus === "SUCCEEDED" ? new Date() : null,
-          progressData: resumeFromAttemptId
-            ? { resumedFromAttemptId: resumeFromAttemptId }
+          progressData: shopifyResumeFromAttemptId
+            ? { resumedFromAttemptId: shopifyResumeFromAttemptId }
             : Prisma.DbNull,
         },
         {
@@ -139,8 +151,8 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
           stage: "PRINTIFY",
           status: printifyStatus,
           completedAt: printifyStatus === "SUCCEEDED" ? new Date() : null,
-          progressData: resumeFromAttemptId
-            ? { resumedFromAttemptId: resumeFromAttemptId }
+          progressData: printifyResumeFromAttemptId
+            ? { resumedFromAttemptId: printifyResumeFromAttemptId }
             : Prisma.DbNull,
         },
       ],
