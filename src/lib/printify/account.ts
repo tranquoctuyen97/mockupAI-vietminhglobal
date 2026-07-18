@@ -3,9 +3,10 @@
  * Phase 6.5: One account per tenant, shared across all stores
  */
 
+import { decrypt, encrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
-import { encrypt, decrypt } from "@/lib/crypto/envelope";
 import { PrintifyClient } from "./client";
+import { PrintifyRequestGate } from "./request-gate";
 
 /**
  * Create a new Printify account — test connection first, then save encrypted key
@@ -264,13 +265,15 @@ export async function unlinkPrintifyShop(storeId: string) {
 /**
  * Get a PrintifyClient for a given store (used by publish/mockup workers)
  */
-export async function getClientForStore(storeId: string): Promise<{ client: PrintifyClient; externalShopId: number }> {
+export async function getClientForStore(
+  storeId: string,
+): Promise<{ client: PrintifyClient; externalShopId: number }> {
   const store = await prisma.store.findUniqueOrThrow({
     where: { id: storeId },
     include: {
       printifyShop: {
         include: {
-          account: { select: { apiKeyEncrypted: true, status: true } },
+          account: { select: { id: true, apiKeyEncrypted: true, status: true } },
         },
       },
     },
@@ -281,7 +284,9 @@ export async function getClientForStore(storeId: string): Promise<{ client: Prin
   }
 
   if (store.printifyShop.disconnected) {
-    throw new Error("Linked Printify shop has been disconnected. Please resync or choose another shop.");
+    throw new Error(
+      "Linked Printify shop has been disconnected. Please resync or choose another shop.",
+    );
   }
 
   if (store.printifyShop.account.status !== "ACTIVE") {
@@ -289,7 +294,11 @@ export async function getClientForStore(storeId: string): Promise<{ client: Prin
   }
 
   const apiKey = decrypt(store.printifyShop.account.apiKeyEncrypted);
-  const client = new PrintifyClient(apiKey);
+  const gate = new PrintifyRequestGate({ merchantAccountId: store.printifyShop.account.id });
+  const client = new PrintifyClient(apiKey, {
+    beforeRequest: (request) => gate.beforeRequest(request),
+    onRateLimit: (request) => gate.afterRateLimit(request),
+  });
 
   return { client, externalShopId: store.printifyShop.externalShopId };
 }
@@ -307,10 +316,7 @@ function maskApiKey(encrypted: Buffer | Uint8Array): string {
 
 export class LinkedStoresError extends Error {
   stores: Array<{ id: string; name: string; shopifyDomain: string }>;
-  constructor(
-    message: string,
-    stores: Array<{ id: string; name: string; shopifyDomain: string }>,
-  ) {
+  constructor(message: string, stores: Array<{ id: string; name: string; shopifyDomain: string }>) {
     super(message);
     this.name = "LinkedStoresError";
     this.stores = stores;

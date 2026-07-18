@@ -307,6 +307,34 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.doesNotMatch(pairLoopSource, /enabledSet\.has\(variant\.variantId\).*continue/s);
   });
 
+  it("persists each paired Printify image id immediately after its own upload", () => {
+    const uploadPattern = /const lightImageId = await ensurePrintifyImage/;
+    const uploadMatches = [...source.matchAll(new RegExp(uploadPattern.source, "g"))];
+    assert.ok(uploadMatches.length >= 2, "both pair upload branches should be covered");
+
+    for (const match of uploadMatches) {
+      const branch = source.slice(match.index ?? 0, (match.index ?? 0) + 1400);
+      const lightUploadIndex = branch.indexOf("const lightImageId = await ensurePrintifyImage");
+      const lightPersistIndex = branch.indexOf("data: { printifyImageId: lightImageId }");
+      const darkUploadIndex = branch.indexOf("const darkImageId = await ensurePrintifyImage");
+      const darkPersistIndex = branch.indexOf("data: { printifyImageId: darkImageId }");
+
+      assert.ok(lightUploadIndex > -1, "light upload should exist");
+      assert.ok(
+        lightPersistIndex > lightUploadIndex,
+        "light image id should persist after light upload",
+      );
+      assert.ok(
+        lightPersistIndex < darkUploadIndex,
+        "light image id should persist before dark upload starts",
+      );
+      assert.ok(
+        darkPersistIndex > darkUploadIndex,
+        "dark image id should persist after dark upload",
+      );
+    }
+  });
+
   it("uses explicit full-width Printify placement for Shopify-channel products", () => {
     const resolverIndex = source.indexOf("async function resolvePrintifyProductPublishInput");
     const fullWidthIndex = source.indexOf("buildFullWidthPlacementData", resolverIndex);
@@ -326,6 +354,17 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.match(source, /presetKey:\s*"full-width"/);
   });
 
+  it("keeps Shopify-channel full-width placement from saved custom placement data", () => {
+    const resolverIndex = source.indexOf("async function resolvePrintifyProductPublishInput");
+    const resolverSource = source.slice(
+      resolverIndex,
+      source.indexOf("async function publishExistingPrintifyDraftProduct", resolverIndex),
+    );
+    assert.match(resolverSource, /const placementData = buildFullWidthPlacementData\(/);
+    assert.doesNotMatch(resolverSource, /resolveEffectivePlacementData/);
+    assert.doesNotMatch(resolverSource, /resolveCustomMockupPlacementData/);
+  });
+
   it("does not let transient Printify create recovery leave jobs stuck running", () => {
     assert.match(source, /Failed to check recent Printify product after transient create error/);
     assert.match(
@@ -341,14 +380,16 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
 });
 
 describe("retry Printify route source contract", () => {
-  it("routes Printify Shopify-channel retries through the full publish worker", () => {
+  it("routes retries through a publish attempt outbox instead of inline workers", () => {
     const retryRoute = readFileSync(
       new URL("../../app/api/listings/[id]/retry-printify/route.ts", import.meta.url),
       "utf8",
     );
-    assert.match(retryRoute, /resolvePublishStrategy/);
-    assert.match(retryRoute, /runPublishWorker/);
-    assert.match(retryRoute, /PRINTIFY_SHOPIFY_CHANNEL/);
+    assert.match(retryRoute, /publishAttempt\.create/);
+    assert.match(retryRoute, /publishOutbox\.create/);
+    assert.match(retryRoute, /activePublishAttemptId/);
+    assert.doesNotMatch(retryRoute, /runPublishWorker/);
+    assert.doesNotMatch(retryRoute, /runPrintifyStage/);
   });
 });
 

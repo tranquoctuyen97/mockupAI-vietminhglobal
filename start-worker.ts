@@ -1,6 +1,6 @@
+import type { Worker } from "bullmq";
 import dotenv from "dotenv";
 import Redis from "ioredis";
-import type { Worker } from "bullmq";
 
 type ClosableWorker = Pick<Worker, "close" | "on">;
 
@@ -11,6 +11,8 @@ let mailboxSyncWorker: ClosableWorker | null = null;
 let mailboxBackfillWorker: ClosableWorker | null = null;
 let mailboxResponseMetricsWorker: ClosableWorker | null = null;
 let gmailLabelOperationsWorker: ClosableWorker | null = null;
+let publishWorker: ClosableWorker | null = null;
+let publishOutboxDispatcher: { close: () => Promise<void> } | null = null;
 
 loadStandaloneWorkerEnv();
 
@@ -40,14 +42,22 @@ async function startWorkers() {
     { startMockupCompositeWorker },
     { startPrintifyMockupPollWorker },
     { startTripleWhaleSyncWorker },
-    { startMailboxSyncWorker, startMailboxBackfillWorker, startMailboxResponseMetricsWorker, startGmailLabelOperationsWorker },
-  ] =
-    await Promise.all([
-      import("./src/lib/mockup/worker"),
-      import("./src/lib/mockup/printify-poll-worker"),
-      import("./src/lib/jobs/workers/triple-whale-sync-worker"),
-      import("./src/lib/jobs/workers/mailbox-sync-worker"),
-    ]);
+    {
+      startMailboxSyncWorker,
+      startMailboxBackfillWorker,
+      startMailboxResponseMetricsWorker,
+      startGmailLabelOperationsWorker,
+    },
+    { startPublishWorker },
+    { startPublishOutboxDispatcher },
+  ] = await Promise.all([
+    import("./src/lib/mockup/worker"),
+    import("./src/lib/mockup/printify-poll-worker"),
+    import("./src/lib/jobs/workers/triple-whale-sync-worker"),
+    import("./src/lib/jobs/workers/mailbox-sync-worker"),
+    import("./src/lib/jobs/workers/publish-worker"),
+    import("./src/lib/publish/outbox"),
+  ]);
 
   mockupWorker = startMockupCompositeWorker();
   printifyMockupPollWorker = startPrintifyMockupPollWorker();
@@ -56,6 +66,8 @@ async function startWorkers() {
   mailboxBackfillWorker = startMailboxBackfillWorker();
   mailboxResponseMetricsWorker = startMailboxResponseMetricsWorker();
   gmailLabelOperationsWorker = startGmailLabelOperationsWorker();
+  publishWorker = startPublishWorker();
+  publishOutboxDispatcher = startPublishOutboxDispatcher();
 
   mockupWorker.on("ready", () => {
     console.log("Mockup composite worker is ready and listening to queue.");
@@ -84,6 +96,21 @@ async function startWorkers() {
   gmailLabelOperationsWorker.on("ready", () => {
     console.log("Gmail label operations worker is ready and listening to queue.");
   });
+
+  publishWorker.on("ready", () => {
+    console.log("Publish worker is ready and listening to queue.");
+  });
+  publishWorker.on("error", (error) => {
+    console.error("Publish worker error:", error);
+  });
+  publishWorker.on("failed", (job, error) => {
+    console.error("Publish worker job failed:", {
+      jobId: job?.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+  console.log("Publish outbox dispatcher is ready.");
 }
 
 async function assertRedisWritable() {
@@ -101,7 +128,9 @@ async function assertRedisWritable() {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("READONLY")) {
-      throw new Error("REDIS_URL points to a read-only replica; set it to the writable Redis primary.");
+      throw new Error(
+        "REDIS_URL points to a read-only replica; set it to the writable Redis primary.",
+      );
     }
     throw error;
   } finally {
@@ -119,6 +148,8 @@ async function shutdown() {
     mailboxBackfillWorker?.close(),
     mailboxResponseMetricsWorker?.close(),
     gmailLabelOperationsWorker?.close(),
+    publishWorker?.close(),
+    publishOutboxDispatcher?.close(),
   ]);
   process.exit(0);
 }

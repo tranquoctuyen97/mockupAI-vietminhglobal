@@ -2,17 +2,14 @@
  * POST /api/wizard/drafts/:id/publish — Trigger publish pipeline
  */
 
+import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { formatDescriptionHtml } from "@/lib/content/description-html";
 import { prisma } from "@/lib/db";
 import { normalizeMoneyValue, resolveBaseTemplatePrice } from "@/lib/pricing/template-pricing";
-import { generateIdempotencyKey, runPublishWorker } from "@/lib/publish/worker";
 import { normalizeOrganizationCollections } from "@/lib/wizard/product-organization";
-import {
-  getIndependentDraftDesigns,
-  hasAiTitle,
-} from "@/lib/wizard/publish-units";
+import { getIndependentDraftDesigns, hasAiTitle } from "@/lib/wizard/publish-units";
 
 type DraftDesignSelection = {
   id: string;
@@ -40,12 +37,20 @@ type PublishListingResponse = {
 type ExistingListingForPublish = {
   id: string;
   status: string;
+  activePublishAttemptId?: string | null;
   wizardDraftDesignId: string | null;
   designId: string | null;
-  publishJobs?: Array<{ stage: string; status: string }>;
+  shopifyProductId?: string | null;
+  printifyProductId?: string | null;
+  publishJobs?: Array<{
+    stage: string;
+    status: string;
+    publishAttemptId?: string | null;
+  }>;
 };
 
 function hasRunningPublishJob(listing: ExistingListingForPublish): boolean {
+  if (listing.activePublishAttemptId) return true;
   return Boolean(
     listing.publishJobs?.some((job) => job.status === "PENDING" || job.status === "RUNNING"),
   );
@@ -59,6 +64,106 @@ function shouldRetryExistingListing(listing: ExistingListingForPublish): boolean
 function statusForExistingListing(listing: ExistingListingForPublish): string {
   if (hasRunningPublishJob(listing)) return "PUBLISHING";
   return shouldRetryExistingListing(listing) ? "PUBLISHING" : listing.status;
+}
+
+function nextAttemptNo(listing: { publishAttempts?: Array<{ attemptNo: number }> }): number {
+  const attempts = listing.publishAttempts ?? [];
+  if (attempts.length === 0) return 1;
+  return Math.max(...attempts.map((attempt) => attempt.attemptNo)) + 1;
+}
+
+function shouldCarryForwardStage(input: {
+  listing: ExistingListingForPublish;
+  stage: "SHOPIFY" | "PRINTIFY";
+}): boolean {
+  const previousJob = input.listing.publishJobs?.find((job) => job.stage === input.stage);
+  if (previousJob?.status !== "SUCCEEDED") return false;
+
+  if (input.stage === "SHOPIFY") {
+    return Boolean(input.listing.shopifyProductId);
+  }
+  return Boolean(input.listing.printifyProductId);
+}
+
+async function createPublishAttemptForListing(input: {
+  tx: Prisma.TransactionClient;
+  listing: ExistingListingForPublish & {
+    publishAttempts?: Array<{ id: string; attemptNo: number }>;
+  };
+  draftId: string;
+  tenantId: string;
+}) {
+  const attempt = await input.tx.publishAttempt.create({
+    data: {
+      listingId: input.listing.id,
+      tenantId: input.tenantId,
+      attemptNo: nextAttemptNo(input.listing),
+      status: "PENDING",
+      baselineListingStatus: input.listing.status,
+      resumeFromAttemptId: null,
+    },
+  });
+
+  const shopifyStatus = shouldCarryForwardStage({ listing: input.listing, stage: "SHOPIFY" })
+    ? "SUCCEEDED"
+    : "PENDING";
+  const printifyStatus = shouldCarryForwardStage({ listing: input.listing, stage: "PRINTIFY" })
+    ? "SUCCEEDED"
+    : "PENDING";
+  const resumedFromAttemptId =
+    shopifyStatus === "SUCCEEDED" || printifyStatus === "SUCCEEDED"
+      ? (input.listing.publishJobs?.find((job) => job.status === "SUCCEEDED")?.publishAttemptId ??
+        null)
+      : null;
+
+  if (resumedFromAttemptId) {
+    await input.tx.publishAttempt.update({
+      where: { id: attempt.id },
+      data: { resumeFromAttemptId: resumedFromAttemptId },
+    });
+  }
+
+  await input.tx.publishJob.createMany({
+    data: [
+      {
+        listingId: input.listing.id,
+        publishAttemptId: attempt.id,
+        idempotencyKey: `${input.listing.id}:${attempt.id}:SHOPIFY`,
+        stage: "SHOPIFY",
+        status: shopifyStatus,
+        completedAt: shopifyStatus === "SUCCEEDED" ? new Date() : null,
+        progressData: resumedFromAttemptId ? { resumedFromAttemptId } : Prisma.DbNull,
+      },
+      {
+        listingId: input.listing.id,
+        publishAttemptId: attempt.id,
+        idempotencyKey: `${input.listing.id}:${attempt.id}:PRINTIFY`,
+        stage: "PRINTIFY",
+        status: printifyStatus,
+        completedAt: printifyStatus === "SUCCEEDED" ? new Date() : null,
+        progressData: resumedFromAttemptId ? { resumedFromAttemptId } : Prisma.DbNull,
+      },
+    ],
+  });
+
+  await input.tx.publishOutbox.create({
+    data: {
+      listingId: input.listing.id,
+      draftId: input.draftId,
+      tenantId: input.tenantId,
+      publishAttemptId: attempt.id,
+    },
+  });
+
+  await input.tx.listing.update({
+    where: { id: input.listing.id },
+    data: {
+      status: "PUBLISHING",
+      activePublishAttemptId: attempt.id,
+    },
+  });
+
+  return attempt;
 }
 
 function resolveSelectedDraftDesigns(draft: any): DraftDesignSelection[] {
@@ -167,10 +272,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         hex: c.hex,
       })) || [];
 
-  const listings: PublishListingResponse[] = [];
-  const workersToStart: Array<{ listingId: string }> = [];
-
-  const independentDraftDesigns = getIndependentDraftDesigns(selectedDraftDesigns, draft.designPairs);
+  const independentDraftDesigns = getIndependentDraftDesigns(
+    selectedDraftDesigns,
+    draft.designPairs,
+  );
 
   const pairMissingContent = draft.designPairs.find((pair) => !hasAiTitle(pair.aiContent));
   if (pairMissingContent) {
@@ -194,195 +299,180 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     );
   }
 
-  for (const pair of draft.designPairs) {
-    const pairContent = pair.aiContent as {
-      title?: string;
-      description?: string;
-      tags?: string[];
-      collections?: string[];
-    };
+  const listings = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw(
+      Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${session.tenantId}), hashtext(${draftId}))`,
+    );
 
-    const existingListing = await prisma.listing.findUnique({
-      where: { wizardDraftDesignPairId: pair.id },
-      include: { publishJobs: { select: { stage: true, status: true } } },
-    });
+    const createdListings: PublishListingResponse[] = [];
 
-    if (existingListing) {
-      const retryExisting = shouldRetryExistingListing(existingListing);
-      listings.push({
-        listingId: existingListing.id,
+    for (const pair of draft.designPairs) {
+      const pairContent = pair.aiContent as {
+        title?: string;
+        description?: string;
+        tags?: string[];
+        collections?: string[];
+      };
+
+      const existingListing = await tx.listing.findUnique({
+        where: { wizardDraftDesignPairId: pair.id },
+        include: {
+          publishAttempts: { select: { id: true, attemptNo: true } },
+          publishJobs: { select: { stage: true, status: true, publishAttemptId: true } },
+        },
+      });
+
+      if (existingListing) {
+        const retryExisting = shouldRetryExistingListing(existingListing);
+        createdListings.push({
+          listingId: existingListing.id,
+          designPairId: pair.id,
+          draftDesignId: existingListing.wizardDraftDesignId ?? null,
+          designId: existingListing.designId ?? pair.lightDesign.designId,
+          designName: pair.baseName,
+          status: statusForExistingListing(existingListing),
+          alreadyPublished: !retryExisting,
+        });
+        if (retryExisting) {
+          await createPublishAttemptForListing({
+            tx,
+            listing: existingListing,
+            draftId,
+            tenantId: session.tenantId,
+          });
+        }
+        continue;
+      }
+
+      const listing = await tx.listing.create({
+        data: {
+          tenantId: session.tenantId,
+          storeId: draft.storeId,
+          designId: pair.lightDesign.designId,
+          templateId: template?.id || null,
+          wizardDraftId: draftId,
+          wizardDraftDesignId: pair.lightDraftDesignId,
+          wizardDraftDesignPairId: pair.id,
+          title: pairContent.title || "",
+          descriptionHtml: formatDescriptionHtml(pairContent.description),
+          tags: pairContent.tags || [],
+          organizationCollections: normalizeOrganizationCollections(pairContent.collections),
+          priceUsd,
+          createdBy: session.id,
+          variants: {
+            create: colors.map((c) => ({
+              colorName: c.name,
+              colorHex: c.hex,
+            })),
+          },
+        },
+      });
+
+      await createPublishAttemptForListing({
+        tx,
+        listing: { ...listing, publishJobs: [], publishAttempts: [] },
+        draftId,
+        tenantId: session.tenantId,
+      });
+
+      createdListings.push({
+        listingId: listing.id,
         designPairId: pair.id,
-        draftDesignId: existingListing.wizardDraftDesignId ?? null,
-        designId: existingListing.designId ?? pair.lightDesign.designId,
-        designName: pair.baseName,
-        status: statusForExistingListing(existingListing),
-        alreadyPublished: !retryExisting,
-      });
-      if (retryExisting) workersToStart.push({ listingId: existingListing.id });
-      continue;
-    }
-
-    const listing = await prisma.listing.create({
-      data: {
-        tenantId: session.tenantId,
-        storeId: draft.storeId,
+        draftDesignId: listing.wizardDraftDesignId ?? null,
         designId: pair.lightDesign.designId,
-        templateId: template?.id || null,
-        wizardDraftId: draftId,
-        wizardDraftDesignId: pair.lightDraftDesignId,
-        wizardDraftDesignPairId: pair.id,
-        title: pairContent.title || "",
-        descriptionHtml: formatDescriptionHtml(pairContent.description),
-        tags: pairContent.tags || [],
-        organizationCollections: normalizeOrganizationCollections(pairContent.collections),
-        priceUsd,
-        createdBy: session.id,
-        variants: {
-          create: colors.map((c) => ({
-            colorName: c.name,
-            colorHex: c.hex,
-          })),
-        },
-        publishJobs: {
-          create: [
-            {
-              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, pair.id)}-shopify`,
-              stage: "SHOPIFY",
-            },
-            {
-              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, pair.id)}-printify`,
-              stage: "PRINTIFY",
-            },
-          ],
-        },
-      },
-    });
-
-    listings.push({
-      listingId: listing.id,
-      designPairId: pair.id,
-      draftDesignId: listing.wizardDraftDesignId ?? null,
-      designId: pair.lightDesign.designId,
-      designName: pair.baseName,
-      status: "PUBLISHING",
-      alreadyPublished: false,
-    });
-    workersToStart.push({ listingId: listing.id });
-  }
-
-  for (const draftDesign of independentDraftDesigns) {
-    const independentContent = draftDesign.aiContent as {
-      title?: string;
-      description?: string;
-      tags?: string[];
-      collections?: string[];
-    };
-
-    const existingListing = await prisma.listing.findUnique({
-      where: { wizardDraftDesignId: draftDesign.id },
-      include: { publishJobs: { select: { stage: true, status: true } } },
-    });
-
-    if (existingListing) {
-      const retryExisting = shouldRetryExistingListing(existingListing);
-      listings.push({
-        listingId: existingListing.id,
-        designPairId: null,
-        draftDesignId: existingListing.wizardDraftDesignId ?? null,
-        designId: existingListing.designId ?? draftDesign.designId,
-        designName: draftDesign.design?.name ?? "Design",
-        status: statusForExistingListing(existingListing),
-        alreadyPublished: !retryExisting,
+        designName: pair.baseName,
+        status: "PUBLISHING",
+        alreadyPublished: false,
       });
-      if (retryExisting) workersToStart.push({ listingId: existingListing.id });
-      continue;
     }
 
-    const listing = await prisma.listing.create({
-      data: {
+    for (const draftDesign of independentDraftDesigns) {
+      const independentContent = draftDesign.aiContent as {
+        title?: string;
+        description?: string;
+        tags?: string[];
+        collections?: string[];
+      };
+
+      const existingListing = await tx.listing.findUnique({
+        where: { wizardDraftDesignId: draftDesign.id },
+        include: {
+          publishAttempts: { select: { id: true, attemptNo: true } },
+          publishJobs: { select: { stage: true, status: true, publishAttemptId: true } },
+        },
+      });
+
+      if (existingListing) {
+        const retryExisting = shouldRetryExistingListing(existingListing);
+        createdListings.push({
+          listingId: existingListing.id,
+          designPairId: null,
+          draftDesignId: existingListing.wizardDraftDesignId ?? null,
+          designId: existingListing.designId ?? draftDesign.designId,
+          designName: draftDesign.design?.name ?? "Design",
+          status: statusForExistingListing(existingListing),
+          alreadyPublished: !retryExisting,
+        });
+        if (retryExisting) {
+          await createPublishAttemptForListing({
+            tx,
+            listing: existingListing,
+            draftId,
+            tenantId: session.tenantId,
+          });
+        }
+        continue;
+      }
+
+      const listing = await tx.listing.create({
+        data: {
+          tenantId: session.tenantId,
+          storeId: draft.storeId,
+          designId: draftDesign.designId,
+          templateId: template?.id || null,
+          wizardDraftId: draftId,
+          wizardDraftDesignId: draftDesign.id,
+          wizardDraftDesignPairId: null,
+          title: independentContent.title || "",
+          descriptionHtml: formatDescriptionHtml(independentContent.description),
+          tags: independentContent.tags || [],
+          organizationCollections: normalizeOrganizationCollections(independentContent.collections),
+          priceUsd,
+          createdBy: session.id,
+          variants: {
+            create: colors.map((c) => ({
+              colorName: c.name,
+              colorHex: c.hex,
+            })),
+          },
+        },
+      });
+
+      await createPublishAttemptForListing({
+        tx,
+        listing: { ...listing, publishJobs: [], publishAttempts: [] },
+        draftId,
         tenantId: session.tenantId,
-        storeId: draft.storeId,
+      });
+
+      createdListings.push({
+        listingId: listing.id,
+        designPairId: null,
+        draftDesignId: listing.wizardDraftDesignId ?? null,
         designId: draftDesign.designId,
-        templateId: template?.id || null,
-        wizardDraftId: draftId,
-        wizardDraftDesignId: draftDesign.id,
-        wizardDraftDesignPairId: null,
-        title: independentContent.title || "",
-        descriptionHtml: formatDescriptionHtml(independentContent.description),
-        tags: independentContent.tags || [],
-        organizationCollections: normalizeOrganizationCollections(independentContent.collections),
-        priceUsd,
-        createdBy: session.id,
-        variants: {
-          create: colors.map((c) => ({
-            colorName: c.name,
-            colorHex: c.hex,
-          })),
-        },
-        publishJobs: {
-          create: [
-            {
-              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, draftDesign.id)}-shopify`,
-              stage: "SHOPIFY",
-            },
-            {
-              idempotencyKey: `${generateIdempotencyKey(draftId, session.tenantId, draftDesign.id)}-printify`,
-              stage: "PRINTIFY",
-            },
-          ],
-        },
-      },
+        designName: draftDesign.design?.name ?? "Design",
+        status: "PUBLISHING",
+        alreadyPublished: false,
+      });
+    }
+
+    await tx.wizardDraft.update({
+      where: { id: draftId },
+      data: { status: "PUBLISHED" },
     });
 
-    listings.push({
-      listingId: listing.id,
-      designPairId: null,
-      draftDesignId: listing.wizardDraftDesignId ?? null,
-      designId: draftDesign.designId,
-      designName: draftDesign.design?.name ?? "Design",
-      status: "PUBLISHING",
-      alreadyPublished: false,
-    });
-    workersToStart.push({ listingId: listing.id });
-  }
-
-  await prisma.wizardDraft.update({
-    where: { id: draftId },
-    data: { status: "PUBLISHED" },
-  });
-
-  void runPublishWorkersWithConcurrency({
-    workers: workersToStart,
-    draftId,
-    tenantId: session.tenantId,
+    return createdListings;
   });
 
   return NextResponse.json({ listings });
-}
-
-async function runPublishWorkersWithConcurrency(input: {
-  workers: Array<{ listingId: string }>;
-  draftId: string;
-  tenantId: string;
-}) {
-  let index = 0;
-  async function runNext(): Promise<void> {
-    const worker = input.workers[index];
-    index += 1;
-    if (!worker) return;
-
-    try {
-      await runPublishWorker({
-        listingId: worker.listingId,
-        draftId: input.draftId,
-        tenantId: input.tenantId,
-      });
-    } catch (err) {
-      console.error(`[Publish API] Worker error for listing ${worker.listingId}:`, err);
-    }
-
-    await runNext();
-  }
-
-  await Promise.all(Array.from({ length: Math.min(3, input.workers.length) }, () => runNext()));
 }

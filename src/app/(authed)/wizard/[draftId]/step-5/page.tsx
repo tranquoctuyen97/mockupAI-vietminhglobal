@@ -1,14 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "next/navigation";
-import Link from "next/link";
-import { toast } from "sonner";
-import { useWizardStore } from "@/lib/wizard/use-wizard-store";
 import {
-  getActiveDraftDesignId,
-  getLatestJobByDraftDesignId,
-} from "@/lib/mockup/multi-design";
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardCheck,
+  ExternalLink,
+  ImageOff,
+  Loader2,
+  Play,
+  XCircle,
+} from "lucide-react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { getActiveDraftDesignId, getLatestJobByDraftDesignId } from "@/lib/mockup/multi-design";
 import { isRealPrintifyMockupMedia } from "@/lib/mockup/real-printify-media";
 import { viewLabel } from "@/lib/placement/views";
 import {
@@ -24,19 +33,7 @@ import {
   getIndependentDraftDesigns,
   getPairedDraftDesignIds,
 } from "@/lib/wizard/publish-units";
-import {
-  AlertTriangle,
-  CheckCircle2,
-  ClipboardCheck,
-  ChevronLeft,
-  ChevronRight,
-  ExternalLink,
-  ImageOff,
-  Loader2,
-  Play,
-  Check,
-  XCircle,
-} from "lucide-react";
+import { useWizardStore } from "@/lib/wizard/use-wizard-store";
 
 interface AiContent {
   title: string;
@@ -131,14 +128,19 @@ interface PublishResponseEntry {
 interface PersistedPublishJob {
   stage: string;
   status: string;
+  publishAttemptId?: string | null;
   phase?: string | null;
   progressMessage?: string | null;
+  nextRetryAt?: string | null;
+  reasonCode?: string | null;
+  lastErrorCode?: string | null;
   lastError?: string | null;
 }
 
 interface PersistedPublishListing {
   id: string;
   status: string;
+  activePublishAttemptId?: string | null;
   wizardDraftDesignId?: string | null;
   wizardDraftDesignPairId?: string | null;
   designId?: string | null;
@@ -235,6 +237,20 @@ function compactPublishLogs(state: PublishDesignState): PublishLog[] {
 function jobToPublishLog(job: PersistedPublishJob): PublishLog | null {
   const stage = job.stage.toUpperCase();
   const status = job.status.toUpperCase();
+  const nextRetrySuffix = job.nextRetryAt
+    ? ` Hệ thống sẽ thử lại lúc ${new Date(job.nextRetryAt).toLocaleTimeString("vi-VN", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}.`
+    : "";
+
+  if (status === "RETRY_SCHEDULED") {
+    return {
+      stage,
+      message: `Đang thử lại.${nextRetrySuffix}`,
+      status: "pending",
+    };
+  }
 
   if (stage === "PRINTIFY") {
     if (status === "SUCCEEDED") {
@@ -276,8 +292,14 @@ function jobToPublishLog(job: PersistedPublishJob): PublishLog | null {
 }
 
 function publishStateFromPersistedListing(listing: PersistedPublishListing): PublishDesignState {
-  const jobs = listing.publishJobs ?? [];
-  const hasRunningJob = jobs.some((job) => job.status === "PENDING" || job.status === "RUNNING");
+  const allJobs = listing.publishJobs ?? [];
+  const activeAttemptJobs = listing.activePublishAttemptId
+    ? allJobs.filter((job) => job.publishAttemptId === listing.activePublishAttemptId)
+    : [];
+  const jobs = activeAttemptJobs.length > 0 ? activeAttemptJobs : allJobs;
+  const hasRunningJob = jobs.some((job) =>
+    ["PENDING", "RUNNING", "RETRY_SCHEDULED"].includes(job.status),
+  );
   const hasFailedJob = jobs.some((job) => job.status === "FAILED");
   const logs = jobs.map(jobToPublishLog).filter((log): log is PublishLog => Boolean(log));
 
@@ -286,7 +308,10 @@ function publishStateFromPersistedListing(listing: PersistedPublishListing): Pub
       listingId: listing.id,
       status: "SUCCESS",
       alreadyPublished: true,
-      logs: logs.length > 0 ? logs : [{ stage: "DONE", message: "Publish hoàn tất!", status: "success" }],
+      logs:
+        logs.length > 0
+          ? logs
+          : [{ stage: "DONE", message: "Publish hoàn tất!", status: "success" }],
     };
   }
 
@@ -295,7 +320,8 @@ function publishStateFromPersistedListing(listing: PersistedPublishListing): Pub
       listingId: listing.id,
       status: "PUBLISHING",
       alreadyPublished: true,
-      logs: logs.length > 0 ? logs : [{ stage: "INIT", message: "Đang publish...", status: "pending" }],
+      logs:
+        logs.length > 0 ? logs : [{ stage: "INIT", message: "Đang publish...", status: "pending" }],
     };
   }
 
@@ -359,7 +385,9 @@ export default function Step5ReviewPage() {
   const [activeDesignId, setActiveDesignId] = useState<string | null>(null);
   const [carouselIdx, setCarouselIdx] = useState(0);
   const [publishing, setPublishing] = useState(false);
-  const [publishStateByDesignId, setPublishStateByDesignId] = useState<Record<string, PublishDesignState>>({});
+  const [publishStateByDesignId, setPublishStateByDesignId] = useState<
+    Record<string, PublishDesignState>
+  >({});
 
   // Per-size price override state
   const [priceBySizeOverride, setPriceBySizeOverride] = useState<Record<string, string>>({});
@@ -383,7 +411,7 @@ export default function Step5ReviewPage() {
   }, [draft?.designPairs]);
 
   const persistedPublishListings = useMemo(
-    () => ((draft as { listings?: PersistedPublishListing[] } | null)?.listings ?? []),
+    () => (draft as { listings?: PersistedPublishListing[] } | null)?.listings ?? [],
     [draft],
   );
 
@@ -421,10 +449,7 @@ export default function Step5ReviewPage() {
     ];
   }, [draft?.design, draft?.designId, draft?.draftDesigns, draft?.mockupJobs]);
 
-  const pairedDraftDesignIds = useMemo(
-    () => getPairedDraftDesignIds(designPairs),
-    [designPairs],
-  );
+  const pairedDraftDesignIds = useMemo(() => getPairedDraftDesignIds(designPairs), [designPairs]);
 
   const independentDesigns = useMemo(
     () => getIndependentDraftDesigns(selectedDraftDesigns, designPairs),
@@ -487,10 +512,12 @@ export default function Step5ReviewPage() {
   useEffect(() => {
     if (!stableStoreId || !draftId || loading) return;
 
-    setPrice(resolveBaseTemplatePrice({
-      templateBasePriceUsd,
-      storeDefaultPriceUsd,
-    }).toFixed(2));
+    setPrice(
+      resolveBaseTemplatePrice({
+        templateBasePriceUsd,
+        storeDefaultPriceUsd,
+      }).toFixed(2),
+    );
   }, [draftId, stableStoreId, templateBasePriceUsd, storeDefaultPriceUsd, loading]);
 
   useEffect(() => {
@@ -518,10 +545,11 @@ export default function Step5ReviewPage() {
   // Initialize per-size price override from draft (only when draft is loaded)
   const stablePriceBySizeOverride = draft?.priceBySizeOverride as Record<string, number> | null;
   const effectivePriceBySizeDefault = useMemo(
-    () => mergeDraftAndTemplatePriceMaps({
-      draftPriceBySizeOverride: stablePriceBySizeOverride,
-      templatePriceBySizeDefault,
-    }),
+    () =>
+      mergeDraftAndTemplatePriceMaps({
+        draftPriceBySizeOverride: stablePriceBySizeOverride,
+        templatePriceBySizeDefault,
+      }),
     [stablePriceBySizeOverride, templatePriceBySizeDefault],
   );
   useEffect(() => {
@@ -541,9 +569,9 @@ export default function Step5ReviewPage() {
 
   const activeDesign = useMemo(() => {
     return (
-      (activeDesignId
-        ? selectedDraftDesigns.find((entry) => entry.id === activeDesignId)
-        : null) ?? selectedDraftDesigns[0] ?? null
+      (activeDesignId ? selectedDraftDesigns.find((entry) => entry.id === activeDesignId) : null) ??
+      selectedDraftDesigns[0] ??
+      null
     );
   }, [activeDesignId, selectedDraftDesigns]);
 
@@ -552,8 +580,7 @@ export default function Step5ReviewPage() {
     return (
       designPairs.find(
         (pair) =>
-          pair.lightDraftDesignId === activeDesign.id ||
-          pair.darkDraftDesignId === activeDesign.id,
+          pair.lightDraftDesignId === activeDesign.id || pair.darkDraftDesignId === activeDesign.id,
       ) ?? null
     );
   }, [activeDesign, designPairs]);
@@ -592,7 +619,7 @@ export default function Step5ReviewPage() {
   const activeMockup = activeMockups[carouselIdx] ?? null;
   const activeMockupUrl = activeMockup ? toPublicUrl(activeMockup.compositeUrl) : null;
   const activeMockupColorHex = activeMockup
-    ? colorHexLookup.get(normalizeColorName(activeMockup.colorName)) ?? "var(--bg-tertiary)"
+    ? (colorHexLookup.get(normalizeColorName(activeMockup.colorName)) ?? "var(--bg-tertiary)")
     : "var(--bg-tertiary)";
 
   const designPublishEntries = useMemo(() => {
@@ -613,25 +640,31 @@ export default function Step5ReviewPage() {
     return [...pairEntries, ...independentEntries] satisfies PublishDisplayEntry[];
   }, [publishStateByDesignId, selectedDraftDesigns, designPairs]);
 
-  useEffect(() => {
-    if (persistedPublishListings.length === 0) return;
-
+  function hydratePublishStateFromListings(listings: PersistedPublishListing[]): boolean {
+    if (listings.length === 0) return false;
     const nextMapping = new Map<string, string>();
     const nextState: Record<string, PublishDesignState> = {};
 
-    for (const listing of persistedPublishListings) {
-      const designKey = listing.wizardDraftDesignPairId ?? listing.wizardDraftDesignId ?? listing.designId;
+    for (const listing of listings) {
+      const designKey =
+        listing.wizardDraftDesignPairId ?? listing.wizardDraftDesignId ?? listing.designId;
       if (!designKey) continue;
 
       nextMapping.set(listing.id, designKey);
       nextState[designKey] = publishStateFromPersistedListing(listing);
     }
 
-    if (Object.keys(nextState).length === 0) return;
+    if (Object.keys(nextState).length === 0) return false;
 
     listingIdToDesignIdRef.current = nextMapping;
     setPublishStateByDesignId(nextState);
-    setPublishing(Object.values(nextState).some((state) => state.status === "PUBLISHING"));
+    const hasPublishing = Object.values(nextState).some((state) => state.status === "PUBLISHING");
+    setPublishing(hasPublishing);
+    return hasPublishing;
+  }
+
+  useEffect(() => {
+    hydratePublishStateFromListings(persistedPublishListings);
   }, [persistedPublishListings]);
 
   const overallPublishStatus = useMemo(() => {
@@ -653,7 +686,8 @@ export default function Step5ReviewPage() {
     }
   }, [designPublishEntries, publishing]);
 
-  const selectedTemplateBlueprint = draft?.template?.blueprintTitle ?? draft?.store?.template?.blueprintTitle ?? draft?.productType;
+  const selectedTemplateBlueprint =
+    draft?.template?.blueprintTitle ?? draft?.store?.template?.blueprintTitle ?? draft?.productType;
   const selectedSizesCount = draft?.enabledSizes?.length ?? 0;
   const summaryListingsCount = designPairs.length + independentCount;
   const selectedMockupColorCount = useMemo(() => {
@@ -669,26 +703,68 @@ export default function Step5ReviewPage() {
       }
     }
     return colors.filter((color) =>
-      allMockupImages.some((image) => normalizeColorName(image.colorName) === normalizeColorName(color.name)),
+      allMockupImages.some(
+        (image) => normalizeColorName(image.colorName) === normalizeColorName(color.name),
+      ),
     ).length;
   }, [colors, selectedDraftDesigns, latestMockupJobByDesign]);
 
   const isLoadingPage = loading || !draft;
   const allListingsPublished = overallPublishStatus === "SUCCESS";
   const hasPublishingListings = publishing || overallPublishStatus === "PUBLISHING";
-  const canPublish = Boolean(localChecklist?.readyToPublish && selectedDraftDesigns.length > 0 && !hasPublishingListings && !allListingsPublished);
+  const canPublish = Boolean(
+    localChecklist?.readyToPublish &&
+      selectedDraftDesigns.length > 0 &&
+      !hasPublishingListings &&
+      !allListingsPublished,
+  );
   const publishButtonLabel = hasPublishingListings
     ? "Đang publish..."
     : allListingsPublished
       ? `Đã publish ${summaryListingsCount} listings`
       : `Publish ${summaryListingsCount} listings`;
 
+  useEffect(() => {
+    if (!draftId || !hasPublishingListings) return;
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const pollPersistedPublishState = async () => {
+      try {
+        const response = await fetch(`/api/wizard/drafts/${draftId}`, {
+          cache: "no-store",
+        });
+        if (!response.ok || cancelled) return;
+        const data = await response.json();
+        const stillPublishing = hydratePublishStateFromListings(
+          (data as { listings?: PersistedPublishListing[] }).listings ?? [],
+        );
+        if (!stillPublishing) return;
+      } catch {
+        // SSE is best-effort; polling retries on the next interval.
+      }
+
+      if (!cancelled) {
+        timeoutId = setTimeout(pollPersistedPublishState, 3000);
+      }
+    };
+
+    timeoutId = setTimeout(pollPersistedPublishState, 2500);
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [draftId, hasPublishingListings]);
+
   function updatePublishStateByListingId(
     listingId: string | null | undefined,
     fallbackDesignKey: string | null,
     updater: (current: PublishDesignState) => PublishDesignState,
   ) {
-    const designKey = (listingId ? listingIdToDesignIdRef.current.get(listingId) : null) ?? fallbackDesignKey;
+    const designKey =
+      (listingId ? listingIdToDesignIdRef.current.get(listingId) : null) ?? fallbackDesignKey;
     if (!designKey) return;
 
     setPublishStateByDesignId((current) => {
@@ -729,7 +805,9 @@ export default function Step5ReviewPage() {
           {
             listingId: null,
             status: "PUBLISHING" as const,
-            logs: [{ stage: "INIT", message: "Đang khởi tạo publish...", status: "pending" as const }],
+            logs: [
+              { stage: "INIT", message: "Đang khởi tạo publish...", status: "pending" as const },
+            ],
             alreadyPublished: false,
           },
         ]),
@@ -775,7 +853,8 @@ export default function Step5ReviewPage() {
 
           if (eventType === "publish.progress") {
             const phase = data.data?.phase ?? null;
-            const message = getPublishPhaseLabel(phase) ?? data.data?.message ?? "Đang xử lý publish...";
+            const message =
+              getPublishPhaseLabel(phase) ?? data.data?.message ?? "Đang xử lý publish...";
             return appendPublishLog(next, {
               stage: phase || "SHOPIFY",
               message,
@@ -852,8 +931,6 @@ export default function Step5ReviewPage() {
       if (eventSourceRef.current === eventSource) {
         eventSourceRef.current = null;
       }
-      setPublishing(false);
-      toast.error("Mất kết nối server");
     };
 
     try {
@@ -910,8 +987,26 @@ export default function Step5ReviewPage() {
   if (isLoadingPage) {
     return (
       <div>
-        <div style={{ height: 20, width: 180, borderRadius: 6, backgroundColor: "var(--bg-tertiary)", marginBottom: 8 }} className="animate-pulse" />
-        <div style={{ height: 14, width: 320, borderRadius: 4, backgroundColor: "var(--bg-tertiary)", marginBottom: 20 }} className="animate-pulse" />
+        <div
+          style={{
+            height: 20,
+            width: 180,
+            borderRadius: 6,
+            backgroundColor: "var(--bg-tertiary)",
+            marginBottom: 8,
+          }}
+          className="animate-pulse"
+        />
+        <div
+          style={{
+            height: 14,
+            width: 320,
+            borderRadius: 4,
+            backgroundColor: "var(--bg-tertiary)",
+            marginBottom: 20,
+          }}
+          className="animate-pulse"
+        />
         <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-6 items-start">
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div className="card animate-pulse" style={{ height: 360, padding: 16 }} />
@@ -927,10 +1022,12 @@ export default function Step5ReviewPage() {
   }
 
   const activeDesignMockupColorHex = activeMockup
-    ? colorHexLookup.get(normalizeColorName(activeMockup.colorName)) ?? "var(--bg-tertiary)"
+    ? (colorHexLookup.get(normalizeColorName(activeMockup.colorName)) ?? "var(--bg-tertiary)")
     : "var(--bg-tertiary)";
   const activeDesignStatus = activeMockupJob?.status ?? "pending";
-  const activeDesignName = activeDesign?.design?.name ?? `Design ${selectedDraftDesigns.findIndex((entry) => entry.id === activeDesign?.id) + 1}`;
+  const activeDesignName =
+    activeDesign?.design?.name ??
+    `Design ${selectedDraftDesigns.findIndex((entry) => entry.id === activeDesign?.id) + 1}`;
   const previewPlacementLabel = activeMockup
     ? `${activeMockup.colorName} · ${viewLabel(activeMockup.viewPosition)}`
     : activeDesignStatus === "running" || activeDesignStatus === "pending"
@@ -948,11 +1045,20 @@ export default function Step5ReviewPage() {
       </p>
 
       {selectedDraftDesigns.length === 0 && (
-        <div className="alert" style={{ marginBottom: 16, backgroundColor: "var(--bg-tertiary)", border: "1px solid var(--border-default)" }}>
+        <div
+          className="alert"
+          style={{
+            marginBottom: 16,
+            backgroundColor: "var(--bg-tertiary)",
+            border: "1px solid var(--border-default)",
+          }}
+        >
           <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
           <div className="flex-1">
             <p style={{ margin: 0, fontWeight: 500 }}>Chưa có Design</p>
-            <p style={{ margin: 0, fontSize: "0.85rem", opacity: 0.6 }}>Bạn cần chọn ít nhất 1 design ở bước trước để tạo listing.</p>
+            <p style={{ margin: 0, fontSize: "0.85rem", opacity: 0.6 }}>
+              Bạn cần chọn ít nhất 1 design ở bước trước để tạo listing.
+            </p>
           </div>
           <button
             className="btn btn-secondary"
@@ -965,7 +1071,10 @@ export default function Step5ReviewPage() {
       )}
 
       {selectedDraftDesigns.length > 0 && localChecklist && (
-        <div className="card" style={{ padding: "12px 16px", fontSize: "0.82rem", marginBottom: 16 }}>
+        <div
+          className="card"
+          style={{ padding: "12px 16px", fontSize: "0.82rem", marginBottom: 16 }}
+        >
           <div className="flex items-center gap-2" style={{ marginBottom: 10 }}>
             <ClipboardCheck size={14} style={{ opacity: 0.5 }} />
             <span style={{ fontWeight: 600 }}>Kiểm tra trước khi Publish</span>
@@ -1013,7 +1122,14 @@ export default function Step5ReviewPage() {
             <div className="flex items-center justify-between gap-3" style={{ marginBottom: 12 }}>
               <div style={{ minWidth: 0 }}>
                 <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Mockup preview</h3>
-                <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                <p
+                  style={{
+                    margin: "2px 0 0",
+                    fontSize: "0.72rem",
+                    opacity: 0.55,
+                    lineHeight: 1.35,
+                  }}
+                >
                   Chọn design để xem mockup đã render cho design đó
                 </p>
               </div>
@@ -1022,7 +1138,15 @@ export default function Step5ReviewPage() {
               </span>
             </div>
 
-            <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, marginBottom: 12 }}>
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                overflowX: "auto",
+                paddingBottom: 8,
+                marginBottom: 12,
+              }}
+            >
               {selectedDraftDesigns.map((design) => {
                 const active = design.id === activeDesign?.id;
                 const job = latestMockupJobByDesign.get(design.id) ?? null;
@@ -1039,20 +1163,35 @@ export default function Step5ReviewPage() {
                       minWidth: 160,
                       padding: "10px 12px",
                       borderRadius: 10,
-                      border: active ? "1px solid var(--color-wise-green)" : "1px solid var(--border-default)",
+                      border: active
+                        ? "1px solid var(--color-wise-green)"
+                        : "1px solid var(--border-default)",
                       backgroundColor: active ? "rgba(146, 198, 72, 0.06)" : "transparent",
                       textAlign: "left",
                       cursor: "pointer",
                     }}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span style={{ fontWeight: 800, fontSize: "0.82rem", overflowWrap: "anywhere" }}>
+                      <span
+                        style={{ fontWeight: 800, fontSize: "0.82rem", overflowWrap: "anywhere" }}
+                      >
                         {design.design?.name ?? `Design ${design.sortOrder + 1}`}
                       </span>
                       {active ? <Check size={14} color="var(--color-wise-green)" /> : null}
                     </div>
-                    <p style={{ margin: "4px 0 0", fontSize: "0.7rem", opacity: 0.65, lineHeight: 1.3 }}>
-                      {statusLabel === "completed" ? "Ready" : statusLabel === "running" ? "Rendering" : "Pending"}
+                    <p
+                      style={{
+                        margin: "4px 0 0",
+                        fontSize: "0.7rem",
+                        opacity: 0.65,
+                        lineHeight: 1.3,
+                      }}
+                    >
+                      {statusLabel === "completed"
+                        ? "Ready"
+                        : statusLabel === "running"
+                          ? "Rendering"
+                          : "Pending"}
                     </p>
                   </button>
                 );
@@ -1079,9 +1218,13 @@ export default function Step5ReviewPage() {
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
                   loading="lazy"
                 />
-              ) : (activeDesignStatus === "running" || activeDesignStatus === "pending") ? (
+              ) : activeDesignStatus === "running" || activeDesignStatus === "pending" ? (
                 <div style={{ textAlign: "center", padding: "0 24px" }}>
-                  <Loader2 size={36} className="animate-spin" style={{ opacity: 0.45, marginBottom: 12 }} />
+                  <Loader2
+                    size={36}
+                    className="animate-spin"
+                    style={{ opacity: 0.45, marginBottom: 12 }}
+                  />
                   <p style={{ fontSize: "0.82rem", opacity: 0.55, margin: 0 }}>
                     Đang render mockup cho {activeDesignName}
                     <br />
@@ -1100,7 +1243,19 @@ export default function Step5ReviewPage() {
               )}
 
               {activeMockup && (
-                <div style={{ position: "absolute", bottom: 8, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.55)", color: "white", fontSize: "0.72rem", padding: "4px 10px", borderRadius: 999 }}>
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: 8,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    background: "rgba(0,0,0,0.55)",
+                    color: "white",
+                    fontSize: "0.72rem",
+                    padding: "4px 10px",
+                    borderRadius: 999,
+                  }}
+                >
                   {activeDesignName} · {previewPlacementLabel}
                 </div>
               )}
@@ -1108,18 +1263,63 @@ export default function Step5ReviewPage() {
               {activeMockups.length > 1 && (
                 <>
                   <button
-                    onClick={() => setCarouselIdx((i) => (i === 0 ? activeMockups.length - 1 : i - 1))}
-                    style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "white" }}
+                    onClick={() =>
+                      setCarouselIdx((i) => (i === 0 ? activeMockups.length - 1 : i - 1))
+                    }
+                    style={{
+                      position: "absolute",
+                      left: 8,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      background: "rgba(0,0,0,0.5)",
+                      border: "none",
+                      borderRadius: "50%",
+                      width: 32,
+                      height: 32,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: "pointer",
+                      color: "white",
+                    }}
                   >
                     <ChevronLeft size={16} />
                   </button>
                   <button
-                    onClick={() => setCarouselIdx((i) => (i === activeMockups.length - 1 ? 0 : i + 1))}
-                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "white" }}
+                    onClick={() =>
+                      setCarouselIdx((i) => (i === activeMockups.length - 1 ? 0 : i + 1))
+                    }
+                    style={{
+                      position: "absolute",
+                      right: 8,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      background: "rgba(0,0,0,0.5)",
+                      border: "none",
+                      borderRadius: "50%",
+                      width: 32,
+                      height: 32,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: "pointer",
+                      color: "white",
+                    }}
                   >
                     <ChevronRight size={16} />
                   </button>
-                  <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.5)", color: "white", fontSize: "0.7rem", padding: "3px 10px", borderRadius: 12 }}>
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 8,
+                      right: 8,
+                      background: "rgba(0,0,0,0.5)",
+                      color: "white",
+                      fontSize: "0.7rem",
+                      padding: "3px 10px",
+                      borderRadius: 12,
+                    }}
+                  >
                     {carouselIdx + 1} / {activeMockups.length}
                   </div>
                 </>
@@ -1130,16 +1330,35 @@ export default function Step5ReviewPage() {
               <div className="flex gap-2" style={{ marginTop: 8, overflowX: "auto" }}>
                 {activeMockups.map((mockup, idx) => {
                   const thumbnailUrl = toPublicUrl(mockup.compositeUrl);
-                  const thumbnailColorHex = colorHexLookup.get(normalizeColorName(mockup.colorName)) ?? "var(--bg-tertiary)";
+                  const thumbnailColorHex =
+                    colorHexLookup.get(normalizeColorName(mockup.colorName)) ??
+                    "var(--bg-tertiary)";
                   return (
                     <div
                       key={mockup.id}
                       onClick={() => setCarouselIdx(idx)}
                       title={`${mockup.colorName} · ${viewLabel(mockup.viewPosition)}`}
-                      style={{ width: 48, height: 48, borderRadius: "var(--radius-sm)", backgroundColor: thumbnailColorHex, border: idx === carouselIdx ? "2px solid var(--color-wise-green)" : "1px solid var(--border-default)", cursor: "pointer", overflow: "hidden", flexShrink: 0 }}
+                      style={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: "var(--radius-sm)",
+                        backgroundColor: thumbnailColorHex,
+                        border:
+                          idx === carouselIdx
+                            ? "2px solid var(--color-wise-green)"
+                            : "1px solid var(--border-default)",
+                        cursor: "pointer",
+                        overflow: "hidden",
+                        flexShrink: 0,
+                      }}
                     >
                       {thumbnailUrl && (
-                        <img src={thumbnailUrl} alt={`${mockup.colorName} ${viewLabel(mockup.viewPosition)}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" />
+                        <img
+                          src={thumbnailUrl}
+                          alt={`${mockup.colorName} ${viewLabel(mockup.viewPosition)}`}
+                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                          loading="lazy"
+                        />
                       )}
                     </div>
                   );
@@ -1151,13 +1370,15 @@ export default function Step5ReviewPage() {
           <div className="card" style={{ padding: 16 }}>
             <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
               <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Mockup groups</h3>
-              <span style={{ fontSize: "0.8rem", opacity: 0.6 }}>{selectedDraftDesigns.length} tabs</span>
+              <span style={{ fontSize: "0.8rem", opacity: 0.6 }}>
+                {selectedDraftDesigns.length} tabs
+              </span>
             </div>
             <div style={{ display: "grid", gap: 8 }}>
               {selectedDraftDesigns.map((design) => {
                 const job = latestMockupJobByDesign.get(design.id) ?? null;
                 const progressText = job
-                  ? `${job.completedImages ?? 0}/${job.totalImages ?? (job.images?.length ?? 0)} ảnh`
+                  ? `${job.completedImages ?? 0}/${job.totalImages ?? job.images?.length ?? 0} ảnh`
                   : "Chưa có job";
                 const statusClass =
                   job?.status === "completed"
@@ -1169,17 +1390,27 @@ export default function Step5ReviewPage() {
                   <div
                     key={design.id}
                     className="flex items-center justify-between gap-3"
-                    style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border-default)", backgroundColor: "var(--bg-tertiary)" }}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      border: "1px solid var(--border-default)",
+                      backgroundColor: "var(--bg-tertiary)",
+                    }}
                   >
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: "0.84rem", overflowWrap: "anywhere" }}>
+                      <div
+                        style={{ fontWeight: 700, fontSize: "0.84rem", overflowWrap: "anywhere" }}
+                      >
                         {design.design?.name ?? `Design ${design.sortOrder + 1}`}
                       </div>
                       <p style={{ margin: "4px 0 0", fontSize: "0.72rem", opacity: 0.65 }}>
                         {progressText}
                       </p>
                     </div>
-                    <span className={`badge ${statusClass}`} style={{ flexShrink: 0, fontSize: "0.65rem" }}>
+                    <span
+                      className={`badge ${statusClass}`}
+                      style={{ flexShrink: 0, fontSize: "0.65rem" }}
+                    >
                       {job?.status ?? "pending"}
                     </span>
                   </div>
@@ -1193,8 +1424,17 @@ export default function Step5ReviewPage() {
           <div className="card" style={{ padding: 16 }}>
             <div className="flex items-center justify-between gap-3" style={{ marginBottom: 12 }}>
               <div style={{ minWidth: 0 }}>
-                <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Content & pricing</h3>
-                <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>
+                  Content & pricing
+                </h3>
+                <p
+                  style={{
+                    margin: "2px 0 0",
+                    fontSize: "0.72rem",
+                    opacity: 0.55,
+                    lineHeight: 1.35,
+                  }}
+                >
                   Shared across all listings in this wizard run
                 </p>
               </div>
@@ -1205,7 +1445,15 @@ export default function Step5ReviewPage() {
 
             <div style={{ display: "grid", gap: 14 }}>
               <div>
-                <label style={{ fontWeight: 600, fontSize: "0.8rem", opacity: 0.5, display: "block", marginBottom: 4 }}>
+                <label
+                  style={{
+                    fontWeight: 600,
+                    fontSize: "0.8rem",
+                    opacity: 0.5,
+                    display: "block",
+                    marginBottom: 4,
+                  }}
+                >
                   Tiêu đề
                 </label>
                 {aiContent?.title ? (
@@ -1219,12 +1467,28 @@ export default function Step5ReviewPage() {
               </div>
 
               <div>
-                <label style={{ fontWeight: 600, fontSize: "0.8rem", opacity: 0.5, display: "block", marginBottom: 4 }}>
+                <label
+                  style={{
+                    fontWeight: 600,
+                    fontSize: "0.8rem",
+                    opacity: 0.5,
+                    display: "block",
+                    marginBottom: 4,
+                  }}
+                >
                   Mô tả
                 </label>
                 {aiContent?.description ? (
                   <div
-                    style={{ fontSize: "0.85rem", lineHeight: 1.5, maxHeight: 120, overflow: "auto", padding: "8px 12px", backgroundColor: "var(--bg-tertiary)", borderRadius: "var(--radius-sm)" }}
+                    style={{
+                      fontSize: "0.85rem",
+                      lineHeight: 1.5,
+                      maxHeight: 120,
+                      overflow: "auto",
+                      padding: "8px 12px",
+                      backgroundColor: "var(--bg-tertiary)",
+                      borderRadius: "var(--radius-sm)",
+                    }}
                     dangerouslySetInnerHTML={{ __html: aiContent.description }}
                   />
                 ) : (
@@ -1236,13 +1500,29 @@ export default function Step5ReviewPage() {
               </div>
 
               <div>
-                <label style={{ fontWeight: 600, fontSize: "0.8rem", opacity: 0.5, display: "block", marginBottom: 4 }}>
+                <label
+                  style={{
+                    fontWeight: 600,
+                    fontSize: "0.8rem",
+                    opacity: 0.5,
+                    display: "block",
+                    marginBottom: 4,
+                  }}
+                >
                   Tags
                 </label>
                 {aiContent?.tags && aiContent.tags.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
                     {aiContent.tags.map((tag) => (
-                      <span key={tag} style={{ padding: "3px 8px", borderRadius: "var(--radius-sm)", backgroundColor: "var(--bg-tertiary)", fontSize: "0.75rem" }}>
+                      <span
+                        key={tag}
+                        style={{
+                          padding: "3px 8px",
+                          borderRadius: "var(--radius-sm)",
+                          backgroundColor: "var(--bg-tertiary)",
+                          fontSize: "0.75rem",
+                        }}
+                      >
                         {tag}
                       </span>
                     ))}
@@ -1258,7 +1538,15 @@ export default function Step5ReviewPage() {
               <div>
                 <div className="flex items-center gap-4 mb-3">
                   <div>
-                    <label style={{ fontWeight: 600, fontSize: "0.8rem", opacity: 0.5, display: "block", marginBottom: 4 }}>
+                    <label
+                      style={{
+                        fontWeight: 600,
+                        fontSize: "0.8rem",
+                        opacity: 0.5,
+                        display: "block",
+                        marginBottom: 4,
+                      }}
+                    >
                       Base Price (USD)
                     </label>
                     <div className="flex items-center gap-2">
@@ -1278,142 +1566,213 @@ export default function Step5ReviewPage() {
                   </div>
                 </div>
 
-                {sizes.length > 0 && draft?.enabledSizes && draft.enabledSizes.length > 0 && (() => {
-                  const enabledSizeList = sizes.filter((s) => draft.enabledSizes?.includes(s.size));
-                  const hasOverrides = Object.keys(priceBySizeOverride).length > 0;
+                {sizes.length > 0 &&
+                  draft?.enabledSizes &&
+                  draft.enabledSizes.length > 0 &&
+                  (() => {
+                    const enabledSizeList = sizes.filter((s) =>
+                      draft.enabledSizes?.includes(s.size),
+                    );
+                    const hasOverrides = Object.keys(priceBySizeOverride).length > 0;
 
-                  const handleSavePriceOverride = async () => {
-                    if (!draftId) return;
-                    setSavingPriceOverride(true);
-                    try {
-                      const override: Record<string, number> = {};
-                      for (const [k, v] of Object.entries(priceBySizeOverride)) {
-                        const parsed = parseFloat(v);
-                        if (Number.isFinite(parsed) && parsed >= 1) override[k] = parsed;
+                    const handleSavePriceOverride = async () => {
+                      if (!draftId) return;
+                      setSavingPriceOverride(true);
+                      try {
+                        const override: Record<string, number> = {};
+                        for (const [k, v] of Object.entries(priceBySizeOverride)) {
+                          const parsed = parseFloat(v);
+                          if (Number.isFinite(parsed) && parsed >= 1) override[k] = parsed;
+                        }
+                        const res = await fetch(`/api/wizard/drafts/${draftId}/price-override`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            priceBySizeOverride: Object.keys(override).length > 0 ? override : null,
+                          }),
+                        });
+                        if (res.ok) {
+                          setSavedPriceOverride(Object.keys(override).length > 0 ? override : null);
+                          setPriceOverrideDirty(false);
+                        }
+                      } catch {
+                        /* ignore */
                       }
-                      const res = await fetch(`/api/wizard/drafts/${draftId}/price-override`, {
-                        method: "PUT",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ priceBySizeOverride: Object.keys(override).length > 0 ? override : null }),
-                      });
-                      if (res.ok) {
-                        setSavedPriceOverride(Object.keys(override).length > 0 ? override : null);
-                        setPriceOverrideDirty(false);
-                      }
-                    } catch { /* ignore */ }
-                    setSavingPriceOverride(false);
-                  };
+                      setSavingPriceOverride(false);
+                    };
 
-                  const handleResetPriceOverride = async () => {
-                    if (!draftId) return;
-                    setPriceBySizeOverride({});
-                    setSavingPriceOverride(true);
-                    try {
-                      const res = await fetch(`/api/wizard/drafts/${draftId}/price-override`, {
-                        method: "PUT",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ priceBySizeOverride: null }),
-                      });
-                      if (res.ok) {
-                        setSavedPriceOverride(null);
-                        setPriceOverrideDirty(false);
+                    const handleResetPriceOverride = async () => {
+                      if (!draftId) return;
+                      setPriceBySizeOverride({});
+                      setSavingPriceOverride(true);
+                      try {
+                        const res = await fetch(`/api/wizard/drafts/${draftId}/price-override`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ priceBySizeOverride: null }),
+                        });
+                        if (res.ok) {
+                          setSavedPriceOverride(null);
+                          setPriceOverrideDirty(false);
+                        }
+                      } catch {
+                        /* ignore */
                       }
-                    } catch { /* ignore */ }
-                    setSavingPriceOverride(false);
-                  };
+                      setSavingPriceOverride(false);
+                    };
 
-                  return (
-                    <div style={{ backgroundColor: "var(--bg-tertiary)", borderRadius: "var(--radius-sm)", overflow: "hidden", border: "1px solid var(--border-default)" }}>
-                      <table style={{ width: "100%", fontSize: "0.8rem", textAlign: "left", borderCollapse: "collapse" }}>
-                        <thead style={{ backgroundColor: "rgba(0,0,0,0.02)", borderBottom: "1px solid var(--border-default)" }}>
-                          <tr>
-                            <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Size</th>
-                            <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Cost</th>
-                            <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>Retail Price</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {enabledSizeList.map((size, index) => {
-                            const baseVal = parseFloat(price) || 0;
-                            const overrideVal = priceBySizeOverride[size.size];
-                            const templateDefaultVal = effectivePriceBySizeDefault?.[size.size] ?? null;
-                            const effectiveRetail = resolvePriceForSize({
-                              size: size.size,
-                              draftPriceBySizeOverride: normalizePriceBySizeDefault(
-                                Object.fromEntries(
-                                  Object.entries(priceBySizeOverride)
-                                    .filter(([, value]) => value.trim() !== "")
-                                    .map(([key, value]) => [key, Number(value)]),
+                    return (
+                      <div
+                        style={{
+                          backgroundColor: "var(--bg-tertiary)",
+                          borderRadius: "var(--radius-sm)",
+                          overflow: "hidden",
+                          border: "1px solid var(--border-default)",
+                        }}
+                      >
+                        <table
+                          style={{
+                            width: "100%",
+                            fontSize: "0.8rem",
+                            textAlign: "left",
+                            borderCollapse: "collapse",
+                          }}
+                        >
+                          <thead
+                            style={{
+                              backgroundColor: "rgba(0,0,0,0.02)",
+                              borderBottom: "1px solid var(--border-default)",
+                            }}
+                          >
+                            <tr>
+                              <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>
+                                Size
+                              </th>
+                              <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>
+                                Cost
+                              </th>
+                              <th style={{ padding: "8px 12px", fontWeight: 600, opacity: 0.6 }}>
+                                Retail Price
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {enabledSizeList.map((size, index) => {
+                              const baseVal = parseFloat(price) || 0;
+                              const overrideVal = priceBySizeOverride[size.size];
+                              const templateDefaultVal =
+                                effectivePriceBySizeDefault?.[size.size] ?? null;
+                              const effectiveRetail = resolvePriceForSize({
+                                size: size.size,
+                                draftPriceBySizeOverride: normalizePriceBySizeDefault(
+                                  Object.fromEntries(
+                                    Object.entries(priceBySizeOverride)
+                                      .filter(([, value]) => value.trim() !== "")
+                                      .map(([key, value]) => [key, Number(value)]),
+                                  ),
                                 ),
-                              ),
-                              templatePriceBySizeDefault,
-                              templateBasePriceUsd: baseVal,
-                              storeDefaultPriceUsd,
-                            });
-                            const displayVal = overrideVal ?? templateDefaultVal?.toFixed(2) ?? effectiveRetail.toFixed(2);
-                            const isOverridden = overrideVal != null;
-                            const isTemplateDefault = !isOverridden && templateDefaultVal != null;
-                            return (
-                              <tr key={size.size} style={{ borderBottom: index === enabledSizeList.length - 1 ? "none" : "1px solid var(--border-default)" }}>
-                                <td style={{ padding: "8px 12px", fontWeight: 500 }}>{size.size}</td>
-                                <td style={{ padding: "8px 12px", opacity: 0.7 }}>${(size.costCents / 100).toFixed(2)}</td>
-                                <td style={{ padding: "4px 8px" }}>
-                                  <div className="flex items-center gap-1">
-                                    <span style={{ opacity: 0.5, fontSize: "0.75rem" }}>$</span>
-                                    <input
-                                      type="text"
-                                      className="input"
-                                      value={displayVal}
-                                      onChange={(e) => {
-                                        const next = e.target.value;
-                                        if (/^\d*\.?\d{0,2}$/.test(next)) {
-                                          setPriceBySizeOverride((prev) => ({ ...prev, [size.size]: next }));
-                                          setPriceOverrideDirty(true);
-                                        }
-                                      }}
-                                      style={{
-                                        maxWidth: 80,
-                                        padding: "4px 6px",
-                                        fontSize: "0.8rem",
-                                        fontWeight: isOverridden || isTemplateDefault ? 700 : 400,
-                                        borderColor: isOverridden ? "var(--color-accent)" : undefined,
-                                      }}
-                                    />
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                      <div className="flex items-center gap-2" style={{ padding: "8px 12px", borderTop: "1px solid var(--border-default)", justifyContent: "flex-end" }}>
-                        {hasOverrides && (
+                                templatePriceBySizeDefault,
+                                templateBasePriceUsd: baseVal,
+                                storeDefaultPriceUsd,
+                              });
+                              const displayVal =
+                                overrideVal ??
+                                templateDefaultVal?.toFixed(2) ??
+                                effectiveRetail.toFixed(2);
+                              const isOverridden = overrideVal != null;
+                              const isTemplateDefault = !isOverridden && templateDefaultVal != null;
+                              return (
+                                <tr
+                                  key={size.size}
+                                  style={{
+                                    borderBottom:
+                                      index === enabledSizeList.length - 1
+                                        ? "none"
+                                        : "1px solid var(--border-default)",
+                                  }}
+                                >
+                                  <td style={{ padding: "8px 12px", fontWeight: 500 }}>
+                                    {size.size}
+                                  </td>
+                                  <td style={{ padding: "8px 12px", opacity: 0.7 }}>
+                                    ${(size.costCents / 100).toFixed(2)}
+                                  </td>
+                                  <td style={{ padding: "4px 8px" }}>
+                                    <div className="flex items-center gap-1">
+                                      <span style={{ opacity: 0.5, fontSize: "0.75rem" }}>$</span>
+                                      <input
+                                        type="text"
+                                        className="input"
+                                        value={displayVal}
+                                        onChange={(e) => {
+                                          const next = e.target.value;
+                                          if (/^\d*\.?\d{0,2}$/.test(next)) {
+                                            setPriceBySizeOverride((prev) => ({
+                                              ...prev,
+                                              [size.size]: next,
+                                            }));
+                                            setPriceOverrideDirty(true);
+                                          }
+                                        }}
+                                        style={{
+                                          maxWidth: 80,
+                                          padding: "4px 6px",
+                                          fontSize: "0.8rem",
+                                          fontWeight: isOverridden || isTemplateDefault ? 700 : 400,
+                                          borderColor: isOverridden
+                                            ? "var(--color-accent)"
+                                            : undefined,
+                                        }}
+                                      />
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                        <div
+                          className="flex items-center gap-2"
+                          style={{
+                            padding: "8px 12px",
+                            borderTop: "1px solid var(--border-default)",
+                            justifyContent: "flex-end",
+                          }}
+                        >
+                          {hasOverrides && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={handleResetPriceOverride}
+                              disabled={savingPriceOverride}
+                              style={{ fontSize: "0.75rem" }}
+                            >
+                              ↺ Reset
+                            </button>
+                          )}
                           <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={handleResetPriceOverride}
-                            disabled={savingPriceOverride}
+                            className="btn btn-primary btn-sm"
+                            onClick={handleSavePriceOverride}
+                            disabled={!priceOverrideDirty || savingPriceOverride}
                             style={{ fontSize: "0.75rem" }}
                           >
-                            ↺ Reset
+                            {savingPriceOverride ? "Đang lưu..." : "Lưu giá"}
                           </button>
-                        )}
-                        <button
-                          className="btn btn-primary btn-sm"
-                          onClick={handleSavePriceOverride}
-                          disabled={!priceOverrideDirty || savingPriceOverride}
-                          style={{ fontSize: "0.75rem" }}
-                        >
-                          {savingPriceOverride ? "Đang lưu..." : "Lưu giá"}
-                        </button>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })()}
+                    );
+                  })()}
               </div>
             </div>
           </div>
 
-          <div className="card" style={{ padding: "12px 16px", backgroundColor: "var(--bg-tertiary)", fontSize: "0.8rem" }}>
+          <div
+            className="card"
+            style={{
+              padding: "12px 16px",
+              backgroundColor: "var(--bg-tertiary)",
+              fontSize: "0.8rem",
+            }}
+          >
             <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
               <ClipboardCheck size={16} style={{ color: "var(--color-wise-green)" }} />
               <strong>Tổng hợp</strong>
@@ -1424,26 +1783,42 @@ export default function Step5ReviewPage() {
               <br />• Sizes: {selectedSizesCount} size
               <br />• Mockups: {activeMockups.length} ảnh cho design đang chọn
               <br />• Base Price: ${formatPriceDisplay(price)}
-              {savedPriceOverride && Object.keys(savedPriceOverride).length > 0 && (() => {
-                const vals = Object.values(savedPriceOverride);
-                const minP = Math.min(...vals);
-                const maxP = Math.max(...vals);
-                return minP !== maxP
-                  ? <><br />• Price range: ${minP.toFixed(2)} – ${maxP.toFixed(2)}</>
-                  : null;
-              })()}
+              {savedPriceOverride &&
+                Object.keys(savedPriceOverride).length > 0 &&
+                (() => {
+                  const vals = Object.values(savedPriceOverride);
+                  const minP = Math.min(...vals);
+                  const maxP = Math.max(...vals);
+                  return minP !== maxP ? (
+                    <>
+                      <br />• Price range: ${minP.toFixed(2)} – ${maxP.toFixed(2)}
+                    </>
+                  ) : null;
+                })()}
             </div>
           </div>
 
           <div className="card" style={{ padding: 16 }}>
             <div className="flex items-center justify-between gap-3" style={{ marginBottom: 10 }}>
               <div>
-                <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>Publish progress</h3>
-                <p style={{ margin: "2px 0 0", fontSize: "0.72rem", opacity: 0.55, lineHeight: 1.35 }}>
+                <h3 style={{ fontWeight: 600, fontSize: "0.95rem", margin: 0 }}>
+                  Publish progress
+                </h3>
+                <p
+                  style={{
+                    margin: "2px 0 0",
+                    fontSize: "0.72rem",
+                    opacity: 0.55,
+                    lineHeight: 1.35,
+                  }}
+                >
                   Theo dõi từng listing theo design
                 </p>
               </div>
-              <span className={`badge ${overallPublishStatus === "SUCCESS" ? "badge-success" : overallPublishStatus === "ERROR" ? "badge-danger" : overallPublishStatus === "PUBLISHING" ? "badge-warning" : "badge-info"}`} style={{ flexShrink: 0, fontSize: "0.65rem" }}>
+              <span
+                className={`badge ${overallPublishStatus === "SUCCESS" ? "badge-success" : overallPublishStatus === "ERROR" ? "badge-danger" : overallPublishStatus === "PUBLISHING" ? "badge-warning" : "badge-info"}`}
+                style={{ flexShrink: 0, fontSize: "0.65rem" }}
+              >
                 {overallPublishStatus}
               </span>
             </div>
@@ -1470,23 +1845,37 @@ export default function Step5ReviewPage() {
                       backgroundColor: "var(--bg-tertiary)",
                     }}
                   >
-                    <div className="flex items-start justify-between gap-3" style={{ marginBottom: 8 }}>
+                    <div
+                      className="flex items-start justify-between gap-3"
+                      style={{ marginBottom: 8 }}
+                    >
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: "0.85rem", overflowWrap: "anywhere" }}>
+                        <div
+                          style={{ fontWeight: 700, fontSize: "0.85rem", overflowWrap: "anywhere" }}
+                        >
                           {entry.title}
                         </div>
                         <p style={{ margin: "3px 0 0", fontSize: "0.72rem", opacity: 0.65 }}>
-                          {entry.publish.listingId ? `Listing ${entry.publish.listingId.slice(-6)}` : "Chưa tạo listing"}
+                          {entry.publish.listingId
+                            ? `Listing ${entry.publish.listingId.slice(-6)}`
+                            : "Chưa tạo listing"}
                         </p>
                       </div>
-                      <span className={`badge ${statusClass}`} style={{ flexShrink: 0, fontSize: "0.65rem" }}>
+                      <span
+                        className={`badge ${statusClass}`}
+                        style={{ flexShrink: 0, fontSize: "0.65rem" }}
+                      >
                         {entry.publish.status}
                       </span>
                     </div>
 
                     <div style={{ display: "grid", gap: 6 }}>
                       {displayLogs.map((log, index) => (
-                        <div key={`${entry.publishKey}-${index}`} className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
+                        <div
+                          key={`${entry.publishKey}-${index}`}
+                          className="flex items-center gap-2"
+                          style={{ fontSize: "0.82rem" }}
+                        >
                           {log.status === "pending" ? (
                             <Loader2 size={14} className="animate-spin text-amber-500" />
                           ) : log.status === "error" ? (
@@ -1494,7 +1883,9 @@ export default function Step5ReviewPage() {
                           ) : (
                             <CheckCircle2 size={14} style={{ color: "var(--color-wise-green)" }} />
                           )}
-                          <span style={{ opacity: log.status === "pending" ? 0.8 : 1 }}>{log.message}</span>
+                          <span style={{ opacity: log.status === "pending" ? 0.8 : 1 }}>
+                            {log.message}
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -1504,7 +1895,11 @@ export default function Step5ReviewPage() {
                         <Link
                           href={`/listings/${entry.publish.listingId}`}
                           className="btn btn-secondary"
-                          style={{ textDecoration: "none", width: "100%", justifyContent: "center" }}
+                          style={{
+                            textDecoration: "none",
+                            width: "100%",
+                            justifyContent: "center",
+                          }}
                         >
                           Xem listing
                         </Link>
@@ -1519,7 +1914,11 @@ export default function Step5ReviewPage() {
               className="btn btn-primary"
               onClick={handlePublish}
               disabled={!canPublish}
-              title={localChecklist && !localChecklist.readyToPublish ? "Hoàn tất checklist để Publish" : undefined}
+              title={
+                localChecklist && !localChecklist.readyToPublish
+                  ? "Hoàn tất checklist để Publish"
+                  : undefined
+              }
               style={{
                 fontSize: "0.9rem",
                 padding: "12px 24px",
@@ -1529,7 +1928,13 @@ export default function Step5ReviewPage() {
                 cursor: !canPublish ? "not-allowed" : "pointer",
               }}
             >
-              {hasPublishingListings ? <Loader2 size={16} className="animate-spin" /> : allListingsPublished ? <Check size={16} /> : <Play size={16} />}
+              {hasPublishingListings ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : allListingsPublished ? (
+                <Check size={16} />
+              ) : (
+                <Play size={16} />
+              )}
               {publishButtonLabel}
             </button>
           </div>
@@ -1559,7 +1964,15 @@ function ChecklistItem({
       )}
       <span style={{ flex: 1, opacity: ok ? 0.8 : 1 }}>{label}</span>
       {!ok && (
-        <a href={linkHref} style={{ fontSize: "0.75rem", color: "var(--color-wise-green)", textDecoration: "none", whiteSpace: "nowrap" }}>
+        <a
+          href={linkHref}
+          style={{
+            fontSize: "0.75rem",
+            color: "var(--color-wise-green)",
+            textDecoration: "none",
+            whiteSpace: "nowrap",
+          }}
+        >
           {linkLabel} →
         </a>
       )}

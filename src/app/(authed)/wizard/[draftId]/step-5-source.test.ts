@@ -33,15 +33,28 @@ test("step 5 hydrates publish progress from persisted listing jobs after reload"
   assert.match(source, /interface PersistedPublishListing/);
   assert.match(source, /publishStateFromPersistedListing/);
   assert.match(source, /persistedPublishListings/);
+  assert.match(source, /activePublishAttemptId/);
+  assert.match(source, /publishAttemptId/);
   assert.match(
     source,
     /listing\.wizardDraftDesignPairId \?\? listing\.wizardDraftDesignId \?\? listing\.designId/,
   );
-  assert.match(
-    source,
-    /setPublishing\(Object\.values\(nextState\)\.some\(\(state\) => state\.status === "PUBLISHING"\)\)/,
-  );
+  assert.match(source, /hydratePublishStateFromListings/);
   assert.match(source, /hasPublishingListings/);
+});
+
+test("step 5 polls persisted publish state while workers run in another process", () => {
+  assert.match(source, /pollPersistedPublishState/);
+  assert.match(source, /fetch\(`\/api\/wizard\/drafts\/\$\{draftId\}`/);
+  assert.match(source, /cache:\s*"no-store"/);
+  assert.match(source, /setTimeout\(pollPersistedPublishState,\s*3000\)/);
+  assert.doesNotMatch(source, /toast\.error\("Mất kết nối server"\)/);
+});
+
+test("step 5 renders retry-scheduled jobs as Vietnamese pending progress", () => {
+  assert.match(source, /RETRY_SCHEDULED/);
+  assert.match(source, /Đang thử lại/);
+  assert.match(source, /nextRetryAt/);
 });
 
 test("step 5 renders live publish phase progress from SSE", () => {
