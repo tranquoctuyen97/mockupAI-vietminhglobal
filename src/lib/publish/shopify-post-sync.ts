@@ -1,4 +1,4 @@
-import type { EnabledPrintifyVariantMatrixRow } from "@/lib/printify/product-matrix";
+import type { ShopifyPublishPhase } from "@/lib/publish/phases";
 import type { ShopifyClient } from "@/lib/shopify/client";
 
 import {
@@ -9,6 +9,12 @@ import {
 } from "./shopify";
 
 type ShopifyGraphqlClient = Pick<ShopifyClient, "graphql">;
+
+export type ExpectedShopifyVariantRow = {
+  sku: string;
+  colorName: string;
+  size: string;
+};
 
 type ShopifyProductOption = {
   id: string;
@@ -66,10 +72,11 @@ const APPAREL_SIZE_ORDER = ["XXS", "XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL
 export async function repairAndVerifyShopifyPostSync(input: {
   client: ShopifyGraphqlClient;
   productId: string;
-  printifyRows: EnabledPrintifyVariantMatrixRow[];
+  printifyRows: ExpectedShopifyVariantRow[];
   mockupImages: ShopifyMockupImage[];
   primaryColorName: string | null;
   sizesInOrder?: string[];
+  onPhaseChange?: (phase: ShopifyPublishPhase) => Promise<void> | void;
 }): Promise<ShopifyPostSyncResult> {
   const expectedBySku = buildExpectedBySku(input.printifyRows);
   let product = await fetchShopifyPostSyncProduct(input.client, input.productId);
@@ -84,6 +91,7 @@ export async function repairAndVerifyShopifyPostSync(input: {
       : uniqueInOrder(input.printifyRows.map((row) => row.size)),
   );
 
+  await input.onPhaseChange?.("REPAIRING_OPTIONS");
   const repairedOptions = await repairShopifyOptionSemantics({
     client: input.client,
     productId: input.productId,
@@ -99,6 +107,7 @@ export async function repairAndVerifyShopifyPostSync(input: {
 
   assertShopifyOptions(product, orderedColors, orderedSizes);
 
+  await input.onPhaseChange?.("SYNCING_MEDIA");
   const mediaResult = await syncShopifyVariantMedia({
     client: input.client,
     product,
@@ -120,6 +129,7 @@ export async function repairAndVerifyShopifyPostSync(input: {
 
   product = await fetchShopifyPostSyncProduct(input.client, input.productId);
   assertShopifyVariantMedia(product, expectedBySku);
+  await input.onPhaseChange?.("REORDERING_GALLERY");
   const reorderedGallery = await reorderShopifyMediaGallery({
     client: input.client,
     productId: input.productId,
@@ -131,6 +141,7 @@ export async function repairAndVerifyShopifyPostSync(input: {
     productId: input.productId,
     orderedColors,
   });
+  await input.onPhaseChange?.("VERIFYING");
   assertShopifyMediaGallery(product, orderedColors);
 
   return {
@@ -233,11 +244,13 @@ async function fetchShopifyPostSyncProduct(
   };
 }
 
-function buildExpectedBySku(rows: EnabledPrintifyVariantMatrixRow[]): Map<string, EnabledPrintifyVariantMatrixRow> {
-  const expected = new Map<string, EnabledPrintifyVariantMatrixRow>();
+function buildExpectedBySku(
+  rows: ExpectedShopifyVariantRow[],
+): Map<string, ExpectedShopifyVariantRow> {
+  const expected = new Map<string, ExpectedShopifyVariantRow>();
   for (const row of rows) {
     const sku = row.sku.trim();
-    if (!sku) throw new Error(`Missing SKU for Printify variant ${row.printifyVariantId}`);
+    if (!sku) throw new Error(`Missing SKU for Shopify variant row ${row.colorName} / ${row.size}`);
     if (expected.has(sku)) throw new Error(`Duplicate Printify SKU in canonical rows: ${sku}`);
     expected.set(sku, row);
   }
@@ -246,7 +259,7 @@ function buildExpectedBySku(rows: EnabledPrintifyVariantMatrixRow[]): Map<string
 
 function inferSemanticOptions(
   product: ShopifyPostSyncProduct,
-  expectedBySku: Map<string, EnabledPrintifyVariantMatrixRow>,
+  expectedBySku: Map<string, ExpectedShopifyVariantRow>,
 ): SemanticOptions {
   const matches = product.options.map((option) => {
     let colorMatches = 0;
@@ -374,7 +387,11 @@ async function updateProductOptionName(input: {
     },
   })) as {
     productOptionUpdate: {
-      userErrors: Array<{ field?: string | string[] | null; message: string; code?: string | null }>;
+      userErrors: Array<{
+        field?: string | string[] | null;
+        message: string;
+        code?: string | null;
+      }>;
     };
   };
   assertNoUserErrors("Shopify productOptionUpdate", data.productOptionUpdate.userErrors);
@@ -400,7 +417,11 @@ async function reorderProductOptions(input: {
     })),
   })) as {
     productOptionsReorder: {
-      userErrors: Array<{ field?: string | string[] | null; message: string; code?: string | null }>;
+      userErrors: Array<{
+        field?: string | string[] | null;
+        message: string;
+        code?: string | null;
+      }>;
     };
   };
   assertNoUserErrors("Shopify productOptionsReorder", data.productOptionsReorder.userErrors);
@@ -413,17 +434,26 @@ async function syncShopifyVariantMedia(input: {
   mockupImages: ShopifyMockupImage[];
   targets: ShopifyMediaVariantTarget[];
   primaryColorName: string | null;
-}): Promise<{ uploadedMediaCount: number; attachedVariantCount: number; primaryMediaId: string | null }> {
+}): Promise<{
+  uploadedMediaCount: number;
+  attachedVariantCount: number;
+  primaryMediaId: string | null;
+}> {
   const mediaByColor = mapExistingMediaByColor(input.product, input.targets);
-  const missingColors = uniqueInOrder(input.targets.map((target) => target.colorName))
-    .filter((colorName) => !mediaByColor.has(normalize(colorName)));
+  const missingColors = uniqueInOrder(input.targets.map((target) => target.colorName)).filter(
+    (colorName) => !mediaByColor.has(normalize(colorName)),
+  );
 
   let uploadedMediaCount = 0;
   if (missingColors.length > 0) {
     const uploads = input.mockupImages.filter((image) =>
       image.colorName ? missingColors.some((color) => sameValue(color, image.colorName!)) : false,
     );
-    const uploaded = await uploadProductImages(input.client as ShopifyClient, input.productId, uploads);
+    const uploaded = await uploadProductImages(
+      input.client as ShopifyClient,
+      input.productId,
+      uploads,
+    );
     uploadedMediaCount = uploaded.length;
     for (const media of uploaded) {
       if (media.colorName) mediaByColor.set(normalize(media.colorName), media.mediaId);
@@ -459,7 +489,10 @@ async function syncShopifyVariantMedia(input: {
       userErrors: Array<{ field?: string | string[] | null; message: string }>;
     };
   };
-  assertNoUserErrors("Shopify productVariantsBulkUpdate", data.productVariantsBulkUpdate.userErrors);
+  assertNoUserErrors(
+    "Shopify productVariantsBulkUpdate",
+    data.productVariantsBulkUpdate.userErrors,
+  );
 
   const primaryMediaId = input.primaryColorName
     ? (mediaByColor.get(normalize(input.primaryColorName)) ?? null)
@@ -488,7 +521,9 @@ async function reorderShopifyMediaGallery(input: {
     return mediaId;
   });
   const currentMediaIds = input.product.media.nodes.map((media) => media.id);
-  const alreadyOrdered = orderedMediaIds.every((mediaId, index) => currentMediaIds[index] === mediaId);
+  const alreadyOrdered = orderedMediaIds.every(
+    (mediaId, index) => currentMediaIds[index] === mediaId,
+  );
   if (alreadyOrdered) return false;
 
   const mutation = `
@@ -534,7 +569,10 @@ function assertShopifyMediaGallery(product: ShopifyPostSyncProduct, orderedColor
   }
 }
 
-function shopifyMediaGalleryMatches(product: ShopifyPostSyncProduct, orderedColors: string[]): boolean {
+function shopifyMediaGalleryMatches(
+  product: ShopifyPostSyncProduct,
+  orderedColors: string[],
+): boolean {
   return sameOrderedValues(mediaGalleryColorOrder(product, orderedColors.length), orderedColors);
 }
 
@@ -562,7 +600,9 @@ function mapExistingMediaByColor(
   product: ShopifyPostSyncProduct,
   targets: ShopifyMediaVariantTarget[],
 ): Map<string, string> {
-  const colorByVariantId = new Map(targets.map((target) => [target.shopifyVariantId, target.colorName]));
+  const colorByVariantId = new Map(
+    targets.map((target) => [target.shopifyVariantId, target.colorName]),
+  );
   const out = new Map<string, string>();
 
   for (const variant of product.variants.nodes) {
@@ -612,7 +652,7 @@ function assertShopifyOptions(
 
 function assertShopifyVariantMedia(
   product: ShopifyPostSyncProduct,
-  expectedBySku: Map<string, EnabledPrintifyVariantMatrixRow>,
+  expectedBySku: Map<string, ExpectedShopifyVariantRow>,
 ): void {
   const mediaByColor = new Map<string, string>();
   for (const variant of product.variants.nodes) {
@@ -622,10 +662,14 @@ function assertShopifyVariantMedia(
     const color = selectedOptionValue(variant, "Color");
     const size = selectedOptionValue(variant, "Size");
     if (!sameValue(color, expected.colorName)) {
-      throw new Error(`Shopify variant ${sku} Color mismatch: expected ${expected.colorName}, got ${color ?? "null"}`);
+      throw new Error(
+        `Shopify variant ${sku} Color mismatch: expected ${expected.colorName}, got ${color ?? "null"}`,
+      );
     }
     if (!sameValue(size, expected.size)) {
-      throw new Error(`Shopify variant ${sku} Size mismatch: expected ${expected.size}, got ${size ?? "null"}`);
+      throw new Error(
+        `Shopify variant ${sku} Size mismatch: expected ${expected.size}, got ${size ?? "null"}`,
+      );
     }
     const mediaId = variant.media?.nodes?.[0]?.id ?? null;
     if (!mediaId) throw new Error(`Shopify variant ${sku} has no media`);
@@ -637,12 +681,17 @@ function assertShopifyVariantMedia(
   }
 
   if (product.variants.nodes.length !== expectedBySku.size) {
-    throw new Error(`Shopify variant count mismatch: expected ${expectedBySku.size}, got ${product.variants.nodes.length}`);
+    throw new Error(
+      `Shopify variant count mismatch: expected ${expectedBySku.size}, got ${product.variants.nodes.length}`,
+    );
   }
 }
 
 function selectedOptionValue(variant: ShopifyProductVariantNode, name: string): string | null {
-  return variant.selectedOptions.find((option) => normalize(option.name) === normalize(name))?.value ?? null;
+  return (
+    variant.selectedOptions.find((option) => normalize(option.name) === normalize(name))?.value ??
+    null
+  );
 }
 
 function optionValueNames(option: ShopifyProductOption): string[] {

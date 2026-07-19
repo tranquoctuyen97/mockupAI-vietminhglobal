@@ -148,7 +148,9 @@ async function _buildVariantCostCache(input: {
           continue;
         }
 
-        const rawPosition = String(ph.position ?? "").toLowerCase().trim();
+        const rawPosition = String(ph.position ?? "")
+          .toLowerCase()
+          .trim();
 
         if (!rawPosition) {
           skipped++;
@@ -572,6 +574,7 @@ export function buildVariantPayload(
  * Color + Size + unique SKU + retail price (USD).
  */
 export interface ShopifyVariantPlanItem {
+  printifyVariantId: number;
   colorName: string;
   colorHex: string | null;
   size: string | null;
@@ -647,6 +650,7 @@ export function buildShopifyVariantInputs(
       const payload = payloadById.get(id);
       const priceCents = payload?.price ?? 0;
       return {
+        printifyVariantId: cv.variantId,
         colorName: cv.colorName,
         colorHex: cv.colorHex,
         size: cv.size,

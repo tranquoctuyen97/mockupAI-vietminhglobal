@@ -42,13 +42,14 @@ export interface ShopifyPublishInput {
   existingProductId?: string | null; // for retry idempotency
   onProductCreated?: (
     productId: string,
-    variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }>; inventoryItem?: { id: string } | null }>,
+    variantNodes: ShopifyProductVariantNode[],
   ) => Promise<void>;
 }
 
 export interface ShopifyPublishResult {
   shopifyProductId: string;
   shopifyVariantIds: string[];
+  variantNodes: ShopifyProductVariantNode[];
   shopifyProductUrl: string;
 }
 
@@ -61,6 +62,13 @@ export interface ShopifyPublishChannelsResult {
 const DEFAULT_VENDOR = "Printify";
 const DEFAULT_SHOPIFY_INVENTORY_QUANTITY = 999;
 const TAXONOMY_BASE = "gid://shopify/TaxonomyCategory/";
+
+export type ShopifyProductVariantNode = {
+  id: string;
+  sku: string | null;
+  selectedOptions: Array<{ name: string; value: string }>;
+  inventoryItem?: { id: string } | null;
+};
 
 type CollectionResolverClient = Pick<ShopifyClient, "graphql">;
 
@@ -180,19 +188,20 @@ export async function publishToShopify(
 ): Promise<ShopifyPublishResult> {
   let productId: string;
   let variantIds: string[];
-  let variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }>; inventoryItem?: { id: string } | null }> =
-    [];
+  let variantNodes: ShopifyProductVariantNode[] = [];
 
   if (input.existingProductId) {
-    // Product already created in a previous attempt — skip creation
     console.log(`[Shopify] Reusing existing product: ${input.existingProductId}`);
     productId = input.existingProductId;
-    variantIds = []; // variants already exist
+    variantNodes = await fetchProductVariantNodes(client, productId);
+    variantIds = variantNodes.map((variant) => variant.id);
+    await enableInventoryTrackingAndSetStock(client, variantNodes);
   } else {
     // Step 1: Create product + options + variants atomically
     const productResult = await createProductWithSet(client, input);
     productId = productResult.productId;
-    variantNodes = productResult.variantNodes;
+    variantNodes = await fetchProductVariantNodes(client, productId);
+    if (variantNodes.length === 0) variantNodes = productResult.variantNodes;
     variantIds = variantNodes.map((v) => v.id);
     await input.onProductCreated?.(productId, variantNodes);
 
@@ -201,84 +210,10 @@ export async function publishToShopify(
     await enableInventoryTrackingAndSetStock(client, variantNodes);
   }
 
-  // Step 2: Upload mockup images and link to variants
-  if (input.mockupImages && input.mockupImages.length > 0) {
-    const uploadedMedia = await uploadProductImages(client, productId, input.mockupImages);
-
-    // Step 2.4: Force the primary color's first media to position 0 (thumbnail).
-    // The worker already uploads the primary color group first, but Shopify's
-    // default ordering is not guaranteed — reorder explicitly to be safe.
-    if (uploadedMedia.length > 0 && input.primaryColorName) {
-      const primaryColorName = input.primaryColorName.toLowerCase();
-      const primaryMedia = uploadedMedia.find(
-        (m) => m.colorName && m.colorName.toLowerCase() === primaryColorName,
-      );
-      if (primaryMedia) {
-        await reorderPrimaryMedia(client, productId, primaryMedia.mediaId);
-      }
-    }
-
-    // Step 2.5: Link media to variants if we just created them
-    if (uploadedMedia.length > 0 && variantNodes.length > 0) {
-      const variantMediaPairs: Array<{ id: string; mediaId: string }> = [];
-
-      for (const vNode of variantNodes) {
-        const colorOption = vNode.selectedOptions.find((o) => o.name === "Color");
-        if (colorOption) {
-          const matchingMedia = uploadedMedia.find(
-            (m) => m.colorName && m.colorName.toLowerCase() === colorOption.value.toLowerCase(),
-          );
-          if (matchingMedia) {
-            variantMediaPairs.push({
-              id: vNode.id,
-              mediaId: matchingMedia.mediaId,
-            });
-          }
-        }
-      }
-
-      if (variantMediaPairs.length > 0) {
-        const bulkUpdateMutation = `
-          mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-              userErrors { field message }
-            }
-          }
-        `;
-        const bulkUpdateRes = (await client.graphql(bulkUpdateMutation, {
-          productId,
-          variants: variantMediaPairs.map((v) => ({ id: v.id, mediaId: v.mediaId })),
-        })) as {
-          productVariantsBulkUpdate?: {
-            userErrors?: Array<{ field?: string | string[] | null; message: string }>;
-          };
-        };
-
-        const bulkUpdateErrors = bulkUpdateRes.productVariantsBulkUpdate?.userErrors ?? [];
-        if (bulkUpdateErrors.length > 0) {
-          console.warn(
-            `[Shopify] productVariantsBulkUpdate failed (non-fatal):`,
-            bulkUpdateErrors,
-          );
-        }
-      }
-    }
-  } else if (input.mockupPaths.length > 0) {
-    // Fallback for older code
-    await uploadProductImages(
-      client,
-      productId,
-      input.mockupPaths.map((p) => ({ kind: "local", path: p })),
-    );
-  }
-
-  // Step 3: Publish to every active publication (graceful — per-channel guard).
-  // Product is already ACTIVE via productSet, so a failure here is non-fatal.
-  await publishToAllChannels(client, productId);
-
   return {
     shopifyProductId: productId,
     shopifyVariantIds: variantIds,
+    variantNodes,
     shopifyProductUrl: `https://${domain}/admin/products/${extractNumericId(productId)}`,
   };
 }
@@ -292,7 +227,7 @@ async function createProductWithSet(
   input: ShopifyPublishInput,
 ): Promise<{
   productId: string;
-  variantNodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }>; inventoryItem?: { id: string } | null }>;
+  variantNodes: ShopifyProductVariantNode[];
 }> {
   const mutation = `
     mutation productSet($synchronous: Boolean!, $productSet: ProductSetInput!) {
@@ -302,6 +237,7 @@ async function createProductWithSet(
           variants(first: 100) {
             nodes {
               id
+              sku
               selectedOptions { name value }
               inventoryItem { id }
             }
@@ -380,7 +316,7 @@ async function createProductWithSet(
       product: {
         id: string;
         variants: {
-          nodes: Array<{ id: string; selectedOptions: Array<{ name: string; value: string }>; inventoryItem?: { id: string } | null }>;
+          nodes: ShopifyProductVariantNode[];
         };
       };
       userErrors: Array<{ field: string | string[] | null; message: string }>;
@@ -399,6 +335,52 @@ async function createProductWithSet(
     productId: data.productSet.product.id,
     variantNodes: data.productSet.product.variants.nodes,
   };
+}
+
+export async function fetchProductVariantNodes(
+  client: Pick<ShopifyClient, "graphql">,
+  productId: string,
+): Promise<ShopifyProductVariantNode[]> {
+  const query = `
+    query ProductVariantNodes($id: ID!, $first: Int!, $after: String) {
+      product(id: $id) {
+        id
+        variants(first: $first, after: $after) {
+          nodes {
+            id
+            sku
+            selectedOptions { name value }
+            inventoryItem { id }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  `;
+
+  const variants: ShopifyProductVariantNode[] = [];
+  let after: string | null = null;
+  do {
+    const data = (await client.graphql(query, {
+      id: productId,
+      first: 100,
+      after,
+    })) as {
+      product: {
+        variants: {
+          nodes: ShopifyProductVariantNode[];
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        };
+      } | null;
+    };
+    if (!data.product) throw new Error(`Shopify product not found: ${productId}`);
+    variants.push(...data.product.variants.nodes);
+    after = data.product.variants.pageInfo.hasNextPage
+      ? data.product.variants.pageInfo.endCursor
+      : null;
+  } while (after);
+
+  return variants;
 }
 
 export async function uploadProductImages(
@@ -701,9 +683,7 @@ async function enableInventoryTrackingAndSetStock(
   `;
 
   await Promise.allSettled(
-    inventoryItemIds.map((id) =>
-      client.graphql(trackMutation, { id, input: { tracked: true } }),
-    ),
+    inventoryItemIds.map((id) => client.graphql(trackMutation, { id, input: { tracked: true } })),
   );
 
   // 2. Resolve location to set stock
@@ -735,7 +715,9 @@ async function enableInventoryTrackingAndSetStock(
         })),
       },
     });
-    console.log(`[Shopify] Enabled tracking and set stock to ${DEFAULT_SHOPIFY_INVENTORY_QUANTITY} for ${inventoryItemIds.length} item(s)`);
+    console.log(
+      `[Shopify] Enabled tracking and set stock to ${DEFAULT_SHOPIFY_INVENTORY_QUANTITY} for ${inventoryItemIds.length} item(s)`,
+    );
   } catch (err) {
     console.warn("[Shopify] Failed to set inventory quantities:", err);
   }
@@ -909,7 +891,11 @@ export async function reorderProductOptionsByPrimaryColor(input: {
     })),
   })) as {
     productOptionsReorder: {
-      userErrors: Array<{ field?: string | string[] | null; message: string; code?: string | null }>;
+      userErrors: Array<{
+        field?: string | string[] | null;
+        message: string;
+        code?: string | null;
+      }>;
     };
   };
 
@@ -1124,10 +1110,7 @@ export async function publishToAllChannels(
       succeeded += 1;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `[Shopify] publish to ${publicationId} failed (skip):`,
-        message,
-      );
+      console.warn(`[Shopify] publish to ${publicationId} failed (skip):`, message);
       failed.push({ publicationId, message });
     }
   }
@@ -1149,7 +1132,9 @@ function toHandle(title: string): string {
 
 function isExactCollectionMatch(collection: ShopifyCollectionNode, value: string, handle: string) {
   const normalizedValue = value.toLowerCase();
-  return collection.title.toLowerCase() === normalizedValue || collection.handle.toLowerCase() === handle;
+  return (
+    collection.title.toLowerCase() === normalizedValue || collection.handle.toLowerCase() === handle
+  );
 }
 
 function collectManualCollectionIds(
@@ -1281,7 +1266,9 @@ export async function resolveManualCollectionIdsByTitlesOrHandles(
           if (userErrors.length > 0) {
             console.error(`[Shopify] Failed to create collection "${name}":`, userErrors);
           } else if (collection?.id) {
-            console.log(`[Shopify] Successfully auto-created collection "${name}" with ID ${collection.id}`);
+            console.log(
+              `[Shopify] Successfully auto-created collection "${name}" with ID ${collection.id}`,
+            );
             if (!seenIds.has(collection.id)) {
               seenIds.add(collection.id);
               ids.push(collection.id);

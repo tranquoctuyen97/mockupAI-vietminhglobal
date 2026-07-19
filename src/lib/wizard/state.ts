@@ -2,20 +2,13 @@
  * Wizard draft state management — server-side CRUD
  */
 
-import { Prisma, type DraftStatus } from "@prisma/client";
-import { pairDesigns } from "@/lib/designs/design-pairing";
+import { type DraftStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { pairDesigns } from "@/lib/designs/design-pairing";
 import { buildTemplateMockupPickPlan } from "@/lib/mockup/template-mockup-matching";
 import { deleteDraftWithPrintifyCleanup } from "./cleanup";
-import {
-  buildPairRowsFromDraftDesigns,
-  stablePairKey,
-} from "./design-pairs";
-import {
-  getDraftDesignIds,
-  normalizeDesignIds,
-  sameDesignSelection,
-} from "./design-selection";
+import { buildPairRowsFromDraftDesigns, stablePairKey } from "./design-pairs";
+import { getDraftDesignIds, normalizeDesignIds, sameDesignSelection } from "./design-selection";
 
 export interface DraftPatch {
   designId?: string | null;
@@ -116,9 +109,7 @@ async function syncDraftDesignPairs(tx: Prisma.TransactionClient, draftId: strin
   const existingPairs = await tx.wizardDraftDesignPair.findMany({
     where: { draftId },
   });
-  const existingByStableKey = new Map(
-    existingPairs.map((pair) => [stablePairKey(pair), pair]),
-  );
+  const existingByStableKey = new Map(existingPairs.map((pair) => [stablePairKey(pair), pair]));
   const nextPairIds: string[] = [];
   const pairRowsToCreate: typeof pairRows = [];
 
@@ -187,6 +178,7 @@ export async function getDraft(id: string, tenantId: string) {
           select: {
             id: true,
             status: true,
+            activePublishAttemptId: true,
             wizardDraftDesignId: true,
             wizardDraftDesignPairId: true,
             designId: true,
@@ -195,6 +187,14 @@ export async function getDraft(id: string, tenantId: string) {
               select: {
                 stage: true,
                 status: true,
+                publishAttemptId: true,
+                phase: true,
+                progressMessage: true,
+                progressData: true,
+                phaseStartedAt: true,
+                nextRetryAt: true,
+                reasonCode: true,
+                lastErrorCode: true,
                 lastError: true,
               },
             },
@@ -257,12 +257,12 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
           mockupsStale: true,
           mockupsStaleReason: "design_changed",
         }
-    : enabledSizesChanged
-      ? {
-          mockupsStale: true,
-          mockupsStaleReason: "colors_changed",
-        }
-      : {};
+      : enabledSizesChanged
+        ? {
+            mockupsStale: true,
+            mockupsStaleReason: "colors_changed",
+          }
+        : {};
 
   if (sanitized.templateId) {
     const storeId = sanitized.storeId ?? draft.storeId;
@@ -281,8 +281,7 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
   }
 
   return prisma.$transaction(async (tx) => {
-    const legacyDesignId =
-      nextDesignIds !== undefined ? nextDesignIds[0] ?? null : undefined;
+    const legacyDesignId = nextDesignIds !== undefined ? (nextDesignIds[0] ?? null) : undefined;
 
     if (nextDesignIds !== undefined && nextDesignIds.length > 0) {
       if (!draft.storeId) {
@@ -311,22 +310,25 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
         ...draftDataPatch,
         ...staleDraftPatch,
         designId: legacyDesignId,
-        placementOverride: sanitized.placementOverride !== undefined
-          ? sanitized.placementOverride === null
-            ? Prisma.JsonNull
-            : (sanitized.placementOverride as Prisma.InputJsonValue)
-          : undefined,
+        placementOverride:
+          sanitized.placementOverride !== undefined
+            ? sanitized.placementOverride === null
+              ? Prisma.JsonNull
+              : (sanitized.placementOverride as Prisma.InputJsonValue)
+            : undefined,
         // Per-color size map
-        enabledSizesByColor: sanitized.enabledSizesByColor !== undefined
-          ? sanitized.enabledSizesByColor === null
-            ? Prisma.JsonNull
-            : (sanitized.enabledSizesByColor as Prisma.InputJsonValue)
-          : undefined,
-        aiContent: sanitized.aiContent !== undefined
-          ? sanitized.aiContent === null
-            ? Prisma.JsonNull
-            : (sanitized.aiContent as Prisma.InputJsonValue)
-          : undefined,
+        enabledSizesByColor:
+          sanitized.enabledSizesByColor !== undefined
+            ? sanitized.enabledSizesByColor === null
+              ? Prisma.JsonNull
+              : (sanitized.enabledSizesByColor as Prisma.InputJsonValue)
+            : undefined,
+        aiContent:
+          sanitized.aiContent !== undefined
+            ? sanitized.aiContent === null
+              ? Prisma.JsonNull
+              : (sanitized.aiContent as Prisma.InputJsonValue)
+            : undefined,
       },
     });
 
@@ -391,14 +393,22 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
               mockup: { renderMode: "COMPOSITE", isActive: true, deletedAt: null },
             },
             select: {
-              id: true, appliesToColorIds: true,
-              sortOrder: true, isPrimary: true, createdAt: true,
+              id: true,
+              appliesToColorIds: true,
+              sortOrder: true,
+              isPrimary: true,
+              createdAt: true,
             },
           });
 
           const existingPicks = await tx.wizardDraftMockupLibraryPick.findMany({
             where: { draftId: id },
-            select: { id: true, templateMockupItemId: true, colorId: true, compositeRegionPx: true },
+            select: {
+              id: true,
+              templateMockupItemId: true,
+              colorId: true,
+              compositeRegionPx: true,
+            },
           });
 
           const plan = buildTemplateMockupPickPlan({
@@ -487,11 +497,20 @@ export async function listDrafts(tenantId: string) {
         select: {
           id: true,
           status: true,
+          activePublishAttemptId: true,
           publishJobs: {
             orderBy: { createdAt: "asc" },
             select: {
               stage: true,
               status: true,
+              publishAttemptId: true,
+              phase: true,
+              progressMessage: true,
+              progressData: true,
+              phaseStartedAt: true,
+              nextRetryAt: true,
+              reasonCode: true,
+              lastErrorCode: true,
             },
           },
         },

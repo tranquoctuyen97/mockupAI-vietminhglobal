@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 import { DEFAULT_PLACEMENT } from "../placement/types";
-import type { PrintifyClient } from "./client";
 import {
+  PrintifyAuthenticationError,
+  PrintifyBillingError,
+  type PrintifyClient,
+  type PrintifyErrorMetadata,
+  PrintifyPermissionError,
+  PrintifyRateLimitError,
+  PrintifyServerError,
+  PrintifyValidationError,
+} from "./client";
+import {
+  buildPrintifyProductPayload,
   ensurePrintifyImage,
   PrintifyMockupTimeoutError,
-  buildPrintifyProductPayload,
   parsePrintifyMockupImages,
   pollPrintifyMockups,
   resolvePrintifyUploadUrl,
@@ -70,7 +76,10 @@ test("buildPrintifyProductPayload includes one placeholder per enabled placement
     payload.print_areas.map((area) => area.placeholders.map((p) => p.position)),
     [["front", "back"]],
   );
-  assert.deepEqual(payload.variants.map((v) => v.id), [101, 102]);
+  assert.deepEqual(
+    payload.variants.map((v) => v.id),
+    [101, 102],
+  );
   assert.equal("visible" in payload, false);
   assert.equal("is_locked" in payload, false);
 });
@@ -87,8 +96,22 @@ test("buildPrintifyProductPayload normalizes placement with per-view print areas
       version: "2.1" as const,
       variants: {
         _default: {
-          front: { ...DEFAULT_PLACEMENT, xMm: 10, yMm: 20, widthMm: 100, heightMm: 200, rotationDeg: 15 },
-          back: { ...DEFAULT_PLACEMENT, xMm: 10, yMm: 20, widthMm: 100, heightMm: 200, rotationDeg: 15 },
+          front: {
+            ...DEFAULT_PLACEMENT,
+            xMm: 10,
+            yMm: 20,
+            widthMm: 100,
+            heightMm: 200,
+            rotationDeg: 15,
+          },
+          back: {
+            ...DEFAULT_PLACEMENT,
+            xMm: 10,
+            yMm: 20,
+            widthMm: 100,
+            heightMm: 200,
+            rotationDeg: 15,
+          },
         },
       },
     },
@@ -98,20 +121,28 @@ test("buildPrintifyProductPayload normalizes placement with per-view print areas
     },
   });
 
-  const placeholders = (payload.print_areas as Array<{
-    placeholders: Array<{ position: string; images: Array<{ x: number; y: number; scale: number; angle: number }> }>;
-  }>)[0].placeholders;
+  const placeholders = (
+    payload.print_areas as Array<{
+      placeholders: Array<{
+        position: string;
+        images: Array<{ x: number; y: number; scale: number; angle: number }>;
+      }>;
+    }>
+  )[0].placeholders;
 
-  assert.deepEqual(placeholders.map((placeholder) => ({
-    position: placeholder.position,
-    x: placeholder.images[0].x,
-    y: placeholder.images[0].y,
-    scale: placeholder.images[0].scale,
-    angle: placeholder.images[0].angle,
-  })), [
-    { position: "front", x: 0.3, y: 0.3, scale: 0.5, angle: 15 },
-    { position: "back", x: 0.15, y: 0.15, scale: 0.25, angle: 15 },
-  ]);
+  assert.deepEqual(
+    placeholders.map((placeholder) => ({
+      position: placeholder.position,
+      x: placeholder.images[0].x,
+      y: placeholder.images[0].y,
+      scale: placeholder.images[0].scale,
+      angle: placeholder.images[0].angle,
+    })),
+    [
+      { position: "front", x: 0.3, y: 0.3, scale: 0.5, angle: 15 },
+      { position: "back", x: 0.15, y: 0.15, scale: 0.25, angle: 15 },
+    ],
+  );
 });
 
 test("pollPrintifyMockups resolves when product images appear", async () => {
@@ -186,7 +217,10 @@ test("buildPrintifyProductPayload supports separate images by variant group", ()
     variant_ids: number[];
     placeholders: Array<{ images: Array<{ id: string }> }>;
   }>;
-  assert.deepEqual(printAreas.map((area) => area.variant_ids), [[101], [102]]);
+  assert.deepEqual(
+    printAreas.map((area) => area.variant_ids),
+    [[101], [102]],
+  );
   assert.equal(printAreas[0].placeholders[0].images[0].id, "light-image");
   assert.equal(printAreas[1].placeholders[0].images[0].id, "dark-image");
 });
@@ -288,7 +322,7 @@ test("ensurePrintifyImage uploads by URL before reading local file when public b
     designStoragePath: "originals/design.png",
     publicBaseUrl: "https://example.ngrok-free.dev",
     storage: {
-      resolvePath: () => {
+      getBuffer: async () => {
         throw new Error("base64 fallback should not read storage");
       },
     } as any,
@@ -300,36 +334,116 @@ test("ensurePrintifyImage uploads by URL before reading local file when public b
   ]);
 });
 
-test("ensurePrintifyImage falls back to base64 when public base URL is local", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "printify-image-"));
-  try {
-    const filePath = join(dir, "design.png");
-    await writeFile(filePath, Buffer.from("image-bytes"));
+function printifyErrorMetadata(
+  overrides: Partial<PrintifyErrorMetadata> = {},
+): PrintifyErrorMetadata {
+  return {
+    status: 500,
+    endpoint: "/uploads/images.json",
+    method: "POST",
+    responseBody: "{}",
+    retryAfterMs: null,
+    requestId: null,
+    ...overrides,
+  };
+}
 
-    const calls: string[] = [];
+test("ensurePrintifyImage does not fallback to base64 for non-download URL upload errors", async () => {
+  const errors: Error[] = [
+    new PrintifyAuthenticationError("auth", printifyErrorMetadata({ status: 401 })),
+    new PrintifyPermissionError("permission", printifyErrorMetadata({ status: 403 })),
+    new PrintifyBillingError("billing", printifyErrorMetadata({ status: 402 })),
+    new PrintifyRateLimitError("rate limit", printifyErrorMetadata({ status: 429 })),
+    new PrintifyValidationError("validation", printifyErrorMetadata({ status: 422 })),
+    new PrintifyServerError("server", printifyErrorMetadata({ status: 500 })),
+    new Error("network timeout"),
+  ];
+
+  for (const error of errors) {
+    let base64Called = false;
     const client = {
       uploadImageUrl: async () => {
-        calls.push("url");
-        return { id: "url-image-id" };
+        throw error;
       },
-      uploadImageBase64: async (input: { fileName: string; contentsBase64: string }) => {
-        calls.push(`base64:${input.fileName}:${input.contentsBase64}`);
+      uploadImageBase64: async () => {
+        base64Called = true;
         return { id: "base64-image-id" };
       },
     } as unknown as PrintifyClient;
 
-    const id = await ensurePrintifyImage({
-      client,
-      designStoragePath: "originals/design.png",
-      publicBaseUrl: "http://localhost:3001",
-      storage: {
-        resolvePath: () => filePath,
-      } as any,
-    });
-
-    assert.equal(id, "base64-image-id");
-    assert.deepEqual(calls, ["base64:design_design.png:aW1hZ2UtYnl0ZXM="]);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
+    await assert.rejects(
+      () =>
+        ensurePrintifyImage({
+          client,
+          designStoragePath: "originals/design.png",
+          publicBaseUrl: "https://example.ngrok-free.dev",
+          storage: {
+            getBuffer: async () => {
+              throw new Error("base64 fallback should not read storage");
+            },
+          } as any,
+        }),
+      error,
+    );
+    assert.equal(base64Called, false, `base64 should not be called for ${error.name}`);
   }
+});
+
+test("ensurePrintifyImage falls back to base64 for Printify remote URL download failure", async () => {
+  const calls: string[] = [];
+  const downloadError = new PrintifyValidationError(
+    "Printify could not download image",
+    printifyErrorMetadata({
+      status: 400,
+      responseBody: JSON.stringify({ code: 10300 }),
+    }),
+  );
+  const client = {
+    uploadImageUrl: async () => {
+      calls.push("url");
+      throw downloadError;
+    },
+    uploadImageBase64: async (input: { fileName: string; contentsBase64: string }) => {
+      calls.push(`base64:${input.fileName}:${input.contentsBase64}`);
+      return { id: "base64-image-id" };
+    },
+  } as unknown as PrintifyClient;
+
+  const id = await ensurePrintifyImage({
+    client,
+    designStoragePath: "originals/design.png",
+    publicBaseUrl: "https://example.ngrok-free.dev",
+    storage: {
+      getBuffer: async () => Buffer.from("image-bytes"),
+    } as any,
+  });
+
+  assert.equal(id, "base64-image-id");
+  assert.deepEqual(calls, ["url", "base64:design_design.png:aW1hZ2UtYnl0ZXM="]);
+});
+
+test("ensurePrintifyImage falls back to base64 when public base URL is local", async () => {
+  const calls: string[] = [];
+  const client = {
+    uploadImageUrl: async () => {
+      calls.push("url");
+      return { id: "url-image-id" };
+    },
+    uploadImageBase64: async (input: { fileName: string; contentsBase64: string }) => {
+      calls.push(`base64:${input.fileName}:${input.contentsBase64}`);
+      return { id: "base64-image-id" };
+    },
+  } as unknown as PrintifyClient;
+
+  const id = await ensurePrintifyImage({
+    client,
+    designStoragePath: "originals/design.png",
+    publicBaseUrl: "http://localhost:3001",
+    storage: {
+      getBuffer: async () => Buffer.from("image-bytes"),
+    } as any,
+  });
+
+  assert.equal(id, "base64-image-id");
+  assert.deepEqual(calls, ["base64:design_design.png:aW1hZ2UtYnl0ZXM="]);
 });

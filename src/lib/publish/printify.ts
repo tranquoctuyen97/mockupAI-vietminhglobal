@@ -10,6 +10,8 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 
 const PRINTIFY_BASE_URL = "https://api.printify.com/v1";
+const PRINTIFY_USER_AGENT =
+  process.env.PRINTIFY_USER_AGENT || "MockupAI/1.0 (support@vmgfashion.online)";
 
 export interface PrintifyPublishInput {
   apiKey: string;
@@ -19,7 +21,13 @@ export interface PrintifyPublishInput {
   blueprintId: number;
   printProviderId: number;
   variantIds: number[]; // Printify variant IDs
-  variants?: Array<{ id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean }>;
+  variants?: Array<{
+    id: number;
+    price: number;
+    is_enabled: boolean;
+    sku?: string;
+    is_default?: boolean;
+  }>;
   mockupPaths: string[]; // absolute file paths
   selectedMockupIds?: string[]; // Printify mockup IDs selected by user
   designPath?: string; // original design file path (optional if imageGroups provided)
@@ -48,6 +56,7 @@ export async function publishToPrintify(
   const headers = {
     Authorization: `Bearer ${input.apiKey}`,
     "Content-Type": "application/json",
+    "User-Agent": PRINTIFY_USER_AGENT,
   };
 
   // Step 1: Upload design image to Printify (base64) if imageGroups not provided
@@ -62,9 +71,7 @@ export async function publishToPrintify(
 
   // Step 2: Create product
   // When explicit variants provided, print_areas must reference ALL their IDs
-  const effectiveVariantIds = input.variants
-    ? input.variants.map((v) => v.id)
-    : input.variantIds;
+  const effectiveVariantIds = input.variants ? input.variants.map((v) => v.id) : input.variantIds;
 
   const printAreas = input.imageGroups?.length
     ? input.imageGroups.map((group) => ({
@@ -109,11 +116,13 @@ export async function publishToPrintify(
     description: input.description,
     blueprint_id: input.blueprintId,
     print_provider_id: input.printProviderId,
-    variants: input.variants ?? input.variantIds.map((id) => ({
-      id,
-      price: 2000, // Fallback if variants list not provided
-      is_enabled: true,
-    })),
+    variants:
+      input.variants ??
+      input.variantIds.map((id) => ({
+        id,
+        price: 2000, // Fallback if variants list not provided
+        is_enabled: true,
+      })),
     print_areas: printAreas,
     // Tell Printify which mockups to generate/publish
     ...(input.selectedMockupIds && input.selectedMockupIds.length > 0
@@ -125,14 +134,11 @@ export async function publishToPrintify(
       : {}),
   };
 
-  const createRes = await fetch(
-    `${PRINTIFY_BASE_URL}/shops/${input.shopId}/products.json`,
-    {
-      method: "POST",
-      headers,
-      body: JSON.stringify(productPayload),
-    },
-  );
+  const createRes = await fetch(`${PRINTIFY_BASE_URL}/shops/${input.shopId}/products.json`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(productPayload),
+  });
 
   if (!createRes.ok) {
     const errorText = await createRes.text();
@@ -152,17 +158,17 @@ export async function publishToPrintify(
     for (let attempt = 1; attempt <= maxPollAttempts; attempt++) {
       // Wait 2s between attempts
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      
+
       try {
         const getRes = await fetch(
           `${PRINTIFY_BASE_URL}/shops/${input.shopId}/products/${productId}.json`,
-          { headers }
+          { headers },
         );
         if (getRes.ok) {
           const productDetails = await getRes.json();
           latestProductDetails = productDetails;
           const images = productDetails.images ?? [];
-          
+
           // Get mockup_id from images
           const ids = images
             // Filter is_selected_for_publishing !== false
@@ -177,7 +183,9 @@ export async function publishToPrintify(
             // Sort by order if available
             ids.sort((a: any, b: any) => a.order - b.order);
             mockupIds = ids.map((item: any) => item.id);
-            console.log(`[Printify] Mockup IDs collected after ${attempt} attempts: ${mockupIds.length} images found.`);
+            console.log(
+              `[Printify] Mockup IDs collected after ${attempt} attempts: ${mockupIds.length} images found.`,
+            );
             break;
           }
         }
@@ -187,10 +195,14 @@ export async function publishToPrintify(
     }
 
     if (mockupIds.length === 0) {
-      console.warn(`[Printify] Warning: No mockup IDs found for product ${productId}. Skipping PUT visible_mockups update.`);
+      console.warn(
+        `[Printify] Warning: No mockup IDs found for product ${productId}. Skipping PUT visible_mockups update.`,
+      );
     } else if (latestProductDetails) {
-      console.log(`[Printify] Performing PUT update for visible_mockups on product ${productId}...`);
-      
+      console.log(
+        `[Printify] Performing PUT update for visible_mockups on product ${productId}...`,
+      );
+
       // Build full valid payload using latest product details from GET as base
       const putVariants = (latestProductDetails.variants ?? []).map((v: any) => ({
         id: v.id,
@@ -233,18 +245,25 @@ export async function publishToPrintify(
           method: "PUT",
           headers,
           body: JSON.stringify(putPayload),
-        }
+        },
       );
 
       if (!updateRes.ok) {
         const errorText = await updateRes.text();
-        console.warn(`[Printify] Warning: PUT update for visible_mockups failed (${updateRes.status}): ${errorText}`);
+        console.warn(
+          `[Printify] Warning: PUT update for visible_mockups failed (${updateRes.status}): ${errorText}`,
+        );
       } else {
-        console.log(`[Printify] PUT update succeeded for product ${productId}. Mockups selected count: ${mockupIds.length}`);
+        console.log(
+          `[Printify] PUT update succeeded for product ${productId}. Mockups selected count: ${mockupIds.length}`,
+        );
       }
     }
   } catch (error) {
-    console.warn(`[Printify] Empirical visible_mockups workaround failed for product ${productId}:`, error);
+    console.warn(
+      `[Printify] Empirical visible_mockups workaround failed for product ${productId}:`,
+      error,
+    );
   }
 
   return {

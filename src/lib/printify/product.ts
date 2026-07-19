@@ -1,5 +1,6 @@
-import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
+import { resolvePlacementViews } from "../mockup/plan";
+import { resolvePlacement } from "../placement/resolver";
 import {
   DEFAULT_PRINT_AREA,
   type Placement,
@@ -7,14 +8,24 @@ import {
   type PrintArea,
   type ViewKey,
 } from "../placement/types";
-import { resolvePlacement } from "../placement/resolver";
 import { getStorage } from "../storage/local-disk";
-import { resolvePlacementViews } from "../mockup/plan";
 import {
-  PrintifyClient,
+  type PrintifyClient,
   PrintifyNotFoundError,
   type PrintifyProductImage,
+  PrintifyValidationError,
 } from "./client";
+
+const MAX_PRINTIFY_BASE64_FALLBACK_BYTES = Number(
+  process.env.MAX_PRINTIFY_BASE64_FALLBACK_BYTES ?? 5 * 1024 * 1024,
+);
+
+if (
+  !Number.isFinite(MAX_PRINTIFY_BASE64_FALLBACK_BYTES) ||
+  MAX_PRINTIFY_BASE64_FALLBACK_BYTES <= 0
+) {
+  throw new Error("MAX_PRINTIFY_BASE64_FALLBACK_BYTES must be a positive number.");
+}
 
 export interface ParsedPrintifyMockupImage {
   printifyMockupId: string;
@@ -59,7 +70,11 @@ export async function ensurePrintifyImage(input: EnsurePrintifyImageInput): Prom
       });
       return uploaded.id;
     } catch (err) {
-      console.warn("[Printify] URL image upload failed, falling back to base64:", {
+      if (!isRemoteImageDownloadFailure(err)) {
+        throw err;
+      }
+
+      console.warn("[Printify] URL image download failed, falling back to base64:", {
         storagePath: input.designStoragePath,
         publicUrl,
         error: err instanceof Error ? err.message : String(err),
@@ -67,14 +82,42 @@ export async function ensurePrintifyImage(input: EnsurePrintifyImageInput): Prom
     }
   }
 
-  const absolutePath = storage.resolvePath(input.designStoragePath);
-  const fileBuffer = await readFile(absolutePath);
+  const fileBuffer = await storage.getBuffer(input.designStoragePath);
+  if (fileBuffer.byteLength > MAX_PRINTIFY_BASE64_FALLBACK_BYTES) {
+    throw new PrintifyValidationError(
+      "Printify could not download the image URL and the file is too large for base64 fallback.",
+      {
+        status: 400,
+        endpoint: "/uploads/images.json",
+        method: "POST",
+        responseBody: "",
+        retryAfterMs: null,
+        requestId: null,
+      },
+    );
+  }
+
   const uploaded = await input.client.uploadImageBase64({
     fileName,
     contentsBase64: fileBuffer.toString("base64"),
   });
 
   return uploaded.id;
+}
+
+function isRemoteImageDownloadFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (!("status" in error) || Number((error as { status?: unknown }).status) !== 400) return false;
+
+  const responseBody =
+    "responseBody" in error ? String((error as { responseBody?: unknown }).responseBody ?? "") : "";
+  try {
+    const body = JSON.parse(responseBody) as { code?: unknown; errors?: { code?: unknown } };
+    const code = body?.code ?? body?.errors?.code;
+    return Number(code) === 10300;
+  } catch {
+    return false;
+  }
 }
 
 export function resolvePrintifyUploadUrl(input: {
@@ -105,7 +148,10 @@ export function resolvePrintifyUploadUrl(input: {
 }
 
 function isLocalOrPrivateHost(hostname: string): boolean {
-  const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  const host = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
   if (!host) return true;
   if (host === "localhost" || host === "::1") return true;
   if (host.endsWith(".localhost")) return true;
@@ -135,7 +181,13 @@ export function buildPrintifyProductPayload(input: {
   blueprintId: number;
   printProviderId: number;
   variantIds: number[];
-  variants?: Array<{ id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean }>;
+  variants?: Array<{
+    id: number;
+    price: number;
+    is_enabled: boolean;
+    sku?: string;
+    is_default?: boolean;
+  }>;
   imageId: string;
   placementData: PlacementData;
   printAreaByView?: Partial<Record<ViewKey, PrintArea>>;
@@ -161,9 +213,7 @@ export function buildPrintifyProductPayload(input: {
 
   // When explicit variants are provided, print_areas must reference ALL their IDs
   // (Printify requires every variant in `variants[]` to appear in `print_areas[].variant_ids`)
-  const effectiveVariantIds = input.variants
-    ? input.variants.map(v => v.id)
-    : input.variantIds;
+  const effectiveVariantIds = input.variants ? input.variants.map((v) => v.id) : input.variantIds;
 
   // When imageGroups is provided (dual-design pair publish), create one print_area
   // per group with its own image. Otherwise, single print_area for all variants.
@@ -172,21 +222,25 @@ export function buildPrintifyProductPayload(input: {
         variant_ids: group.variantIds,
         placeholders: buildPlaceholders(group.imageId),
       }))
-    : [{
-        variant_ids: effectiveVariantIds,
-        placeholders: buildPlaceholders(input.imageId),
-      }];
+    : [
+        {
+          variant_ids: effectiveVariantIds,
+          placeholders: buildPlaceholders(input.imageId),
+        },
+      ];
 
   return {
     title: input.title,
     description: input.description,
     blueprint_id: input.blueprintId,
     print_provider_id: input.printProviderId,
-    variants: input.variants ?? input.variantIds.map((id) => ({
-      id,
-      price: 2000,
-      is_enabled: true,
-    })),
+    variants:
+      input.variants ??
+      input.variantIds.map((id) => ({
+        id,
+        price: 2000,
+        is_enabled: true,
+      })),
     print_areas: printAreas,
     ...(input.tags && input.tags.length > 0 ? { tags: input.tags } : {}),
     ...(input.salesChannelCollections && input.salesChannelCollections.length > 0
@@ -202,7 +256,13 @@ export async function createOrUpdatePrintifyProduct(input: {
   blueprintId: number;
   printProviderId: number;
   variantIds: number[];
-  variants?: Array<{ id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean }>;
+  variants?: Array<{
+    id: number;
+    price: number;
+    is_enabled: boolean;
+    sku?: string;
+    is_default?: boolean;
+  }>;
   imageId: string;
   placementData: PlacementData;
   printAreaByView?: Partial<Record<ViewKey, PrintArea>>;
@@ -217,7 +277,9 @@ export async function createOrUpdatePrintifyProduct(input: {
   // Selected variants → is_enabled: true, rest → is_enabled: false.
   // For PUT updates, ALWAYS fetch full catalog even if input.variants is provided,
   // because the local cost cache may be stale/incomplete vs the live Printify catalog.
-  let fullVariants: Array<{ id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean }> | undefined;
+  let fullVariants:
+    | Array<{ id: number; price: number; is_enabled: boolean; sku?: string; is_default?: boolean }>
+    | undefined;
 
   if (!input.variants || input.productId) {
     try {
@@ -227,9 +289,7 @@ export async function createOrUpdatePrintifyProduct(input: {
       );
       const enabledSet = new Set(input.variantIds);
       // Merge provided variant prices/SKUs with the full catalog
-      const providedMap = new Map(
-        (input.variants ?? []).map(v => [v.id, v]),
-      );
+      const providedMap = new Map((input.variants ?? []).map((v) => [v.id, v]));
       fullVariants = catalogVariants.map((v) => {
         const provided = providedMap.get(v.id);
         return {
@@ -241,14 +301,15 @@ export async function createOrUpdatePrintifyProduct(input: {
         };
       });
     } catch (err) {
-      console.warn("[Printify] Failed to fetch catalog variants for full payload, falling back to subset:", err);
+      console.warn(
+        "[Printify] Failed to fetch catalog variants for full payload, falling back to subset:",
+        err,
+      );
       // Fallback: use only the selected variant IDs (may fail on PUT)
     }
   }
 
-  const payloadInput = fullVariants
-    ? { ...input, variants: fullVariants }
-    : input;
+  const payloadInput = fullVariants ? { ...input, variants: fullVariants } : input;
 
   const payload = buildPrintifyProductPayload(payloadInput) as Record<string, any>;
 
@@ -262,33 +323,49 @@ export async function createOrUpdatePrintifyProduct(input: {
         payload.visible_mockups = existingMockupIds;
       }
     } catch (err) {
-      console.warn(`[Printify] Failed to fetch existing product ${input.productId} for visible_mockups:`, err);
+      console.warn(
+        `[Printify] Failed to fetch existing product ${input.productId} for visible_mockups:`,
+        err,
+      );
     }
   }
 
   // Debug log — dump payload summary before sending to Printify
   const payloadVariants = (payload.variants as Array<{ id: number; is_enabled: boolean }>) ?? [];
   const printAreas = (payload.print_areas as Array<{ variant_ids: number[] }>) ?? [];
-  const enabledCount = payloadVariants.filter(v => v.is_enabled).length;
+  const enabledCount = payloadVariants.filter((v) => v.is_enabled).length;
   const disabledCount = payloadVariants.length - enabledCount;
-  const printAreaVariantIds = printAreas.flatMap(pa => pa.variant_ids);
-  const variantIdsNotInPrintArea = payloadVariants.map(v => v.id).filter(id => !printAreaVariantIds.includes(id));
-  const printAreaIdsNotInVariants = printAreaVariantIds.filter(id => !payloadVariants.some(v => v.id === id));
+  const printAreaVariantIds = printAreas.flatMap((pa) => pa.variant_ids);
+  const variantIdsNotInPrintArea = payloadVariants
+    .map((v) => v.id)
+    .filter((id) => !printAreaVariantIds.includes(id));
+  const printAreaIdsNotInVariants = printAreaVariantIds.filter(
+    (id) => !payloadVariants.some((v) => v.id === id),
+  );
 
-  console.log(`[Printify] ${input.productId ? "PUT" : "POST"} payload debug:`, JSON.stringify({
-    shopId: input.shopId,
-    productId: input.productId ?? "NEW",
-    blueprintId: payload.blueprint_id,
-    printProviderId: payload.print_provider_id,
-    totalVariants: payloadVariants.length,
-    enabledVariants: enabledCount,
-    disabledVariants: disabledCount,
-    printAreaVariantIdCount: printAreaVariantIds.length,
-    variantIdsNotInPrintArea,
-    printAreaIdsNotInVariants,
-    placeholders: printAreas.map(pa => (pa as any).placeholders?.map((ph: any) => ph.position)),
-    visibleMockupCount: payload.visible_mockups?.length ?? 0,
-  }, null, 2));
+  console.log(
+    `[Printify] ${input.productId ? "PUT" : "POST"} payload debug:`,
+    JSON.stringify(
+      {
+        shopId: input.shopId,
+        productId: input.productId ?? "NEW",
+        blueprintId: payload.blueprint_id,
+        printProviderId: payload.print_provider_id,
+        totalVariants: payloadVariants.length,
+        enabledVariants: enabledCount,
+        disabledVariants: disabledCount,
+        printAreaVariantIdCount: printAreaVariantIds.length,
+        variantIdsNotInPrintArea,
+        printAreaIdsNotInVariants,
+        placeholders: printAreas.map((pa) =>
+          (pa as any).placeholders?.map((ph: any) => ph.position),
+        ),
+        visibleMockupCount: payload.visible_mockups?.length ?? 0,
+      },
+      null,
+      2,
+    ),
+  );
 
   // Defensive cap: Printify hard limit is 100 enabled variants per product.
   // If more are enabled (e.g. due to large catalog merge), disable overflow.
@@ -342,17 +419,20 @@ export async function createOrUpdatePrintifyProduct(input: {
       hasVariantMismatch;
 
     if (isMismatch) {
-      console.warn("[Printify] Draft product mismatch or not found. Bypassing PUT and creating new draft product.", {
-        oldProductId: input.productId,
-        existingBlueprintId: existing?.blueprint_id,
-        existingPrintProviderId: existing?.print_provider_id,
-        payloadBlueprintId: payload.blueprint_id,
-        payloadPrintProviderId: payload.print_provider_id,
-        existingVariantsCount,
-        payloadVariantsCount,
-        hasVariantMismatch,
-        shopId: input.shopId,
-      });
+      console.warn(
+        "[Printify] Draft product mismatch or not found. Bypassing PUT and creating new draft product.",
+        {
+          oldProductId: input.productId,
+          existingBlueprintId: existing?.blueprint_id,
+          existingPrintProviderId: existing?.print_provider_id,
+          payloadBlueprintId: payload.blueprint_id,
+          payloadPrintProviderId: payload.print_provider_id,
+          existingVariantsCount,
+          payloadVariantsCount,
+          hasVariantMismatch,
+          shopId: input.shopId,
+        },
+      );
       product = await input.client.createProduct(input.shopId, payload);
     } else {
       product = await input.client.updateProduct(input.shopId, input.productId, payload);
@@ -377,7 +457,8 @@ export async function pollPrintifyMockups(input: {
   sleep?: (ms: number) => Promise<void>;
 }): Promise<ParsedPrintifyMockupImage[]> {
   const now = input.now ?? Date.now;
-  const sleep = input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const sleep =
+    input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const start = now();
   let attempts = 0;
 
@@ -449,19 +530,23 @@ function inferMockupType(image: PrintifyProductImage, index: number): string {
 
 function normalizeType(value: string | undefined): string | null {
   if (!value) return null;
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "") || null;
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") || null
+  );
 }
 
 function toCameraLabel(mockupType: string): string | null {
-  return mockupType
-    .split("_")
-    .filter(Boolean)
-    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
-    .join(" ") || null;
+  return (
+    mockupType
+      .split("_")
+      .filter(Boolean)
+      .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+      .join(" ") || null
+  );
 }
 
 function round3(value: number): number {

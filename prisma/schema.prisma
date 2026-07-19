@@ -793,6 +793,7 @@ model Listing {
   wizardDraftDesignPairId String?       @unique @map("wizard_draft_design_pair_id")
   shopifyProductId        String?       @map("shopify_product_id")
   printifyProductId       String?       @map("printify_product_id")
+  activePublishAttemptId  String?       @unique @map("active_publish_attempt_id")
   status                  ListingStatus @default(PUBLISHING)
   title                   String
   descriptionHtml         String        @map("description_html")
@@ -809,6 +810,8 @@ model Listing {
   wizardDraft           WizardDraft?           @relation(fields: [wizardDraftId], references: [id], onDelete: SetNull)
   wizardDraftDesign     WizardDraftDesign?     @relation(fields: [wizardDraftDesignId], references: [id], onDelete: SetNull)
   wizardDraftDesignPair WizardDraftDesignPair? @relation(fields: [wizardDraftDesignPairId], references: [id], onDelete: SetNull)
+  activePublishAttempt  PublishAttempt?        @relation("ListingActivePublishAttempt", fields: [activePublishAttemptId], references: [id], onDelete: SetNull)
+  publishAttempts       PublishAttempt[]        @relation("ListingPublishAttempts")
   variants              ListingVariant[]
   publishJobs           PublishJob[]
 
@@ -836,20 +839,78 @@ model ListingVariant {
 }
 
 model PublishJob {
-  id             String       @id @default(cuid())
-  listingId      String       @map("listing_id")
-  idempotencyKey String       @unique @map("idempotency_key")
-  stage          PublishStage
-  status         String       @default("PENDING")
-  attempts       Int          @default(0)
-  lastError      String?      @map("last_error")
-  createdAt      DateTime     @default(now()) @map("created_at")
-  completedAt    DateTime?    @map("completed_at")
+  id              String       @id @default(cuid())
+  listingId       String       @map("listing_id")
+  idempotencyKey  String       @unique @map("idempotency_key")
+  publishAttemptId String?     @map("publish_attempt_id")
+  stage           PublishStage
+  status          String       @default("PENDING")
+  attempts        Int          @default(0)
+  phase           String?
+  progressMessage String?    @map("progress_message")
+  progressData    Json?      @map("progress_data")
+  phaseStartedAt  DateTime?  @map("phase_started_at")
+  nextRetryAt     DateTime?    @map("next_retry_at")
+  reasonCode      String?      @map("reason_code")
+  lastErrorCode   String?      @map("last_error_code")
+  lastError       String?      @map("last_error")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  completedAt     DateTime?    @map("completed_at")
 
   listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  attempt PublishAttempt? @relation(fields: [publishAttemptId], references: [id], onDelete: Cascade)
 
   @@index([listingId])
+  @@index([listingId, publishAttemptId])
+  @@unique([publishAttemptId, stage], name: "attempt_stage")
   @@map("publish_jobs")
+}
+
+model PublishAttempt {
+  id                          String    @id @default(cuid())
+  listingId                   String    @map("listing_id")
+  tenantId                    String    @map("tenant_id")
+  attemptNo                   Int       @map("attempt_no")
+  status                      String    @default("PENDING")
+  baselineListingStatus       String    @map("baseline_listing_status")
+  resumeFromAttemptId         String?   @map("resume_from_attempt_id")
+  firstExternalWriteStartedAt DateTime? @map("first_external_write_started_at")
+  startedAt                   DateTime? @map("started_at")
+  completedAt                 DateTime? @map("completed_at")
+  createdAt                   DateTime  @default(now()) @map("created_at")
+  updatedAt                   DateTime  @updatedAt @map("updated_at")
+
+  listing       Listing         @relation("ListingPublishAttempts", fields: [listingId], references: [id], onDelete: Cascade)
+  activeListing Listing?        @relation("ListingActivePublishAttempt")
+  jobs          PublishJob[]
+  outbox        PublishOutbox?
+
+  @@unique([listingId, attemptNo])
+  @@index([listingId, status])
+  @@map("publish_attempts")
+}
+
+model PublishOutbox {
+  id               String    @id @default(cuid())
+  listingId        String    @map("listing_id")
+  draftId          String    @map("wizard_draft_id")
+  tenantId         String    @map("tenant_id")
+  publishAttemptId String    @unique @map("publish_attempt_id")
+  status           String    @default("PENDING")
+  attempts         Int       @default(0)
+  nextAttemptAt    DateTime  @default(now()) @map("next_attempt_at")
+  lockedAt         DateTime? @map("locked_at")
+  lockedBy         String?   @map("locked_by")
+  lastError        String?   @map("last_error")
+  dispatchedAt     DateTime? @map("dispatched_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  attempt PublishAttempt @relation(fields: [publishAttemptId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([status, lockedAt])
+  @@map("publish_outbox")
 }
 
 // ============================================================
