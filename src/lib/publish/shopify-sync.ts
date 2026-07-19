@@ -26,6 +26,21 @@ export type ShopifySyncMatch = {
   >;
 };
 
+export type ShopifySyncPollSnapshot = {
+  elapsedMs: number;
+  externalCount: number;
+  candidateCount: number;
+  bestOverlap: number;
+  bestCandidate:
+    | {
+        shopifyProductId: string;
+        title: string;
+        updatedAt: string | null;
+        matchedSkuCount: number;
+      }
+    | null;
+};
+
 type ShopifyProductVariantsResponse = {
   productVariants: {
     nodes: ShopifyVariantCandidate[];
@@ -203,6 +218,7 @@ export async function waitForPrintifyShopifySync(input: {
   intervalMs: number;
   title?: string;
   log?: (message: string, data?: Record<string, unknown>) => void;
+  onPoll?: (snapshot: ShopifySyncPollSnapshot) => Promise<void> | void;
   onShopifyProductFound?: (product: {
     shopifyProductId: string;
     source: "db_existing" | "printify_external" | "sku_search";
@@ -288,6 +304,7 @@ export async function waitForPrintifyShopifySync(input: {
       });
       lastCandidateCount = candidates.length;
       lastBestOverlap = bestSkuOverlap(input.printifyRows, candidates);
+      const bestCandidate = summarizeBestCandidate(input.printifyRows, candidates);
       const searchMatch = selectShopifyProductCandidate(input.printifyRows, candidates);
       if (searchMatch) {
         if (searchMatch.shopifyProductId !== notifiedShopifyProductId) {
@@ -311,6 +328,14 @@ export async function waitForPrintifyShopifySync(input: {
         externalCount: lastExternalCount,
         candidateCount: lastCandidateCount,
         bestOverlap: lastBestOverlap,
+        bestCandidate,
+      });
+      await input.onPoll?.({
+        elapsedMs: now() - startedAt,
+        externalCount: lastExternalCount,
+        candidateCount: lastCandidateCount,
+        bestOverlap: lastBestOverlap,
+        bestCandidate,
       });
     } catch (err) {
       input.log?.("[PublishWorker] Shopify sync poll failed; continuing", {
@@ -438,6 +463,59 @@ function bestSkuOverlap(
     let overlap = 0;
     for (const sku of skus) if (expectedSkus.has(sku)) overlap += 1;
     if (overlap > best) best = overlap;
+  }
+  return best;
+}
+
+function summarizeBestCandidate(
+  printifyRows: EnabledPrintifyVariantMatrixRow[],
+  candidates: ShopifyVariantCandidate[],
+): ShopifySyncPollSnapshot["bestCandidate"] {
+  const expectedSkus = new Set(printifyRows.map((row) => row.sku.trim()).filter(Boolean));
+  const byProduct = new Map<
+    string,
+    {
+      id: string;
+      title: string;
+      updatedAt: string | null;
+      skuSet: Set<string>;
+    }
+  >();
+
+  for (const candidate of candidates) {
+    const entry = byProduct.get(candidate.product.id) ?? {
+      id: candidate.product.id,
+      title: candidate.product.title,
+      updatedAt: candidate.product.updatedAt ?? null,
+      skuSet: new Set<string>(),
+    };
+    const sku = candidate.sku?.trim();
+    if (sku) entry.skuSet.add(sku);
+    if ((candidate.product.updatedAt ?? "") > (entry.updatedAt ?? "")) {
+      entry.updatedAt = candidate.product.updatedAt ?? null;
+    }
+    byProduct.set(candidate.product.id, entry);
+  }
+
+  let best: ShopifySyncPollSnapshot["bestCandidate"] = null;
+  for (const entry of byProduct.values()) {
+    let matchedSkuCount = 0;
+    for (const sku of entry.skuSet) {
+      if (expectedSkus.has(sku)) matchedSkuCount += 1;
+    }
+    if (
+      !best ||
+      matchedSkuCount > best.matchedSkuCount ||
+      (matchedSkuCount === best.matchedSkuCount &&
+        (entry.updatedAt ?? "") > (best.updatedAt ?? ""))
+    ) {
+      best = {
+        shopifyProductId: entry.id,
+        title: entry.title,
+        updatedAt: entry.updatedAt,
+        matchedSkuCount,
+      };
+    }
   }
   return best;
 }

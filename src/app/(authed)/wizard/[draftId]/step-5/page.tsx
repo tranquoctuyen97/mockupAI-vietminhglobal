@@ -291,12 +291,69 @@ function jobToPublishLog(job: PersistedPublishJob): PublishLog | null {
   return null;
 }
 
-function publishStateFromPersistedListing(listing: PersistedPublishListing): PublishDesignState {
+function isTerminalPublishListingStatus(status: string): boolean {
+  return ["ACTIVE", "FAILED", "PARTIAL_FAILURE"].includes(status);
+}
+
+function attemptKeyForJob(job: PersistedPublishJob, index: number): string {
+  return job.publishAttemptId ?? `legacy-${index}`;
+}
+
+function getLatestAttemptJobs(jobs: PersistedPublishJob[]): PersistedPublishJob[] {
+  if (jobs.length === 0) return [];
+
+  const latestAttemptKey = attemptKeyForJob(jobs[jobs.length - 1], jobs.length - 1);
+  return jobs.filter((job, index) => attemptKeyForJob(job, index) === latestAttemptKey);
+}
+
+function getLatestSucceededAttemptJobs(jobs: PersistedPublishJob[]): PersistedPublishJob[] | null {
+  const jobsByAttempt = new Map<string, PersistedPublishJob[]>();
+
+  jobs.forEach((job, index) => {
+    const key = attemptKeyForJob(job, index);
+    jobsByAttempt.set(key, [...(jobsByAttempt.get(key) ?? []), job]);
+  });
+
+  const latestAttemptKeys = [...jobsByAttempt.keys()].reverse();
+  for (const attemptKey of latestAttemptKeys) {
+    const attemptJobs = jobsByAttempt.get(attemptKey) ?? [];
+    const statusByStage = new Map(
+      attemptJobs.map((job) => [job.stage.toUpperCase(), job.status.toUpperCase()]),
+    );
+
+    if (
+      statusByStage.get("SHOPIFY") === "SUCCEEDED" &&
+      statusByStage.get("PRINTIFY") === "SUCCEEDED"
+    ) {
+      return attemptJobs;
+    }
+  }
+
+  return null;
+}
+
+function selectPublishJobsForDisplay(listing: PersistedPublishListing): PersistedPublishJob[] {
   const allJobs = listing.publishJobs ?? [];
+  if (allJobs.length === 0) return [];
+
+  if (listing.status === "ACTIVE") {
+    return getLatestSucceededAttemptJobs(allJobs) ?? [];
+  }
+
+  if (isTerminalPublishListingStatus(listing.status)) {
+    return getLatestAttemptJobs(allJobs);
+  }
+
   const activeAttemptJobs = listing.activePublishAttemptId
     ? allJobs.filter((job) => job.publishAttemptId === listing.activePublishAttemptId)
     : [];
-  const jobs = activeAttemptJobs.length > 0 ? activeAttemptJobs : allJobs;
+
+  return activeAttemptJobs.length > 0 ? activeAttemptJobs : getLatestAttemptJobs(allJobs);
+}
+
+function publishStateFromPersistedListing(listing: PersistedPublishListing): PublishDesignState {
+  const jobs = selectPublishJobsForDisplay(listing);
+  const isTerminalListing = isTerminalPublishListingStatus(listing.status);
   const hasRunningJob = jobs.some((job) =>
     ["PENDING", "RUNNING", "RETRY_SCHEDULED"].includes(job.status),
   );
@@ -304,18 +361,19 @@ function publishStateFromPersistedListing(listing: PersistedPublishListing): Pub
   const logs = jobs.map(jobToPublishLog).filter((log): log is PublishLog => Boolean(log));
 
   if (listing.status === "ACTIVE") {
+    const successLogs = logs.filter((log) => log.status === "success");
     return {
       listingId: listing.id,
       status: "SUCCESS",
       alreadyPublished: true,
       logs:
-        logs.length > 0
-          ? logs
+        successLogs.length > 0
+          ? successLogs
           : [{ stage: "DONE", message: "Publish hoàn tất!", status: "success" }],
     };
   }
 
-  if (hasRunningJob || listing.status === "PUBLISHING") {
+  if (!isTerminalListing && (hasRunningJob || listing.status === "PUBLISHING")) {
     return {
       listingId: listing.id,
       status: "PUBLISHING",

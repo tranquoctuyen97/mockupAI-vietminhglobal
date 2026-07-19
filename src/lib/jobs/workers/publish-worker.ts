@@ -1,11 +1,14 @@
 import type { Prisma } from "@prisma/client";
 import { DelayedError, type Job, UnrecoverableError, Worker } from "bullmq";
 import { prisma } from "@/lib/db";
+import { PrintifyRateLimitError } from "@/lib/printify/client";
+import { PrintifyCooldownActiveError } from "@/lib/printify/request-gate";
 import {
   AmbiguousExternalWriteError,
   type PublishErrorCode,
   publishUserMessageForCode,
 } from "@/lib/publish/errors";
+import { MerchantAccountLockUnavailableError } from "@/lib/publish/merchant-account-lock";
 import { PUBLISH_QUEUE_NAME, type PublishJobPayload } from "@/lib/publish/queue";
 import { type PublishStrategy, resolvePublishStrategy } from "@/lib/publish/strategy";
 import {
@@ -25,6 +28,10 @@ type PublishJobStatus =
 
 type ListingFinalStatus = "ACTIVE" | "FAILED" | "PARTIAL_FAILURE";
 type PublishTransaction = Prisma.TransactionClient;
+type PublishStageStatusRow = {
+  stage: string;
+  status: string;
+};
 
 class PublishAttemptDidNotCompleteError extends Error {
   constructor(message: string) {
@@ -70,6 +77,13 @@ export function resolveFinalListingStatus(input: {
   if (input.shopifyStatus !== "SUCCEEDED") return "PARTIAL_FAILURE";
   if (!input.shopifyProductId) return "PARTIAL_FAILURE";
   return "ACTIVE";
+}
+
+function haveRequiredPublishStagesSucceeded(jobs: PublishStageStatusRow[]): boolean {
+  const statusByStage = new Map(jobs.map((job) => [job.stage, job.status]));
+  return (
+    statusByStage.get("SHOPIFY") === "SUCCEEDED" && statusByStage.get("PRINTIFY") === "SUCCEEDED"
+  );
 }
 
 export async function finalizeFailedPublishAttemptIdempotently(
@@ -171,11 +185,13 @@ async function preparePublishAttemptForRun(input: {
   publishAttemptId: string;
 }): Promise<boolean> {
   return prisma.$transaction(async (tx) => {
-    const [listing, attempt] = await Promise.all([
+    const [listing, attempt, jobs] = await Promise.all([
       tx.listing.findUnique({
         where: { id: input.listingId },
         select: {
           id: true,
+          status: true,
+          publishedAt: true,
           activePublishAttemptId: true,
         },
       }),
@@ -184,23 +200,24 @@ async function preparePublishAttemptForRun(input: {
         select: {
           id: true,
           status: true,
+          startedAt: true,
+          completedAt: true,
+          firstExternalWriteStartedAt: true,
         },
+      }),
+      tx.publishJob.findMany({
+        where: { publishAttemptId: input.publishAttemptId },
+        select: { stage: true, status: true },
       }),
     ]);
 
     if (!listing || !attempt) return false;
 
-    if (attempt.status === "SUCCEEDED") {
-      await tx.listing.updateMany({
-        where: {
-          id: input.listingId,
-          activePublishAttemptId: input.publishAttemptId,
-        },
-        data: {
-          activePublishAttemptId: null,
-          status: "ACTIVE",
-        },
-      });
+    if (
+      attempt.status === "SUCCEEDED" ||
+      (listing.status === "ACTIVE" && haveRequiredPublishStagesSucceeded(jobs))
+    ) {
+      await finalizeSucceededPublishAttemptInTransaction(tx, input);
       return false;
     }
 
@@ -224,32 +241,72 @@ async function preparePublishAttemptForRun(input: {
   });
 }
 
-async function finalizeSucceededPublishAttemptIdempotently(input: {
+async function finalizeSucceededPublishAttemptInTransaction(
+  tx: PublishTransaction,
+  input: {
+    listingId: string;
+    publishAttemptId: string;
+  },
+): Promise<void> {
+  const [listing, attempt, jobs] = await Promise.all([
+    tx.listing.findUnique({
+      where: { id: input.listingId },
+      select: {
+        id: true,
+        status: true,
+        publishedAt: true,
+        activePublishAttemptId: true,
+      },
+    }),
+    tx.publishAttempt.findUnique({
+      where: { id: input.publishAttemptId },
+      select: {
+        status: true,
+        startedAt: true,
+        completedAt: true,
+        firstExternalWriteStartedAt: true,
+      },
+    }),
+    tx.publishJob.findMany({
+      where: { publishAttemptId: input.publishAttemptId },
+      select: { stage: true, status: true },
+    }),
+  ]);
+
+  if (!listing || !attempt || attempt.status === "FAILED") return;
+
+  const alreadySucceeded = attempt.status === "SUCCEEDED";
+  if (!alreadySucceeded && !haveRequiredPublishStagesSucceeded(jobs)) return;
+
+  const now = new Date();
+  const completedAt = attempt.completedAt ?? listing.publishedAt ?? now;
+  const startedAt = attempt.startedAt ?? attempt.firstExternalWriteStartedAt ?? completedAt;
+
+  await tx.publishAttempt.updateMany({
+    where: { id: input.publishAttemptId, status: { not: "FAILED" } },
+    data: {
+      status: "SUCCEEDED",
+      startedAt,
+      completedAt,
+    },
+  });
+  await tx.listing.updateMany({
+    where: {
+      id: input.listingId,
+      activePublishAttemptId: input.publishAttemptId,
+    },
+    data: {
+      activePublishAttemptId: null,
+      status: "ACTIVE",
+    },
+  });
+}
+
+export async function finalizeSucceededPublishAttemptIdempotently(input: {
   listingId: string;
   publishAttemptId: string;
 }): Promise<void> {
-  await prisma.$transaction(async (tx) => {
-    const attempt = await tx.publishAttempt.findUnique({
-      where: { id: input.publishAttemptId },
-      select: { status: true },
-    });
-    if (!attempt || attempt.status === "FAILED") return;
-
-    await tx.publishAttempt.updateMany({
-      where: { id: input.publishAttemptId, status: { notIn: ["SUCCEEDED", "FAILED"] } },
-      data: { status: "SUCCEEDED", completedAt: new Date() },
-    });
-    await tx.listing.updateMany({
-      where: {
-        id: input.listingId,
-        activePublishAttemptId: input.publishAttemptId,
-      },
-      data: {
-        activePublishAttemptId: null,
-        status: "ACTIVE",
-      },
-    });
-  });
+  await prisma.$transaction((tx) => finalizeSucceededPublishAttemptInTransaction(tx, input));
 }
 
 async function reconcilePublishAttemptAfterRun(input: {
@@ -329,10 +386,33 @@ async function reconcilePublishAttemptAfterRun(input: {
   await finalizeSucceededPublishAttemptIdempotently(input);
 }
 
+async function delayPublishAttemptJob(input: {
+  job: Job<PublishJobPayload>;
+  token: string;
+  retryAt: Date;
+  reasonCode: string;
+  message: string;
+}): Promise<never> {
+  await prisma.publishJob.updateMany({
+    where: {
+      publishAttemptId: input.job.data.publishAttemptId,
+      status: { not: "SUCCEEDED" },
+    },
+    data: {
+      status: "RETRY_SCHEDULED",
+      nextRetryAt: input.retryAt,
+      reasonCode: input.reasonCode,
+      lastError: input.message,
+    },
+  });
+  await input.job.moveToDelayed(input.retryAt.getTime(), input.token);
+  throw new DelayedError();
+}
+
 export function startPublishWorker(): Worker<PublishJobPayload> {
   const worker = new Worker<PublishJobPayload>(
     PUBLISH_QUEUE_NAME,
-    async (job: Job<PublishJobPayload>, _token?: string) => {
+    async (job: Job<PublishJobPayload>, token?: string) => {
       try {
         const workerInput: PublishInput = {
           listingId: job.data.listingId,
@@ -356,6 +436,34 @@ export function startPublishWorker(): Worker<PublishJobPayload> {
           publishAttemptId: job.data.publishAttemptId,
         });
       } catch (error) {
+        if (
+          token &&
+          (error instanceof MerchantAccountLockUnavailableError ||
+            error instanceof PrintifyCooldownActiveError ||
+            error instanceof PrintifyRateLimitError)
+        ) {
+          const retryAt =
+            error instanceof PrintifyRateLimitError
+              ? new Date(Date.now() + Math.max(5_000, error.retryAfterMs ?? 60_000))
+              : error.retryAt;
+          const reasonCode =
+            error instanceof MerchantAccountLockUnavailableError
+              ? "PRINTIFY_LOCK_BUSY"
+              : "PRINTIFY_RATE_LIMITED";
+          const message =
+            error instanceof MerchantAccountLockUnavailableError
+              ? "Tài khoản Printify đang xử lý job khác. Hệ thống sẽ tự thử lại."
+              : publishUserMessageForCode("PRINTIFY_RATE_LIMITED");
+
+          await delayPublishAttemptJob({
+            job,
+            token,
+            retryAt,
+            reasonCode,
+            message,
+          });
+        }
+
         if (error instanceof DelayedError) {
           throw error;
         }
@@ -397,6 +505,16 @@ export function startPublishWorker(): Worker<PublishJobPayload> {
   });
   worker.on("completed", (job) => {
     console.log("[PublishWorker] Completed job", job.id);
+    void finalizeSucceededPublishAttemptIdempotently({
+      listingId: job.data.listingId,
+      publishAttemptId: job.data.publishAttemptId,
+    }).catch((finalizeError) => {
+      console.error("Publish completed-event finalizer failed", {
+        listingId: job.data.listingId,
+        publishAttemptId: job.data.publishAttemptId,
+        error: finalizeError,
+      });
+    });
   });
   worker.on("failed", (job, error) => {
     if (!job) return;

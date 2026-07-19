@@ -122,7 +122,7 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
     assert.ok(publishIndex < syncIndex, "Printify publish must happen before Shopify sync");
     assert.match(
       source,
-      /printifyClient,\s*printifyShopId:\s*externalShopId,\s*printifyProductId:\s*printifyProductResult\.productId/s,
+      /printifyClient,\s*printifyShopId:\s*externalShopId,\s*printifyProductId:\s*resolvedPrintifyProductResult\.productId/s,
     );
     assert.match(source, /timeoutMs:\s*600_000/);
   });

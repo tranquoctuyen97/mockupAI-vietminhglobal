@@ -49,10 +49,17 @@ type ExistingListingForPublish = {
   }>;
 };
 
+function isTerminalListingStatus(status: string): boolean {
+  return ["ACTIVE", "FAILED", "PARTIAL_FAILURE"].includes(status);
+}
+
 function hasRunningPublishJob(listing: ExistingListingForPublish): boolean {
+  if (isTerminalListingStatus(listing.status)) return false;
   if (listing.activePublishAttemptId) return true;
   return Boolean(
-    listing.publishJobs?.some((job) => job.status === "PENDING" || job.status === "RUNNING"),
+    listing.publishJobs?.some((job) =>
+      ["PENDING", "RUNNING", "RETRY_SCHEDULED"].includes(job.status),
+    ),
   );
 }
 

@@ -32,6 +32,7 @@ test("step 5 renders one publish progress entry per pair listing", () => {
 test("step 5 hydrates publish progress from persisted listing jobs after reload", () => {
   assert.match(source, /interface PersistedPublishListing/);
   assert.match(source, /publishStateFromPersistedListing/);
+  assert.match(source, /selectPublishJobsForDisplay/);
   assert.match(source, /persistedPublishListings/);
   assert.match(source, /activePublishAttemptId/);
   assert.match(source, /publishAttemptId/);
@@ -41,6 +42,21 @@ test("step 5 hydrates publish progress from persisted listing jobs after reload"
   );
   assert.match(source, /hydratePublishStateFromListings/);
   assert.match(source, /hasPublishingListings/);
+});
+
+test("step 5 does not let a stale active attempt keep terminal listings publishing", () => {
+  assert.match(source, /function isTerminalPublishListingStatus/);
+  assert.match(source, /listing\.status === "ACTIVE"/);
+  assert.match(source, /getLatestSucceededAttemptJobs\(allJobs\) \?\? \[\]/);
+  assert.match(
+    source,
+    /const isTerminalListing = isTerminalPublishListingStatus\(listing\.status\)/,
+  );
+  assert.match(
+    source,
+    /if \(!isTerminalListing && \(hasRunningJob \|\| listing\.status === "PUBLISHING"\)\)/,
+  );
+  assert.match(source, /const successLogs = logs\.filter/);
 });
 
 test("step 5 polls persisted publish state while workers run in another process", () => {

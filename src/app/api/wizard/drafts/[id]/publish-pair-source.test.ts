@@ -13,19 +13,23 @@ test("publish route creates listings for both design pairs and independent draft
 });
 
 test("publish route does not require selected design count to equal pairs times two", () => {
-  assert.doesNotMatch(source, /selectedDraftDesigns\.length\s*!==\s*draft\.designPairs\.length\s*\*\s*2/);
+  assert.doesNotMatch(
+    source,
+    /selectedDraftDesigns\.length\s*!==\s*draft\.designPairs\.length\s*\*\s*2/,
+  );
   assert.doesNotMatch(source, /hasUnpairedDraftDesigns/);
 });
 
 test("publish route retries existing failed listings instead of treating them as done", () => {
   assert.match(source, /\["FAILED", "PARTIAL_FAILURE"\]\.includes\(listing\.status\)/);
-  assert.match(source, /if \(retryExisting\) workersToStart\.push\(\{ listingId: existingListing\.id \}\)/);
+  assert.match(source, /if \(retryExisting\) \{/);
+  assert.match(source, /createPublishAttemptForListing\(\{/);
   assert.match(source, /alreadyPublished:\s*!retryExisting/);
 });
 
 test("publish route does not enqueue a duplicate worker for an existing running listing", () => {
   assert.match(source, /function hasRunningPublishJob/);
-  assert.match(source, /job\.status === "PENDING" \|\| job\.status === "RUNNING"/);
+  assert.match(source, /"RETRY_SCHEDULED"/);
   assert.match(source, /if \(hasRunningPublishJob\(listing\)\) return "PUBLISHING"/);
   assert.match(source, /return !hasRunningPublishJob\(listing\)/);
 });

@@ -265,9 +265,12 @@ export async function unlinkPrintifyShop(storeId: string) {
 /**
  * Get a PrintifyClient for a given store (used by publish/mockup workers)
  */
-export async function getClientForStore(
-  storeId: string,
-): Promise<{ client: PrintifyClient; externalShopId: number }> {
+export async function getClientForStore(storeId: string): Promise<{
+  client: PrintifyClient;
+  externalShopId: number;
+  merchantAccountId: string;
+  close(): void;
+}> {
   const store = await prisma.store.findUniqueOrThrow({
     where: { id: storeId },
     include: {
@@ -300,7 +303,14 @@ export async function getClientForStore(
     onRateLimit: (request) => gate.afterRateLimit(request),
   });
 
-  return { client, externalShopId: store.printifyShop.externalShopId };
+  return {
+    client,
+    externalShopId: store.printifyShop.externalShopId,
+    merchantAccountId: store.printifyShop.account.id,
+    close() {
+      gate.close();
+    },
+  };
 }
 
 // ----- Helpers -----

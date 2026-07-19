@@ -20,9 +20,14 @@ test("publish worker rethrows retryable errors so BullMQ owns retries", () => {
 test("publish worker terminal finalizer is idempotent and failed event is caught", () => {
   assert.match(source, /finalizeFailedPublishAttemptIdempotently/);
   assert.match(source, /finalizeFailedPublishAttemptInTransaction/);
+  assert.match(source, /finalizeSucceededPublishAttemptInTransaction/);
   assert.match(
     source,
     /prisma\.\$transaction\(\(tx\) => finalizeFailedPublishAttemptInTransaction/,
+  );
+  assert.match(
+    source,
+    /prisma\.\$transaction\(\(tx\) => finalizeSucceededPublishAttemptInTransaction/,
   );
   assert.match(source, /activePublishAttemptId:\s*input\.publishAttemptId/);
   assert.match(source, /finalizeSucceededPublishAttemptIdempotently/);
@@ -43,7 +48,15 @@ test("publish worker does not run business flow for inactive or terminal attempt
   assert.match(source, /listing\.activePublishAttemptId !== input\.publishAttemptId/);
   assert.match(source, /attempt\.status === "SUCCEEDED"/);
   assert.match(source, /attempt\.status === "FAILED"/);
+  assert.match(source, /haveRequiredPublishStagesSucceeded\(jobs\)/);
   assert.match(source, /if \(!shouldRun\) return/);
+});
+
+test("publish worker heals completed BullMQ jobs that left a stale active attempt", () => {
+  assert.match(source, /worker\.on\("completed"/);
+  assert.match(source, /finalizeSucceededPublishAttemptIdempotently\(\{/);
+  assert.match(source, /Publish completed-event finalizer failed/);
+  assert.match(source, /startedAt = attempt\.startedAt/);
 });
 
 test("publish worker resolves final status from store strategy instead of stage guessing", () => {
