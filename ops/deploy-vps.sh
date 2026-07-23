@@ -52,7 +52,6 @@ fi
 npm --prefix "$CODEX_WEB_DIR" install
 npm --prefix "$CODEX_WEB_DIR" run build:server
 npm --prefix "$CODEX_WEB_DIR" run build:browser
-node scripts/patch-codex-web-generated-image-paths.mjs "$CODEX_WEB_DIR"
 
 pm2 startOrReload ecosystem.config.js --only mockupai --update-env
 pm2 startOrReload ecosystem.config.js --only mockupai-ai-hub-gateway --update-env
