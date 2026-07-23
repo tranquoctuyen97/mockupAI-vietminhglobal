@@ -31,7 +31,7 @@ const PUBLISH_ERROR_MESSAGES: Record<PublishErrorCode, string> = {
   SHOPIFY_MEDIA_AMBIGUOUS_WRITE:
     "Shopify có thể đã nhận hình ảnh nhưng hệ thống chưa xác nhận được kết quả. Vui lòng kiểm tra hình ảnh và thử lại thủ công.",
   SHOPIFY_SYNC_TIMEOUT:
-    "Shopify chưa đồng bộ sản phẩm trong thời gian cho phép. Hệ thống sẽ thử lại nếu an toàn.",
+    "Printify chưa đồng bộ sản phẩm sang Shopify trong thời gian cho phép. Vui lòng kiểm tra sản phẩm trước khi thử lại.",
   SHOPIFY_PERMISSION_DENIED: "Tài khoản Shopify thiếu quyền cần thiết để publish sản phẩm.",
   UNKNOWN: "Có lỗi xảy ra khi publish. Vui lòng thử lại hoặc liên hệ kỹ thuật.",
 };

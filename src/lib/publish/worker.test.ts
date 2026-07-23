@@ -113,6 +113,12 @@ describe("Printify Shopify-channel publish branch", () => {
 
 describe("runPrintifyShopifyChannelPublish invariants", () => {
   const source = readFileSync(new URL("./worker.ts", import.meta.url), "utf8");
+  const channelFunctionStart = source.indexOf("async function runPrintifyShopifyChannelPublish");
+  const channelFunctionEnd = source.indexOf(
+    "async function persistPrintifyProductRefs",
+    channelFunctionStart,
+  );
+  const channelSource = source.slice(channelFunctionStart, channelFunctionEnd);
 
   it("publishes through Printify publishProduct before Shopify sync", () => {
     const publishIndex = source.indexOf("await printifyClient.publishProduct(");
@@ -125,6 +131,43 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
       /printifyClient,\s*printifyShopId:\s*externalShopId,\s*printifyProductId:\s*resolvedPrintifyProductResult\.productId/s,
     );
     assert.match(source, /timeoutMs:\s*600_000/);
+  });
+
+  it("keeps the Printify request gate open through sync and closes it once in finally", () => {
+    const closeCalls = channelSource.match(/closePrintifyClient\(\)/g) ?? [];
+    const syncIndex = channelSource.indexOf("await waitForPrintifyShopifySync(");
+    const unpublishIndex = channelSource.indexOf("await printifyClient.unpublishProduct(");
+    const closeIndex = channelSource.lastIndexOf("closePrintifyClient()");
+
+    assert.equal(closeCalls.length, 1);
+    assert.ok(syncIndex > -1, "Shopify sync should be awaited");
+    assert.ok(unpublishIndex > syncIndex, "optional unpublish should happen after sync");
+    assert.ok(closeIndex > unpublishIndex, "Printify client should close after all client calls");
+    assert.match(channelSource, /finally\s*\{\s*closePrintifyClient\(\);\s*\}/);
+  });
+
+  it("classifies a bounded Shopify sync timeout with a stable terminal code", () => {
+    assert.match(
+      source,
+      /import\s*\{\s*ShopifySyncTimeoutError,\s*type ShopifySyncMatch,\s*waitForPrintifyShopifySync,\s*\}\s*from "\.\/shopify-sync"/,
+    );
+    assert.match(channelSource, /const isSyncTimeout = err instanceof ShopifySyncTimeoutError/);
+    assert.match(
+      channelSource,
+      /const lastErrorCode = isSyncTimeout \? "SHOPIFY_SYNC_TIMEOUT" : null/,
+    );
+    assert.match(channelSource, /publishUserMessageForCode\("SHOPIFY_SYNC_TIMEOUT"\)/);
+  });
+
+  it("clears stale terminal and retry metadata before rerunning Shopify sync", () => {
+    assert.match(
+      channelSource,
+      /status:\s*"PENDING",\s*completedAt:\s*null,\s*nextRetryAt:\s*null,\s*reasonCode:\s*null,\s*lastErrorCode:\s*null,\s*lastError:\s*null,/,
+    );
+    assert.match(
+      channelSource,
+      /status:\s*"RUNNING",\s*completedAt:\s*null,\s*nextRetryAt:\s*null,\s*reasonCode:\s*null,\s*lastErrorCode:\s*null,\s*lastError:\s*null,/,
+    );
   });
 
   it("does not let Printify sync mockup images to Shopify", () => {

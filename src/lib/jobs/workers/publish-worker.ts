@@ -331,7 +331,7 @@ async function reconcilePublishAttemptAfterRun(input: {
       },
       publishJobs: {
         where: { publishAttemptId: input.publishAttemptId },
-        select: { stage: true, status: true, lastError: true },
+        select: { stage: true, status: true, lastError: true, lastErrorCode: true },
       },
     },
   });
@@ -359,9 +359,18 @@ async function reconcilePublishAttemptAfterRun(input: {
     "FAILED";
   const failedJob = listing.publishJobs.find((job) => job.status === "FAILED");
   if (failedJob) {
-    throw new PublishAttemptDidNotCompleteError(
-      failedJob.lastError || `Publish stage ${failedJob.stage} failed.`,
-    );
+    const message = failedJob.lastError || `Publish stage ${failedJob.stage} failed.`;
+    if (failedJob.lastErrorCode === "SHOPIFY_SYNC_TIMEOUT") {
+      await finalizeFailedPublishAttemptIdempotently({
+        listingId: input.listingId,
+        publishAttemptId: input.publishAttemptId,
+        error: new PublishAttemptDidNotCompleteError(message),
+        errorCode: "SHOPIFY_SYNC_TIMEOUT",
+        userMessage: failedJob.lastError ?? publishUserMessageForCode("SHOPIFY_SYNC_TIMEOUT"),
+      });
+      throw new UnrecoverableError(message);
+    }
+    throw new PublishAttemptDidNotCompleteError(message);
   }
 
   const strategy: PublishStrategy = listing.store

@@ -48,8 +48,10 @@ test("step 5 keeps polling failed listings while an active retry still exists", 
   assert.match(source, /function isTerminalPublishListingStatus/);
   assert.match(source, /listing\.status === "ACTIVE"/);
   assert.match(source, /getLatestSucceededAttemptJobs\(allJobs\) \?\? \[\]/);
-  assert.match(source, /const hasActiveRetry =/);
-  assert.match(source, /Boolean\(listing\.activePublishAttemptId\)/);
+  assert.match(
+    source,
+    /const hasRunningJob =[\s\S]*?const hasActiveRetry =[\s\S]*?Boolean\(listing\.activePublishAttemptId\)[\s\S]*?hasRunningJob;/,
+  );
   assert.match(source, /if \(hasActiveRetry\)/);
   assert.match(source, /retrying:\s*true/);
   assert.match(source, /Hệ thống đang tự thử lại/);

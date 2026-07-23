@@ -355,12 +355,13 @@ function selectPublishJobsForDisplay(listing: PersistedPublishListing): Persiste
 function publishStateFromPersistedListing(listing: PersistedPublishListing): PublishDesignState {
   const jobs = selectPublishJobsForDisplay(listing);
   const isTerminalListing = isTerminalPublishListingStatus(listing.status);
-  const hasActiveRetry =
-    Boolean(listing.activePublishAttemptId) &&
-    ["FAILED", "PARTIAL_FAILURE"].includes(listing.status);
   const hasRunningJob = jobs.some((job) =>
     ["PENDING", "RUNNING", "RETRY_SCHEDULED"].includes(job.status),
   );
+  const hasActiveRetry =
+    Boolean(listing.activePublishAttemptId) &&
+    ["FAILED", "PARTIAL_FAILURE"].includes(listing.status) &&
+    hasRunningJob;
   const hasFailedJob = jobs.some((job) => job.status === "FAILED");
   const logs = jobs.map(jobToPublishLog).filter((log): log is PublishLog => Boolean(log));
 

@@ -17,6 +17,17 @@ test("publish worker rethrows retryable errors so BullMQ owns retries", () => {
   assert.match(source, /PublishAttemptDidNotCompleteError/);
 });
 
+test("publish worker terminalizes Shopify sync timeout before BullMQ retries", () => {
+  assert.match(
+    source,
+    /select:\s*\{\s*stage:\s*true,\s*status:\s*true,\s*lastError:\s*true,\s*lastErrorCode:\s*true\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(failedJob\.lastErrorCode === "SHOPIFY_SYNC_TIMEOUT"\) \{[\s\S]*?finalizeFailedPublishAttemptIdempotently\(\{[\s\S]*?errorCode:\s*"SHOPIFY_SYNC_TIMEOUT"[\s\S]*?userMessage:\s*failedJob\.lastError[\s\S]*?throw new UnrecoverableError\(/,
+  );
+});
+
 test("publish worker terminal finalizer is idempotent and failed event is caught", () => {
   assert.match(source, /finalizeFailedPublishAttemptIdempotently/);
   assert.match(source, /finalizeFailedPublishAttemptInTransaction/);

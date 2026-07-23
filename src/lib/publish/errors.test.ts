@@ -8,6 +8,10 @@ describe("publish user messages", () => {
       publishUserMessageForCode("PRINTIFY_RATE_LIMITED"),
       "Printify đang giới hạn tần suất yêu cầu. Hệ thống sẽ tự thử lại.",
     );
+    assert.equal(
+      publishUserMessageForCode("SHOPIFY_SYNC_TIMEOUT"),
+      "Printify chưa đồng bộ sản phẩm sang Shopify trong thời gian cho phép. Vui lòng kiểm tra sản phẩm trước khi thử lại.",
+    );
   });
 
   it("does not expose technical raw errors for unknown codes", () => {
