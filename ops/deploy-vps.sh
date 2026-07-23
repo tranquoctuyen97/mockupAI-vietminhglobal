@@ -39,7 +39,7 @@ fi
 
 CODEX_WEB_DIR="${AI_HUB_CODEX_WEB_DIR:-/root/code/codex-web}"
 CODEX_WEB_REF="${AI_HUB_CODEX_WEB_REF:-https://github.com/tranquoctuyen97/codex-web.git}"
-CODEX_WEB_BRANCH="${AI_HUB_CODEX_WEB_BRANCH:-mockupai-workspace-allowlist}"
+CODEX_WEB_BRANCH="${AI_HUB_CODEX_WEB_BRANCH:-main}"
 
 if [ -d "$CODEX_WEB_DIR/.git" ]; then
   git -C "$CODEX_WEB_DIR" fetch origin "$CODEX_WEB_BRANCH"
@@ -52,6 +52,7 @@ fi
 npm --prefix "$CODEX_WEB_DIR" install
 npm --prefix "$CODEX_WEB_DIR" run build:server
 npm --prefix "$CODEX_WEB_DIR" run build:browser
+node scripts/patch-codex-web-generated-image-paths.mjs "$CODEX_WEB_DIR"
 
 pm2 startOrReload ecosystem.config.js --only mockupai --update-env
 pm2 startOrReload ecosystem.config.js --only mockupai-ai-hub-gateway --update-env

@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { isMockupFallbackForcedForDev } from "@/lib/config/runtime-controls";
 import { prisma } from "@/lib/db";
+import { applyEffectivePrintifyColorHexes } from "@/lib/designs/effective-color-hex";
 import { normalizeCompositeRegionPx } from "@/lib/mockup/custom-library";
 import {
   assertColorFilterHasColors,
@@ -64,6 +65,8 @@ export type PreparedMockupGeneration = {
   isCustom: boolean;
   /** Cached variant-to-color lookup — avoids duplicate Printify API calls */
   variantColorLookup: Map<number, { colorName: string }>;
+  /** Store colors with Printify cache hex applied, matching wizard UI grouping */
+  effectiveStoreColors: NonNullable<MockupGenerationContext["draft"]["store"]>["colors"];
 };
 
 export async function loadMockupGenerationContext(draftId: string, tenantId: string) {
@@ -238,6 +241,18 @@ export async function prepareMockupGeneration(
     client,
     externalShopId,
   });
+  const printifyColorHexes = await prisma.printifyVariantCache.findMany({
+    where: {
+      blueprintId: template.printifyBlueprintId,
+      printProviderId: template.printifyPrintProviderId,
+    },
+    distinct: ["colorName"],
+    select: { colorName: true, colorHex: true },
+  });
+  const effectiveStoreColors = applyEffectivePrintifyColorHexes(
+    draft.store?.colors ?? [],
+    printifyColorHexes,
+  );
 
   // For Printify path only: validate that selected colors exist in Printify catalog
   if (!isCustom) {
@@ -270,6 +285,7 @@ export async function prepareMockupGeneration(
     externalShopId,
     isCustom,
     variantColorLookup,
+    effectiveStoreColors,
   };
 }
 
@@ -283,11 +299,15 @@ export async function createMockupJobForDraftDesign(
   draftDesign: ReturnType<typeof resolvePrimaryDraftDesign>,
 ): Promise<BatchMockupJobResult> {
   const { draft } = context;
-  const colorFilter = getColorFilterForDraftDesign(context, draftDesign.id);
+  const colorFilter = getColorFilterForDraftDesign(
+    context,
+    draftDesign.id,
+    prepared.effectiveStoreColors,
+  );
   const variantIds = resolveVariantIdsForColorFilter({
     enabledVariantIds: prepared.enabledVariantIds,
     variantColorLookup: prepared.variantColorLookup,
-    storeColors: draft.store?.colors ?? [],
+    storeColors: prepared.effectiveStoreColors,
     colorFilter,
   });
 
@@ -377,14 +397,18 @@ export async function createCustomMockupJobForDraftDesign(
 ): Promise<BatchMockupJobResult> {
   const { draft } = context;
   const template = prepared.template;
-  const colorFilter = getColorFilterForDraftDesign(context, draftDesign.id);
+  const colorFilter = getColorFilterForDraftDesign(
+    context,
+    draftDesign.id,
+    prepared.effectiveStoreColors,
+  );
 
   // Reuse variant-color lookup from prepare step (avoids duplicate Printify API call)
   const variantColorLookup = prepared.variantColorLookup;
 
   // Resolve custom sources for selected colors
   const enabledColorSet = new Set(colorFilter.colorIds);
-  const storeColors = draft.store?.colors ?? [];
+  const storeColors = prepared.effectiveStoreColors;
   const colorsById = new Map(
     storeColors.filter((c) => enabledColorSet.has(c.id)).map((c) => [c.id, { name: c.name }]),
   );
@@ -557,12 +581,13 @@ export async function createCustomMockupJobForDraftDesign(
 function getColorFilterForDraftDesign(
   context: MockupGenerationContext,
   draftDesignId: string | null,
+  storeColors = context.draft.store?.colors ?? [],
 ): PairColorFilterResult {
   const { draft } = context;
   const filter = resolveColorFilterForDraftDesign({
     draftDesignId,
     selectedColorIds: draft.enabledColorIds,
-    storeColors: draft.store?.colors ?? [],
+    storeColors,
     pairs: draft.designPairs ?? [],
   });
 

@@ -1,5 +1,7 @@
 import { PRODUCT_DEFAULTS } from "@/lib/config/runtime-controls";
 import { resolveColorGroups, type EffectiveColorGroup } from "@/lib/designs/color-classifier";
+import { applyEffectivePrintifyColorHexes } from "@/lib/designs/effective-color-hex";
+import { prisma } from "@/lib/db";
 import { getLatestJobByDraftDesignId } from "@/lib/mockup/multi-design";
 import { isRealPrintifyMockupMedia } from "@/lib/mockup/real-printify-media";
 import { migratePlacementOnRead } from "@/lib/placement/migrate";
@@ -13,8 +15,25 @@ import {
 
 export async function buildChecklist(draft: any) {
   const selectedColorIds = new Set((draft.enabledColorIds ?? []) as string[]);
-  const selectedColors = ((draft.store?.colors ?? []) as Array<{ id: string; name: string; hex: string; colorGroup?: string }>)
-    .filter((color) => selectedColorIds.has(color.id));
+  const template = draft.template || draft.store?.templates?.find((t: any) => t.isDefault) || null;
+  const storeColors = (draft.store?.colors ?? []) as Array<{
+    id: string;
+    name: string;
+    hex: string;
+    colorGroup?: string;
+  }>;
+  const printifyColorHexes = template
+    ? await prisma.printifyVariantCache.findMany({
+        where: {
+          blueprintId: template.printifyBlueprintId,
+          printProviderId: template.printifyPrintProviderId,
+        },
+        distinct: ["colorName"],
+        select: { colorName: true, colorHex: true },
+      })
+    : [];
+  const effectiveStoreColors = applyEffectivePrintifyColorHexes(storeColors, printifyColorHexes);
+  const selectedColors = effectiveStoreColors.filter((color) => selectedColorIds.has(color.id));
   const latestJobsByDesign = getLatestJobByDraftDesignId(
     (draft.mockupJobs ?? []) as Array<{
       id: string;
@@ -133,7 +152,6 @@ export async function buildChecklist(draft: any) {
   let placementValid = true;
   try {
     if (PRODUCT_DEFAULTS.placement.boundaryStrict) {
-      const template = draft.template || draft.store?.templates?.find((t: any) => t.isDefault) || null;
       const placementData: PlacementData = migratePlacementOnRead(
         draft.placementOverride ?? template?.defaultPlacement,
       );

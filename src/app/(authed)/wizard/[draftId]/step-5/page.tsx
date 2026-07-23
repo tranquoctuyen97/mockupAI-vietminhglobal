@@ -113,6 +113,7 @@ interface PublishDesignState {
   status: "IDLE" | "PUBLISHING" | "SUCCESS" | "ERROR";
   logs: PublishLog[];
   alreadyPublished?: boolean;
+  retrying?: boolean;
 }
 
 interface PublishResponseEntry {
@@ -340,20 +341,23 @@ function selectPublishJobsForDisplay(listing: PersistedPublishListing): Persiste
     return getLatestSucceededAttemptJobs(allJobs) ?? [];
   }
 
-  if (isTerminalPublishListingStatus(listing.status)) {
-    return getLatestAttemptJobs(allJobs);
-  }
-
   const activeAttemptJobs = listing.activePublishAttemptId
     ? allJobs.filter((job) => job.publishAttemptId === listing.activePublishAttemptId)
     : [];
 
-  return activeAttemptJobs.length > 0 ? activeAttemptJobs : getLatestAttemptJobs(allJobs);
+  if (activeAttemptJobs.length > 0) {
+    return activeAttemptJobs;
+  }
+
+  return getLatestAttemptJobs(allJobs);
 }
 
 function publishStateFromPersistedListing(listing: PersistedPublishListing): PublishDesignState {
   const jobs = selectPublishJobsForDisplay(listing);
   const isTerminalListing = isTerminalPublishListingStatus(listing.status);
+  const hasActiveRetry =
+    Boolean(listing.activePublishAttemptId) &&
+    ["FAILED", "PARTIAL_FAILURE"].includes(listing.status);
   const hasRunningJob = jobs.some((job) =>
     ["PENDING", "RUNNING", "RETRY_SCHEDULED"].includes(job.status),
   );
@@ -370,6 +374,26 @@ function publishStateFromPersistedListing(listing: PersistedPublishListing): Pub
         successLogs.length > 0
           ? successLogs
           : [{ stage: "DONE", message: "Publish hoàn tất!", status: "success" }],
+    };
+  }
+
+  if (hasActiveRetry) {
+    const hasScheduledRetryLog = jobs.some((job) => job.status === "RETRY_SCHEDULED");
+    return {
+      listingId: listing.id,
+      status: "PUBLISHING",
+      alreadyPublished: true,
+      retrying: true,
+      logs: hasScheduledRetryLog
+        ? logs
+        : [
+            ...logs,
+            {
+              stage: "RETRY",
+              message: "Hệ thống đang tự thử lại...",
+              status: "pending",
+            },
+          ],
     };
   }
 
@@ -770,6 +794,7 @@ export default function Step5ReviewPage() {
   const isLoadingPage = loading || !draft;
   const allListingsPublished = overallPublishStatus === "SUCCESS";
   const hasPublishingListings = publishing || overallPublishStatus === "PUBLISHING";
+  const hasRetryingListings = designPublishEntries.some((entry) => entry.publish.retrying);
   const canPublish = Boolean(
     localChecklist?.readyToPublish &&
       selectedDraftDesigns.length > 0 &&
@@ -777,7 +802,9 @@ export default function Step5ReviewPage() {
       !allListingsPublished,
   );
   const publishButtonLabel = hasPublishingListings
-    ? "Đang publish..."
+    ? hasRetryingListings
+      ? "Đang publish lại..."
+      : "Đang publish..."
     : allListingsPublished
       ? `Đã publish ${summaryListingsCount} listings`
       : `Publish ${summaryListingsCount} listings`;

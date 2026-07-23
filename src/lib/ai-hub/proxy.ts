@@ -5,10 +5,27 @@ export function getCodexUpstreamBase(): string {
 }
 
 export function buildCodexUpstreamUrl(pathSegments: string[] | undefined, search: string): string {
-  const upstreamPath = pathSegments?.length
-    ? `/${pathSegments.map((segment) => encodeURIComponent(segment)).join("/")}`
+  const normalizedPathSegments = normalizeCodexPathSegments(pathSegments);
+  const upstreamPath = normalizedPathSegments?.length
+    ? `/${normalizedPathSegments.map(encodeCodexPathSegment).join("/")}`
     : "/";
   return `${getCodexUpstreamBase()}${upstreamPath}${search}`;
+}
+
+function encodeCodexPathSegment(segment: string): string {
+  return segment === "@fs" ? segment : encodeURIComponent(segment);
+}
+
+export function normalizeCodexPathSegments(pathSegments: string[] | undefined): string[] | undefined {
+  if (pathSegments?.[0] === "@fs" && pathSegments[1] === "@fs") {
+    return pathSegments.slice(1);
+  }
+
+  return pathSegments;
+}
+
+export function normalizeCodexLocalFilePath(pathname: string): string {
+  return pathname.replace(/^\/@fs\/@fs(?=\/)/, "/@fs");
 }
 
 export function filterCodexRequestHeaders(input: Headers, memberId: string): Headers {

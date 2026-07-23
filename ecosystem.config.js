@@ -5,14 +5,17 @@ const AI_HUB_RUNTIME_HOME = process.env.AI_HUB_RUNTIME_HOME || "/tmp/ai-hub/code
 const AI_HUB_CODEX_WEB_REF =
   process.env.AI_HUB_CODEX_WEB_REF ||
   "https://github.com/tranquoctuyen97/codex-web.git";
-const AI_HUB_CODEX_WEB_BRANCH = process.env.AI_HUB_CODEX_WEB_BRANCH || "mockupai-workspace-allowlist";
+const AI_HUB_CODEX_WEB_BRANCH = process.env.AI_HUB_CODEX_WEB_BRANCH || "main";
 const AI_HUB_CODEX_WEB_DIR = process.env.AI_HUB_CODEX_WEB_DIR || "/tmp/mockupai-codex-web";
 const AI_HUB_CODEX_WEB_PORT = process.env.AI_HUB_CODEX_WEB_PORT || "8214";
+const AI_HUB_NODE_BIN_DIR = process.env.AI_HUB_NODE_BIN_DIR || "/opt/homebrew/bin";
+const AI_HUB_CODEX_WEB_NODE = process.env.AI_HUB_CODEX_WEB_NODE || path.join(AI_HUB_NODE_BIN_DIR, "node");
 const AI_HUB_GATEWAY_PORT = process.env.AI_HUB_GATEWAY_PORT || "8215";
 const CODEX_CLI_PATH = process.env.CODEX_CLI_PATH || "codex";
 const APP_PORT = process.env.PORT || "3000";
 const AI_HUB_APP_ORIGIN = process.env.AI_HUB_APP_ORIGIN || `http://127.0.0.1:${APP_PORT}`;
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, "uploads");
+const AI_HUB_CODEX_WEB_PATH = [AI_HUB_NODE_BIN_DIR, process.env.PATH].filter(Boolean).join(path.delimiter);
 
 module.exports = {
   apps: [
@@ -76,8 +79,8 @@ module.exports = {
     },
     {
       name: "mockupai-codex",
-      script: "npm",
-      args: "run server",
+      script: AI_HUB_CODEX_WEB_NODE,
+      args: "src/server/main.js",
       cwd: AI_HUB_CODEX_WEB_DIR,
       exec_mode: "fork",
       instances: 1,
@@ -85,6 +88,7 @@ module.exports = {
       max_memory_restart: "1G",
       env: {
         NODE_ENV: "production",
+        PATH: AI_HUB_CODEX_WEB_PATH,
         PORT: AI_HUB_CODEX_WEB_PORT,
         CODEX_CLI_PATH,
         AI_HUB_CODEX_WEB_REF,

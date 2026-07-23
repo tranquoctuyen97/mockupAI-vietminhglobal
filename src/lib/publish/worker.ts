@@ -12,6 +12,7 @@ import { isPublishDryRun, PRODUCT_DEFAULTS } from "@/lib/config/runtime-controls
 import { decrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
 import { classifyColorHex, resolveColorGroups } from "@/lib/designs/color-classifier";
+import { applyEffectivePrintifyColorHexes } from "@/lib/designs/effective-color-hex";
 import {
   normalizeCompositeRegionPx,
   scaleCompositeRegionToImage,
@@ -86,6 +87,14 @@ import {
 } from "./shopify-post-sync";
 import { type ShopifySyncMatch, waitForPrintifyShopifySync } from "./shopify-sync";
 import { resolvePublishStrategy } from "./strategy";
+
+type StoreColorForGrouping = {
+  id: string;
+  name: string;
+  hex: string;
+  colorGroup: string;
+  printifyColorId?: string | null;
+};
 
 const MAX_RETRIES = 5;
 const BACKOFF_BASE_MS = 2000;
@@ -1074,13 +1083,18 @@ export async function runPrintifyStage(
         blueprintId,
         printProviderId,
       });
+      const storeColorsForGrouping = (store.colors ?? []) as StoreColorForGrouping[];
+      const effectiveStoreColors = applyEffectivePrintifyColorHexes(
+        storeColorsForGrouping,
+        cachedVariants,
+      );
 
       const colorNameToId = new Map<string, string>();
-      for (const c of store.colors ?? []) {
+      for (const c of effectiveStoreColors) {
         colorNameToId.set(c.name.trim().toLowerCase(), c.id);
       }
 
-      const colorGroups = resolveColorGroups(store.colors ?? []);
+      const colorGroups = resolveColorGroups(effectiveStoreColors);
 
       const lightVariantIds: number[] = [];
       const darkVariantIds: number[] = [];
@@ -2364,10 +2378,11 @@ async function resolvePrintifyProductPublishInput(input: {
   });
 
   const enabledColorIdSet = new Set(input.draft.enabledColorIds ?? []);
-  const storeColors = (input.draft.store as any)?.colors ?? [];
+  const storeColors = (((input.draft.store as any)?.colors ?? []) as StoreColorForGrouping[]);
+  const effectiveStoreColors = applyEffectivePrintifyColorHexes(storeColors, cachedVariants);
   const selectedColorNames =
-    storeColors.length > 0
-      ? storeColors
+    effectiveStoreColors.length > 0
+      ? effectiveStoreColors
           .filter((color: any) => enabledColorIdSet.has(color.id))
           .map((color: any) => color.name)
       : Array.from(
@@ -2444,10 +2459,10 @@ async function resolvePrintifyProductPublishInput(input: {
     });
 
     const colorNameToId = new Map<string, string>();
-    for (const color of storeColors) {
+    for (const color of effectiveStoreColors) {
       colorNameToId.set(color.name.trim().toLowerCase(), color.id);
     }
-    const colorGroups = resolveColorGroups(storeColors);
+    const colorGroups = resolveColorGroups(effectiveStoreColors);
     const lightVariantIds: number[] = [];
     const darkVariantIds: number[] = [];
 

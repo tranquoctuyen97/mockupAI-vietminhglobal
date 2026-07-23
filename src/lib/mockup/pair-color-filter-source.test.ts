@@ -5,6 +5,8 @@ import test from "node:test";
 test("mockup generation persists color filters on mockup jobs", () => {
   const source = readFileSync("src/lib/mockup/generation.ts", "utf8");
 
+  assert.match(source, /applyEffectivePrintifyColorHexes/);
+  assert.match(source, /effectiveStoreColors/);
   assert.match(source, /resolveColorFilterForDraftDesign/);
   assert.match(source, /colorFilterIds:\s*colorFilter\.colorIds/);
   assert.match(source, /colorGroup:\s*colorFilter\.colorGroup/);

@@ -16,6 +16,14 @@ test("checklist content requires pair and independent titles", () => {
   assert.match(source, /hasAiTitle\(draftDesign\.aiContent\)/);
 });
 
+test("checklist uses Printify effective color hexes for pair color grouping", () => {
+  assert.match(source, /applyEffectivePrintifyColorHexes/);
+  assert.match(source, /printifyVariantCache\.findMany/);
+  assert.match(source, /blueprintId:\s*template\.printifyBlueprintId/);
+  assert.match(source, /printProviderId:\s*template\.printifyPrintProviderId/);
+  assert.match(source, /const selectedColors = effectiveStoreColors\.filter/);
+});
+
 test("checklist does not expose pairing completeness", () => {
   assert.doesNotMatch(source, /hasUnpairedDraftDesigns/);
   assert.doesNotMatch(source, /pairingComplete/);

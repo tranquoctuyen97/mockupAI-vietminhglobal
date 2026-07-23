@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { normalizeCodexLocalFilePath } from "@/lib/ai-hub/proxy";
 
 const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/health", "/api/shopify", "/api/webhooks"];
 const ADMIN_PATHS = ["/admin", "/api/admin"];
@@ -10,7 +11,7 @@ export function proxy(request: NextRequest) {
 
   if (pathname.startsWith("/@fs/")) {
     const url = request.nextUrl.clone();
-    url.pathname = `/api/codex-proxy${pathname}`;
+    url.pathname = `/api/codex-proxy${normalizeCodexLocalFilePath(pathname)}`;
     return NextResponse.redirect(url);
   }
 

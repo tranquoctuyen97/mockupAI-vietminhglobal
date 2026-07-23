@@ -44,18 +44,20 @@ test("step 5 hydrates publish progress from persisted listing jobs after reload"
   assert.match(source, /hasPublishingListings/);
 });
 
-test("step 5 does not let a stale active attempt keep terminal listings publishing", () => {
+test("step 5 keeps polling failed listings while an active retry still exists", () => {
   assert.match(source, /function isTerminalPublishListingStatus/);
   assert.match(source, /listing\.status === "ACTIVE"/);
   assert.match(source, /getLatestSucceededAttemptJobs\(allJobs\) \?\? \[\]/);
+  assert.match(source, /const hasActiveRetry =/);
+  assert.match(source, /Boolean\(listing\.activePublishAttemptId\)/);
+  assert.match(source, /if \(hasActiveRetry\)/);
+  assert.match(source, /retrying:\s*true/);
+  assert.match(source, /Hệ thống đang tự thử lại/);
   assert.match(
     source,
     /const isTerminalListing = isTerminalPublishListingStatus\(listing\.status\)/,
   );
-  assert.match(
-    source,
-    /if \(!isTerminalListing && \(hasRunningJob \|\| listing\.status === "PUBLISHING"\)\)/,
-  );
+  assert.match(source, /if \(!isTerminalListing && \(hasRunningJob/);
   assert.match(source, /const successLogs = logs\.filter/);
 });
 
@@ -71,6 +73,7 @@ test("step 5 renders retry-scheduled jobs as Vietnamese pending progress", () =>
   assert.match(source, /RETRY_SCHEDULED/);
   assert.match(source, /Đang thử lại/);
   assert.match(source, /nextRetryAt/);
+  assert.match(source, /Đang publish lại/);
 });
 
 test("step 5 renders live publish phase progress from SSE", () => {

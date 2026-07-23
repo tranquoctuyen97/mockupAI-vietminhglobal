@@ -298,6 +298,11 @@ describe("runPrintifyShopifyChannelPublish invariants", () => {
 
   it("maps paired light and dark print areas across the full Printify variant catalog", () => {
     const resolverIndex = source.indexOf("async function resolvePrintifyProductPublishInput");
+    const resolverSource = source.slice(
+      resolverIndex,
+      source.indexOf("async function publishExistingPrintifyDraftProduct", resolverIndex),
+    );
+    assert.match(resolverSource, /applyEffectivePrintifyColorHexes/);
     const pairLoopIndex = source.indexOf("for (const variant of cachedVariants)", resolverIndex);
     assert.ok(pairLoopIndex > -1, "pair variant loop should exist");
     const pairLoopSource = source.slice(

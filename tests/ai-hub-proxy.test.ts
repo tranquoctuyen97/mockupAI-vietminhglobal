@@ -5,6 +5,7 @@ import {
   filterCodexRequestHeaders,
   filterCodexResponseHeaders,
   isAiHubTextContent,
+  normalizeCodexLocalFilePath,
   rewriteCodexLocationHeader,
   rewriteCodexProxyPaths,
 } from "../src/lib/ai-hub/proxy";
@@ -14,6 +15,11 @@ test("buildCodexUpstreamUrl preserves path and query", () => {
     buildCodexUpstreamUrl(["assets", "app.js"], "?v=1"),
     "http://127.0.0.1:8214/assets/app.js?v=1",
   );
+  assert.equal(
+    buildCodexUpstreamUrl(["@fs", "@fs", "private", "tmp", "image.png"], ""),
+    "http://127.0.0.1:8214/@fs/private/tmp/image.png",
+  );
+  assert.equal(normalizeCodexLocalFilePath("/@fs/@fs/private/tmp/image.png"), "/@fs/private/tmp/image.png");
 });
 
 test("filterCodexRequestHeaders strips spoofed internal headers", () => {

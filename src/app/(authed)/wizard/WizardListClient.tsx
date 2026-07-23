@@ -21,9 +21,11 @@ interface Draft {
   listings?: Array<{
     id: string;
     status: string;
+    activePublishAttemptId?: string | null;
     publishJobs?: Array<{
       stage: string;
       status: string;
+      publishAttemptId?: string | null;
     }>;
   }>;
 }
@@ -41,6 +43,21 @@ const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }
 
 interface Props {
   initialDrafts: Draft[];
+}
+
+function getCurrentPublishJobs(listing: NonNullable<Draft["listings"]>[number]) {
+  const jobs = listing.publishJobs ?? [];
+  if (listing.status === "ACTIVE") return [];
+  if (listing.activePublishAttemptId) {
+    return jobs.filter((job) => job.publishAttemptId === listing.activePublishAttemptId);
+  }
+
+  const latestAttemptId = [...jobs].reverse().find((job) => job.publishAttemptId)?.publishAttemptId;
+  if (latestAttemptId) {
+    return jobs.filter((job) => job.publishAttemptId === latestAttemptId);
+  }
+
+  return jobs.length > 0 ? [jobs[jobs.length - 1]] : [];
 }
 
 function getDraftPublishDisplayStatus(draft: Draft): {
@@ -64,11 +81,21 @@ function getDraftPublishDisplayStatus(draft: Draft): {
     };
   }
 
-  const jobs = listings.flatMap((listing) => listing.publishJobs ?? []);
+  const allActive = listings.every((listing) => listing.status === "ACTIVE");
+  if (allActive) {
+    return {
+      key: "PUBLISHED",
+      subLabel: "Hoàn thành",
+      complete: true,
+      running: false,
+      failed: false,
+    };
+  }
+
+  const jobs = listings.flatMap(getCurrentPublishJobs);
   const hasRunningJob = jobs.some((job) => job.status === "PENDING" || job.status === "RUNNING");
   const hasFailed = listings.some((listing) => listing.status === "FAILED" || listing.status === "PARTIAL_FAILURE") ||
     jobs.some((job) => job.status === "FAILED");
-  const allActive = listings.every((listing) => listing.status === "ACTIVE");
   const printifyDone = jobs.some((job) => job.stage === "PRINTIFY" && job.status === "SUCCEEDED");
   const shopifyRunning = jobs.some(
     (job) => job.stage === "SHOPIFY" && (job.status === "PENDING" || job.status === "RUNNING"),
@@ -100,16 +127,6 @@ function getDraftPublishDisplayStatus(draft: Draft): {
       subLabel: "Đang xử lý",
       complete: false,
       running: true,
-      failed: false,
-    };
-  }
-
-  if (allActive) {
-    return {
-      key: "PUBLISHED",
-      subLabel: "Hoàn thành",
-      complete: true,
-      running: false,
       failed: false,
     };
   }
