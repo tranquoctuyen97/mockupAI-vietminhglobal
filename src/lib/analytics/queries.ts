@@ -12,7 +12,7 @@ export async function getDashboardSummary(tenantId: string) {
   todayStart.setHours(0, 0, 0, 0);
 
   const [designsCount, listingsCount, ordersToday, revenueToday] = await Promise.all([
-    prisma.design.count({ where: { tenantId, deletedAt: null } }),
+    prisma.design.count({ where: { tenantId, scope: "LIBRARY", deletedAt: null } }),
     prisma.listing.count({ where: { tenantId, status: "ACTIVE" } }),
     prisma.order.count({ where: { tenantId, createdAt: { gte: todayStart } } }),
     prisma.order.aggregate({

@@ -47,7 +47,19 @@ function storageFormatForSharp(format: string): "jpeg" | "png" {
  */
 export async function probeAndPreview(filePath: string): Promise<ProbeResult> {
   const { size } = await stat(filePath);
-  const image = sharp(filePath, SHARP_OPTIONS);
+  return probeInput(filePath, size);
+}
+
+/**
+ * Probe an in-memory image with the same validation and normalization rules used
+ * by the browser upload path.
+ */
+export async function probeAndPreviewBuffer(buffer: Buffer): Promise<ProbeResult> {
+  return probeInput(buffer, buffer.length);
+}
+
+async function probeInput(input: string | Buffer, originalFileSize: number): Promise<ProbeResult> {
+  const image = sharp(input, SHARP_OPTIONS);
   const metadata = await image.metadata();
 
   if (!metadata.width || !metadata.height || !metadata.format) {
@@ -62,12 +74,12 @@ export async function probeAndPreview(filePath: string): Promise<ProbeResult> {
   let height = metadata.height;
   let format = metadata.format;
   let mimeType = mimeTypeForFormat(metadata.format);
-  let fileSize = size;
+  let fileSize = originalFileSize;
   let normalizedBuffer: Buffer | null = null;
 
   if (metadata.width > MAX_PRINTIFY_DESIGN_SIDE || metadata.height > MAX_PRINTIFY_DESIGN_SIDE) {
     const storageFormat = storageFormatForSharp(metadata.format);
-    let normalizedImage = sharp(filePath, SHARP_OPTIONS)
+    let normalizedImage = sharp(input, SHARP_OPTIONS)
       .resize({
         width: MAX_PRINTIFY_DESIGN_SIDE,
         height: MAX_PRINTIFY_DESIGN_SIDE,
@@ -91,7 +103,7 @@ export async function probeAndPreview(filePath: string): Promise<ProbeResult> {
   }
 
   // Generate preview (512px wide, maintain aspect ratio, webp)
-  const previewInput = normalizedBuffer ?? filePath;
+  const previewInput = normalizedBuffer ?? input;
   const previewBuffer = await sharp(previewInput, SHARP_OPTIONS)
     .resize(PREVIEW_MAX_WIDTH, undefined, { fit: "inside", withoutEnlargement: true })
     .webp({ quality: PREVIEW_QUALITY })
@@ -109,6 +121,6 @@ export async function probeAndPreview(filePath: string): Promise<ProbeResult> {
     wasNormalized: normalizedBuffer !== null,
     originalWidth: metadata.width,
     originalHeight: metadata.height,
-    originalFileSize: size,
+    originalFileSize,
   };
 }

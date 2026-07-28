@@ -19,6 +19,7 @@ const ADMIN_FEATURES = [
   { key: "integrations", label: "Integrations" },
   { key: "ai_settings", label: "AI Settings" },
   { key: "inkhub_config", label: "InkHub Config" },
+  { key: "mcp_access", label: "MCP Access" },
 ] as const;
 
 const OPERATOR_DEFAULTS = [
@@ -40,6 +41,9 @@ export default function AclClient({ initialAdminFeatures }: Props) {
   const [operatorFeatures, setOperatorFeatures] = useState<Set<string>>(new Set(OPERATOR_DEFAULTS));
   const [saving, setSaving] = useState(false);
   const [loadingOp, setLoadingOp] = useState(false);
+  const [savedAdminMcpAccess, setSavedAdminMcpAccess] = useState(
+    initialAdminFeatures.includes("mcp_access"),
+  );
 
   async function handleTabChange(tab: "ADMIN" | "OPERATOR") {
     setActiveTab(tab);
@@ -72,6 +76,8 @@ export default function AclClient({ initialAdminFeatures }: Props) {
 
   async function handleSave() {
     setSaving(true);
+    const hadMcpAccess = savedAdminMcpAccess;
+    const willHaveMcpAccess = adminFeatures.has("mcp_access");
     const features =
       activeTab === "ADMIN" ? Array.from(adminFeatures) : Array.from(operatorFeatures);
     try {
@@ -80,8 +86,18 @@ export default function AclClient({ initialAdminFeatures }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ role: activeTab, features }),
       });
-      if (res.ok) toast.success(`Đã lưu permissions cho ${activeTab}`);
-      else toast.error("Lưu thất bại");
+      if (res.ok) {
+        if (activeTab === "ADMIN") {
+          setSavedAdminMcpAccess(willHaveMcpAccess);
+        }
+        if (activeTab === "ADMIN" && !hadMcpAccess && willHaveMcpAccess) {
+          toast.success("MCP access granted. This admin can now set up their own MCP connection.");
+        } else if (activeTab === "ADMIN" && hadMcpAccess && !willHaveMcpAccess) {
+          toast.warning("MCP access removed. Current MCP calls stop immediately.");
+        } else {
+          toast.success(`Đã lưu permissions cho ${activeTab}`);
+        }
+      } else toast.error("Lưu thất bại");
     } catch {
       toast.error("Lỗi kết nối");
     } finally {

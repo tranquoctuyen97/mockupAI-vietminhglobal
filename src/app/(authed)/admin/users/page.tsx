@@ -1,17 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { Loader2, Plus, RotateCcw, Shield, ShieldOff, UserPlus, Users, X } from "lucide-react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { toast } from "sonner";
-import {
-  Users,
-  Plus,
-  RotateCcw,
-  Shield,
-  ShieldOff,
-  X,
-  Loader2,
-  UserPlus,
-} from "lucide-react";
 
 interface User {
   id: string;
@@ -20,7 +11,23 @@ interface User {
   status: "ACTIVE" | "DISABLED";
   mustChangePassword: boolean;
   createdAt: string;
+  mcpStatus:
+    | "NOT_ALLOWED"
+    | "AVAILABLE"
+    | "SELF_ENABLED"
+    | "SETUP_INCOMPLETE"
+    | "CONNECTION_ISSUE"
+    | "ACCESS_REVOKED";
 }
+
+const MCP_STATUS_LABELS: Record<User["mcpStatus"], string> = {
+  NOT_ALLOWED: "Not allowed",
+  AVAILABLE: "Available",
+  SELF_ENABLED: "Self-enabled",
+  SETUP_INCOMPLETE: "Setup incomplete",
+  CONNECTION_ISSUE: "Connection issue",
+  ACCESS_REVOKED: "Access revoked",
+};
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<User[]>([]);
@@ -44,9 +51,12 @@ export default function AdminUsersPage() {
 
   useEffect(() => {
     fetchUsers();
-    fetch("/api/auth/me").then((r) => r.json()).then((d) => {
-      if (d.id) setCurrentUserId(d.id);
-    }).catch(() => {});
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.id) setCurrentUserId(d.id);
+      })
+      .catch(() => {});
   }, [fetchUsers]);
 
   async function changeRole(user: User, newRole: "ADMIN" | "OPERATOR") {
@@ -81,7 +91,9 @@ export default function AdminUsersPage() {
         body: JSON.stringify({ status: newStatus }),
       });
       if (res.ok) {
-        toast.success(`${user.email} đã được ${newStatus === "ACTIVE" ? "kích hoạt" : "vô hiệu hóa"}`);
+        toast.success(
+          `${user.email} đã được ${newStatus === "ACTIVE" ? "kích hoạt" : "vô hiệu hóa"}`,
+        );
         fetchUsers();
       } else {
         const data = await res.json();
@@ -104,7 +116,7 @@ export default function AdminUsersPage() {
             Tạo và quản lý tài khoản operator
           </p>
         </div>
-        <button className="btn-primary" onClick={() => setShowCreateDialog(true)}>
+        <button className="btn-primary" onClick={() => setShowCreateDialog(true)} type="button">
           <Plus size={18} />
           Tạo User
         </button>
@@ -113,7 +125,11 @@ export default function AdminUsersPage() {
       {/* Users table */}
       {loading ? (
         <div className="flex items-center justify-center py-16">
-          <Loader2 size={24} className="animate-spin" style={{ color: "var(--color-wise-green)" }} />
+          <Loader2
+            size={24}
+            className="animate-spin"
+            style={{ color: "var(--color-wise-green)" }}
+          />
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -123,6 +139,7 @@ export default function AdminUsersPage() {
                 <th>Email</th>
                 <th>Role</th>
                 <th>Trạng thái</th>
+                <th>MCP</th>
                 <th>Ngày tạo</th>
                 <th style={{ textAlign: "right" }}>Hành động</th>
               </tr>
@@ -132,12 +149,24 @@ export default function AdminUsersPage() {
                 <tr key={user.id}>
                   <td>
                     <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-small"
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-small"
                         style={{
-                          backgroundColor: user.role === "SUPER_ADMIN" ? "rgba(159,232,112,0.25)" : user.role === "ADMIN" ? "rgba(159,232,112,0.15)" : "rgba(134,134,133,0.15)",
-                          color: user.role === "SUPER_ADMIN" ? "var(--color-wise-green)" : user.role === "ADMIN" ? "var(--color-wise-green)" : "var(--text-muted)",
+                          backgroundColor:
+                            user.role === "SUPER_ADMIN"
+                              ? "rgba(159,232,112,0.25)"
+                              : user.role === "ADMIN"
+                                ? "rgba(159,232,112,0.15)"
+                                : "rgba(134,134,133,0.15)",
+                          color:
+                            user.role === "SUPER_ADMIN"
+                              ? "var(--color-wise-green)"
+                              : user.role === "ADMIN"
+                                ? "var(--color-wise-green)"
+                                : "var(--text-muted)",
                           fontWeight: 700,
-                        }}>
+                        }}
+                      >
                         {user.email[0].toUpperCase()}
                       </div>
                       <div>
@@ -152,17 +181,28 @@ export default function AdminUsersPage() {
                   </td>
                   <td>
                     {user.role === "SUPER_ADMIN" || user.id === currentUserId ? (
-                      <span className={`badge ${user.role === "SUPER_ADMIN" ? "badge-success" : user.role === "ADMIN" ? "badge-success" : "badge-info"}`}>
+                      <span
+                        className={`badge ${user.role === "SUPER_ADMIN" ? "badge-success" : user.role === "ADMIN" ? "badge-success" : "badge-info"}`}
+                      >
                         {user.role}
                       </span>
                     ) : (
                       <div className="flex items-center gap-1.5">
                         {roleChanging === user.id && (
-                          <Loader2 size={12} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+                          <Loader2
+                            size={12}
+                            className="animate-spin"
+                            style={{ color: "var(--text-muted)" }}
+                          />
                         )}
                         <select
                           className="input"
-                          style={{ padding: "0.2rem 0.5rem", fontSize: "0.8125rem", height: "auto", width: "auto" }}
+                          style={{
+                            padding: "0.2rem 0.5rem",
+                            fontSize: "0.8125rem",
+                            height: "auto",
+                            width: "auto",
+                          }}
                           value={user.role}
                           disabled={roleChanging === user.id}
                           onChange={(e) => changeRole(user, e.target.value as "ADMIN" | "OPERATOR")}
@@ -174,8 +214,25 @@ export default function AdminUsersPage() {
                     )}
                   </td>
                   <td>
-                    <span className={`badge ${user.status === "ACTIVE" ? "badge-success" : "badge-danger"}`}>
+                    <span
+                      className={`badge ${user.status === "ACTIVE" ? "badge-success" : "badge-danger"}`}
+                    >
                       {user.status === "ACTIVE" ? "Hoạt động" : "Vô hiệu"}
+                    </span>
+                  </td>
+                  <td>
+                    <span
+                      className={`badge ${
+                        user.mcpStatus === "SELF_ENABLED"
+                          ? "badge-success"
+                          : user.mcpStatus === "CONNECTION_ISSUE" ||
+                              user.mcpStatus === "ACCESS_REVOKED"
+                            ? "badge-danger"
+                            : "badge-info"
+                      }`}
+                      title="Read-only status. Each ADMIN manages their own MCP connection."
+                    >
+                      {MCP_STATUS_LABELS[user.mcpStatus]}
                     </span>
                   </td>
                   <td className="text-caption" style={{ color: "var(--text-muted)" }}>
@@ -187,14 +244,18 @@ export default function AdminUsersPage() {
                         className="btn-secondary btn-sm"
                         onClick={() => setShowResetDialog(user)}
                         title="Reset mật khẩu"
+                        type="button"
                       >
                         <RotateCcw size={14} />
                         Reset
                       </button>
                       <button
-                        className={user.status === "ACTIVE" ? "btn-danger-ghost" : "btn-primary btn-sm"}
+                        className={
+                          user.status === "ACTIVE" ? "btn-danger-ghost" : "btn-primary btn-sm"
+                        }
                         onClick={() => toggleStatus(user)}
                         title={user.status === "ACTIVE" ? "Vô hiệu hóa" : "Kích hoạt"}
+                        type="button"
                       >
                         {user.status === "ACTIVE" ? <ShieldOff size={14} /> : <Shield size={14} />}
                         {user.status === "ACTIVE" ? "Disable" : "Enable"}
@@ -205,9 +266,12 @@ export default function AdminUsersPage() {
               ))}
               {users.length === 0 && (
                 <tr>
-                  <td colSpan={5}>
+                  <td colSpan={6}>
                     <div className="text-center py-8">
-                      <Users size={32} style={{ color: "var(--text-muted)", margin: "0 auto 0.5rem" }} />
+                      <Users
+                        size={32}
+                        style={{ color: "var(--text-muted)", margin: "0 auto 0.5rem" }}
+                      />
                       <p className="text-body" style={{ color: "var(--text-muted)" }}>
                         Chưa có user nào
                       </p>
@@ -249,18 +313,16 @@ export default function AdminUsersPage() {
 /* ============================================================
    Create User Dialog
    ============================================================ */
-function CreateUserDialog({
-  onClose,
-  onCreated,
-}: {
-  onClose: () => void;
-  onCreated: () => void;
-}) {
+function CreateUserDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"ADMIN" | "OPERATOR">("OPERATOR");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const formId = useId();
+  const emailId = `${formId}-email`;
+  const passwordId = `${formId}-password`;
+  const roleId = `${formId}-role`;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -287,49 +349,90 @@ function CreateUserDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ backgroundColor: "rgba(0,0,0,0.5)" }}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+    >
       <div className="card-lg w-full max-w-md" style={{ backgroundColor: "var(--bg-surface)" }}>
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-feature-title" style={{ color: "var(--text-primary)" }}>
-            <UserPlus size={20} style={{ display: "inline", marginRight: "0.5rem", verticalAlign: "text-bottom" }} />
+            <UserPlus
+              size={20}
+              style={{ display: "inline", marginRight: "0.5rem", verticalAlign: "text-bottom" }}
+            />
             Tạo User Mới
           </h2>
-          <button onClick={onClose} className="p-1" aria-label="Close">
+          <button onClick={onClose} className="p-1" aria-label="Close" type="button">
             <X size={18} style={{ color: "var(--text-muted)" }} />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="new-email" className="block mb-1.5 text-caption" style={{ fontWeight: 600, color: "var(--text-secondary)" }}>
+            <label
+              htmlFor={emailId}
+              className="block mb-1.5 text-caption"
+              style={{ fontWeight: 600, color: "var(--text-secondary)" }}
+            >
               Email
             </label>
-            <input id="new-email" type="email" className="input" value={email}
-              onChange={(e) => setEmail(e.target.value)} required autoFocus />
+            <input
+              id={emailId}
+              type="email"
+              className="input"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
           </div>
           <div>
-            <label htmlFor="new-password" className="block mb-1.5 text-caption" style={{ fontWeight: 600, color: "var(--text-secondary)" }}>
+            <label
+              htmlFor={passwordId}
+              className="block mb-1.5 text-caption"
+              style={{ fontWeight: 600, color: "var(--text-secondary)" }}
+            >
               Mật khẩu tạm
             </label>
-            <input id="new-password" type="text" className="input" value={password}
-              onChange={(e) => setPassword(e.target.value)} required minLength={8}
-              placeholder="Tối thiểu 8 ký tự" />
+            <input
+              id={passwordId}
+              type="text"
+              className="input"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={8}
+              placeholder="Tối thiểu 8 ký tự"
+            />
           </div>
           <div>
-            <label htmlFor="new-role" className="block mb-1.5 text-caption" style={{ fontWeight: 600, color: "var(--text-secondary)" }}>
+            <label
+              htmlFor={roleId}
+              className="block mb-1.5 text-caption"
+              style={{ fontWeight: 600, color: "var(--text-secondary)" }}
+            >
               Role
             </label>
-            <select id="new-role" className="input" value={role}
-              onChange={(e) => setRole(e.target.value as "ADMIN" | "OPERATOR")}>
+            <select
+              id={roleId}
+              className="input"
+              value={role}
+              onChange={(e) => setRole(e.target.value as "ADMIN" | "OPERATOR")}
+            >
               <option value="OPERATOR">Operator</option>
               <option value="ADMIN">Admin</option>
             </select>
           </div>
 
           {error && (
-            <div className="p-3 text-sm font-medium" role="alert"
-              style={{ backgroundColor: "rgba(208,50,56,0.08)", color: "var(--color-danger)", borderRadius: "var(--radius-sm)" }}>
+            <div
+              className="p-3 text-sm font-medium"
+              role="alert"
+              style={{
+                backgroundColor: "rgba(208,50,56,0.08)",
+                color: "var(--color-danger)",
+                borderRadius: "var(--radius-sm)",
+              }}
+            >
               {error}
             </div>
           )}
@@ -364,6 +467,7 @@ function ResetPasswordDialog({
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const passwordId = `${useId()}-reset-password`;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -390,35 +494,56 @@ function ResetPasswordDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ backgroundColor: "rgba(0,0,0,0.5)" }}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+    >
       <div className="card-lg w-full max-w-md" style={{ backgroundColor: "var(--bg-surface)" }}>
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-feature-title" style={{ color: "var(--text-primary)" }}>
             Reset mật khẩu
           </h2>
-          <button onClick={onClose} className="p-1" aria-label="Close">
+          <button onClick={onClose} className="p-1" aria-label="Close" type="button">
             <X size={18} style={{ color: "var(--text-muted)" }} />
           </button>
         </div>
 
         <p className="text-body mb-4" style={{ color: "var(--text-secondary)" }}>
-          Đặt mật khẩu mới cho <strong>{user.email}</strong>. User sẽ được yêu cầu đổi mật khẩu lần đầu đăng nhập.
+          Đặt mật khẩu mới cho <strong>{user.email}</strong>. User sẽ được yêu cầu đổi mật khẩu lần
+          đầu đăng nhập.
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="reset-password" className="block mb-1.5 text-caption" style={{ fontWeight: 600, color: "var(--text-secondary)" }}>
+            <label
+              htmlFor={passwordId}
+              className="block mb-1.5 text-caption"
+              style={{ fontWeight: 600, color: "var(--text-secondary)" }}
+            >
               Mật khẩu mới
             </label>
-            <input id="reset-password" type="text" className="input" value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)} required minLength={8}
-              placeholder="Tối thiểu 8 ký tự" autoFocus />
+            <input
+              id={passwordId}
+              type="text"
+              className="input"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+              minLength={8}
+              placeholder="Tối thiểu 8 ký tự"
+            />
           </div>
 
           {error && (
-            <div className="p-3 text-sm font-medium" role="alert"
-              style={{ backgroundColor: "rgba(208,50,56,0.08)", color: "var(--color-danger)", borderRadius: "var(--radius-sm)" }}>
+            <div
+              className="p-3 text-sm font-medium"
+              role="alert"
+              style={{
+                backgroundColor: "rgba(208,50,56,0.08)",
+                color: "var(--color-danger)",
+                borderRadius: "var(--radius-sm)",
+              }}
+            >
               {error}
             </div>
           )}

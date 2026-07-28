@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+import { getRequestInfo, logAudit } from "@/lib/audit";
 import { requireSuperAdmin } from "@/lib/auth/guards";
 import { FEATURES, type Feature } from "@/lib/auth/roles";
 import { prisma } from "@/lib/db";
+import { suspendMcpProfilesForRoleChange } from "@/lib/mcp/profile-service";
 
 // GET /api/admin/acl?role=ADMIN|OPERATOR
 export async function GET(request: Request) {
@@ -53,6 +55,29 @@ export async function PATCH(request: Request) {
       })),
     }),
   ]);
+
+  if (role === "ADMIN" && !validFeatures.includes("mcp_access")) {
+    await suspendMcpProfilesForRoleChange(
+      session.tenantId,
+      "ADMIN",
+      "MCP_ACCESS_REMOVED",
+    );
+  }
+
+  const { ipAddress, userAgent } = getRequestInfo(request);
+  await logAudit({
+    tenantId: session.tenantId,
+    actorUserId: session.id,
+    action: "mcp.permission.changed",
+    resourceType: "tenant_role_permission",
+    resourceId: role,
+    metadata: {
+      role,
+      mcpAccess: validFeatures.includes("mcp_access"),
+    },
+    ipAddress,
+    userAgent,
+  });
 
   return NextResponse.json({ ok: true, features: validFeatures });
 }

@@ -106,6 +106,35 @@ export function startMockupCompositeWorker(): Worker<MockupJobPayload> {
               mockupWidth = pick.templateMockupItem.mockup.width;
               mockupHeight = pick.templateMockupItem.mockup.height;
             }
+          } else if (parsed.scope === "draft") {
+            const source = await prisma.wizardDraftMockupSource.findFirst({
+              where: {
+                id: parsed.sourceId,
+                draftId: image.mockupJob.draftId,
+              },
+              select: {
+                compositeRegionPx: true,
+                width: true,
+                height: true,
+                mockupLibraryItem: {
+                  select: {
+                    compositeRegionPx: true,
+                    width: true,
+                    height: true,
+                  },
+                },
+              },
+            });
+            if (source) {
+              compositeRegionPx =
+                source.compositeRegionPx ??
+                source.mockupLibraryItem?.compositeRegionPx ??
+                null;
+              mockupWidth =
+                source.mockupLibraryItem?.width ?? source.width;
+              mockupHeight =
+                source.mockupLibraryItem?.height ?? source.height;
+            }
           }
 
           const outputKey = `custom-mockups/renders/${image.mockupJobId}/${mockupImageId}-output.webp`;

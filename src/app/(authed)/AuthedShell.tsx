@@ -17,6 +17,7 @@ import {
   Sparkles,
   Store,
   Truck,
+  UserRound,
   Users,
   Wand2,
   X,
@@ -62,6 +63,11 @@ const NAV_ITEMS: NavItemConfig[] = [
     href: "/ai-hub",
     icon: <Bot size={18} />,
     feature: "ai_hub",
+  },
+  {
+    label: "Account",
+    href: "/account",
+    icon: <UserRound size={18} />,
   },
 ];
 

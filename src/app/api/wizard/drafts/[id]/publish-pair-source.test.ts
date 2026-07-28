@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync("src/app/api/wizard/drafts/[id]/publish/route.ts", "utf8");
+const source = readFileSync("src/lib/wizard/publish-submission.ts", "utf8");
 
-test("publish route creates listings for both design pairs and independent draft designs", () => {
+test("publish service creates listings for both design pairs and independent draft designs", () => {
   assert.match(source, /getIndependentDraftDesigns/);
   assert.match(source, /for \(const pair of draft\.designPairs\)/);
   assert.match(source, /for \(const draftDesign of independentDraftDesigns\)/);
@@ -12,7 +12,7 @@ test("publish route creates listings for both design pairs and independent draft
   assert.match(source, /wizardDraftDesignId/);
 });
 
-test("publish route does not require selected design count to equal pairs times two", () => {
+test("publish service does not require selected design count to equal pairs times two", () => {
   assert.doesNotMatch(
     source,
     /selectedDraftDesigns\.length\s*!==\s*draft\.designPairs\.length\s*\*\s*2/,
@@ -20,14 +20,14 @@ test("publish route does not require selected design count to equal pairs times 
   assert.doesNotMatch(source, /hasUnpairedDraftDesigns/);
 });
 
-test("publish route retries existing failed listings instead of treating them as done", () => {
+test("publish service retries existing failed listings instead of treating them as done", () => {
   assert.match(source, /\["FAILED", "PARTIAL_FAILURE"\]\.includes\(listing\.status\)/);
   assert.match(source, /if \(retryExisting\) \{/);
   assert.match(source, /createPublishAttemptForListing\(\{/);
   assert.match(source, /alreadyPublished:\s*!retryExisting/);
 });
 
-test("publish route does not enqueue a duplicate worker for an existing running listing", () => {
+test("publish service does not enqueue a duplicate worker for an existing running listing", () => {
   assert.match(source, /function hasRunningPublishJob/);
   assert.match(source, /"RETRY_SCHEDULED"/);
   assert.match(source, /if \(hasRunningPublishJob\(listing\)\) return "PUBLISHING"/);

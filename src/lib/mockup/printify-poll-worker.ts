@@ -373,6 +373,10 @@ async function buildCustomRowsForDraft(input: {
         include: { colors: true },
       },
       mockupLibraryPicks: { select: { templateMockupItemId: true, compositeRegionPx: true, colorId: true } },
+      mockupSources: {
+        orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }],
+        include: { mockupLibraryItem: true },
+      },
     },
   });
   if (!draft) return { draftRows: [], templateRows: [], mode: "PRINTIFY" };
@@ -437,13 +441,48 @@ async function buildCustomRowsForDraft(input: {
 
   const renderablePicks = picks.filter(isRenderablePick).map(mapPick);
 
-  const draftRows = buildCustomMockupImageRows({
-    sources: renderablePicks,
+  const temporarySources = draft.mockupSources.flatMap((source) => {
+    const applicableColorIds = source.appliesToAll
+      ? colorIds
+      : source.appliesToColorIds.filter((colorId) => enabledColorSet.has(colorId));
+    return applicableColorIds.map((colorId) => ({
+      id: source.id,
+      colorId,
+      label: source.name,
+      view: source.view,
+      sceneType:
+        source.view === "lifestyle"
+          ? "lifestyle"
+          : source.view === "detail"
+            ? "detail"
+            : "flat_lay",
+      renderMode: "COMPOSITE" as const,
+      outputPath: null,
+      isPrimary: source.isPrimary,
+      sortOrder: source.sortOrder,
+    }));
+  });
+  const temporarySlots = new Set(
+    temporarySources.map((source) => `${source.colorId}|${source.view}`),
+  );
+
+  const temporaryRows = buildCustomMockupImageRows({
+    sources: temporarySources,
     colorsById,
     variantColorLookup: input.variantColorLookup,
     scope: "DRAFT",
     sortOffset: 0,
   });
+  const libraryRows = buildCustomMockupImageRows({
+    sources: renderablePicks.filter(
+      (source) => !temporarySlots.has(`${source.colorId}|${source.view}`),
+    ),
+    colorsById,
+    variantColorLookup: input.variantColorLookup,
+    scope: "DRAFT",
+    sortOffset: 10000,
+  });
+  const draftRows = [...temporaryRows, ...libraryRows];
 
   const templateRows: ReturnType<typeof buildCustomMockupImageRows> = [];
 

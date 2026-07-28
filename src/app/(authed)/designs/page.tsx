@@ -35,7 +35,12 @@ export default async function DesignsPage({
 
   const designs = selectedStore
     ? await prisma.design.findMany({
-        where: { tenantId: session.tenantId, status: "ACTIVE", storeId: selectedStore.id },
+        where: {
+          tenantId: session.tenantId,
+          status: "ACTIVE",
+          scope: "LIBRARY",
+          storeId: selectedStore.id,
+        },
         orderBy: { createdAt: "desc" },
         take: limit,
         select: {
@@ -56,7 +61,12 @@ export default async function DesignsPage({
 
   const total = selectedStore
     ? await prisma.design.count({
-        where: { tenantId: session.tenantId, status: "ACTIVE", storeId: selectedStore.id },
+        where: {
+          tenantId: session.tenantId,
+          status: "ACTIVE",
+          scope: "LIBRARY",
+          storeId: selectedStore.id,
+        },
       })
     : 0;
 

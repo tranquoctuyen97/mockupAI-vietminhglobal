@@ -169,10 +169,7 @@ interface WizardStore {
   pendingPatch: Record<string, unknown>;
 
   loadDraft: (id: string, expand?: string) => Promise<void>;
-  updateDraft: (
-    patch: Record<string, unknown>,
-    options?: { debounce?: boolean },
-  ) => Promise<void>;
+  updateDraft: (patch: Record<string, unknown>, options?: { debounce?: boolean }) => Promise<void>;
   saveDraftImmediately: () => Promise<void>;
   setDraft: (draft: DraftData) => void;
   updateMockupJob: (jobId: string, update: Partial<MockupJob>) => void;
@@ -205,10 +202,7 @@ function areDraftValuesEqual(currentValue: unknown, nextValue: unknown): boolean
     return JSON.stringify(currentValue ?? null) === JSON.stringify(nextValue ?? null);
   }
 
-  if (
-    typeof currentValue === "object" ||
-    typeof nextValue === "object"
-  ) {
+  if (typeof currentValue === "object" || typeof nextValue === "object") {
     return JSON.stringify(currentValue ?? null) === JSON.stringify(nextValue ?? null);
   }
 
@@ -221,131 +215,130 @@ export const useWizardStore = create<WizardStore>((set, get) => {
   let inFlightLoad: { id: string; promise: Promise<void> } | null = null;
 
   return {
-  draft: null,
-  checklist: null,
-  expandedSizes: null,
-  loading: false,
-  saving: false,
-  saveTimer: null,
-  pendingPatch: {},
-  step4SaveHandler: null,
-  setStep4SaveHandler: (handler) => set({ step4SaveHandler: handler }),
+    draft: null,
+    checklist: null,
+    expandedSizes: null,
+    loading: false,
+    saving: false,
+    saveTimer: null,
+    pendingPatch: {},
+    step4SaveHandler: null,
+    setStep4SaveHandler: (handler) => set({ step4SaveHandler: handler }),
 
-  loadDraft: async (id: string, expand?: string) => {
-    // Dedup key includes expand to distinguish slim vs expanded loads
-    const dedupKey = expand ? `${id}:${expand}` : id;
-    // If already loading this exact draft+expand combo, wait for the existing request
-    if (inFlightLoad?.id === dedupKey) {
-      return inFlightLoad.promise;
-    }
+    loadDraft: async (id: string, expand?: string) => {
+      // Dedup key includes expand to distinguish slim vs expanded loads
+      const dedupKey = expand ? `${id}:${expand}` : id;
+      // If already loading this exact draft+expand combo, wait for the existing request
+      if (inFlightLoad?.id === dedupKey) {
+        return inFlightLoad.promise;
+      }
 
-    const promise = (async () => {
-      set({ loading: true });
-      try {
-        const url = expand
-          ? `/api/wizard/drafts/${id}?expand=${encodeURIComponent(expand)}`
-          : `/api/wizard/drafts/${id}`;
-        const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          // GET /api/wizard/drafts/:id now includes checklist (Phase 6.9)
-          const { checklist, sizes, ...draft } = data;
-          set({
-            draft,
-            checklist: checklist ?? null,
-            expandedSizes: sizes?.sizes ?? null,
-            loading: false,
-          });
-        } else {
+      const promise = (async () => {
+        set({ loading: true });
+        try {
+          const url = expand
+            ? `/api/wizard/drafts/${id}?expand=${encodeURIComponent(expand)}`
+            : `/api/wizard/drafts/${id}`;
+          const res = await fetch(url);
+          if (res.ok) {
+            const data = await res.json();
+            // GET /api/wizard/drafts/:id now includes checklist (Phase 6.9)
+            const { checklist, sizes, ...draft } = data;
+            set({
+              draft,
+              checklist: checklist ?? null,
+              expandedSizes: sizes?.sizes ?? null,
+              loading: false,
+            });
+          } else {
+            set({ loading: false });
+          }
+        } catch {
           set({ loading: false });
+        } finally {
+          if (inFlightLoad?.id === dedupKey) inFlightLoad = null;
+        }
+      })();
+
+      inFlightLoad = { id: dedupKey, promise };
+      return promise;
+    },
+
+    updateDraft: async (patch: Record<string, unknown>, options?: { debounce?: boolean }) => {
+      const { draft, saveTimer, pendingPatch } = get();
+      if (!draft) return;
+
+      const changedPatch = filterChangedDraftPatch(
+        draft as unknown as Record<string, unknown>,
+        patch,
+      );
+      if (Object.keys(changedPatch).length === 0) return;
+
+      const newPendingPatch = { ...pendingPatch, ...changedPatch };
+
+      // Optimistic update
+      set({
+        draft: { ...draft, ...changedPatch } as DraftData,
+        pendingPatch: newPendingPatch,
+      });
+
+      if (options?.debounce === false) {
+        return;
+      }
+
+      // Debounce save (1s)
+      if (saveTimer) clearTimeout(saveTimer);
+
+      const timer = setTimeout(async () => {
+        await get().saveDraftImmediately();
+      }, 1000);
+
+      set({ saveTimer: timer });
+    },
+
+    saveDraftImmediately: async () => {
+      const { draft, saveTimer, pendingPatch } = get();
+      if (!draft) return;
+      if (Object.keys(pendingPatch).length === 0) return; // Nothing to save
+
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        set({ saveTimer: null });
+      }
+
+      set({ saving: true });
+      try {
+        const currentPatch = { ...get().pendingPatch };
+        // Clear pending patch before request so new updates can accumulate
+        set({ pendingPatch: {} });
+
+        const res = await fetch(`/api/wizard/drafts/${draft.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(currentPatch),
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          set({ draft: { ...get().draft!, ...updated }, saving: false });
+        } else {
+          // Restore pending patch on failure?
+          set({ saving: false, pendingPatch: { ...currentPatch, ...get().pendingPatch } });
         }
       } catch {
-        set({ loading: false });
-      } finally {
-        if (inFlightLoad?.id === dedupKey) inFlightLoad = null;
+        set({ saving: false });
       }
-    })();
+    },
 
-    inFlightLoad = { id: dedupKey, promise };
-    return promise;
-  },
+    setDraft: (draft: DraftData) => set({ draft }),
 
-  updateDraft: async (patch: Record<string, unknown>, options?: { debounce?: boolean }) => {
-    const { draft, saveTimer, pendingPatch } = get();
-    if (!draft) return;
+    setChecklist: (cl: ChecklistData) => set({ checklist: cl }),
 
-    const changedPatch = filterChangedDraftPatch(
-      draft as unknown as Record<string, unknown>,
-      patch,
-    );
-    if (Object.keys(changedPatch).length === 0) return;
+    updateMockupJob: (jobId: string, update: Partial<MockupJob>) => {
+      const { draft } = get();
+      if (!draft) return;
 
-    const newPendingPatch = { ...pendingPatch, ...changedPatch };
-
-    // Optimistic update
-    set({
-      draft: { ...draft, ...changedPatch } as DraftData,
-      pendingPatch: newPendingPatch
-    });
-
-    if (options?.debounce === false) {
-      return;
-    }
-
-    // Debounce save (1s)
-    if (saveTimer) clearTimeout(saveTimer);
-
-    const timer = setTimeout(async () => {
-      await get().saveDraftImmediately();
-    }, 1000);
-
-    set({ saveTimer: timer });
-  },
-
-  saveDraftImmediately: async () => {
-    const { draft, saveTimer, pendingPatch } = get();
-    if (!draft) return;
-    if (Object.keys(pendingPatch).length === 0) return; // Nothing to save
-
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      set({ saveTimer: null });
-    }
-
-    set({ saving: true });
-    try {
-      const currentPatch = { ...get().pendingPatch };
-      // Clear pending patch before request so new updates can accumulate
-      set({ pendingPatch: {} });
-
-      const res = await fetch(`/api/wizard/drafts/${draft.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(currentPatch),
-      });
-      if (res.ok) {
-        const updated = await res.json();
-        set({ draft: { ...get().draft!, ...updated }, saving: false });
-      } else {
-        // Restore pending patch on failure?
-        set({ saving: false, pendingPatch: { ...currentPatch, ...get().pendingPatch } });
-      }
-    } catch {
-      set({ saving: false });
-    }
-  },
-
-  setDraft: (draft: DraftData) => set({ draft }),
-
-  setChecklist: (cl: ChecklistData) => set({ checklist: cl }),
-
-  updateMockupJob: (jobId: string, update: Partial<MockupJob>) => {
-    const { draft } = get();
-    if (!draft) return;
-
-    const jobs = draft.mockupJobs.map((j) =>
-      j.id === jobId ? { ...j, ...update } : j,
-    );
-    set({ draft: { ...draft, mockupJobs: jobs } });
-  },
-};});
+      const jobs = draft.mockupJobs.map((j) => (j.id === jobId ? { ...j, ...update } : j));
+      set({ draft: { ...draft, mockupJobs: jobs } });
+    },
+  };
+});

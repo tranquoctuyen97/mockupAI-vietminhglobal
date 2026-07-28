@@ -56,5 +56,6 @@ npm --prefix "$CODEX_WEB_DIR" run build:browser
 pm2 startOrReload ecosystem.config.js --only mockupai --update-env
 pm2 startOrReload ecosystem.config.js --only mockupai-ai-hub-gateway --update-env
 pm2 startOrReload ecosystem.config.js --only mockupai-worker --update-env
+pm2 startOrReload ecosystem.config.js --only mockupai-mcp --update-env
 pm2 startOrReload ecosystem.config.js --only mockupai-codex --update-env
 pm2 save

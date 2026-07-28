@@ -1,21 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { FEATURES, hasFeature } from "./roles";
 
-let hasFeature: (
-  tenantId: string,
-  role: string,
-  feature: any,
-  fetchPermissions?: (tenantId: string, role: string) => Promise<Set<string>>,
-) => Promise<boolean>;
-let FEATURES: readonly string[];
-
-test("setup", async () => {
-  const mod = await import("./roles.js");
-  hasFeature = mod.hasFeature;
-  FEATURES = mod.FEATURES;
-});
-
-test("FEATURES contains all 11 expected keys", () => {
+test("FEATURES contains all expected keys", () => {
   assert.ok(FEATURES.includes("stores"));
   assert.ok(FEATURES.includes("designs"));
   assert.ok(FEATURES.includes("wizard"));
@@ -27,7 +14,8 @@ test("FEATURES contains all 11 expected keys", () => {
   assert.ok(FEATURES.includes("integrations"));
   assert.ok(FEATURES.includes("ai_settings"));
   assert.ok(FEATURES.includes("inkhub_config"));
-  assert.equal(FEATURES.length, 11);
+  assert.ok(FEATURES.includes("mcp_access"));
+  assert.equal(FEATURES.length, 14);
 });
 
 test("SUPER_ADMIN always has access", async () => {
