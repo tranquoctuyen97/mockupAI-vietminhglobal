@@ -11,7 +11,7 @@
     "actions": {
       "recommended": true
     },
-    "includes": ["src/**", "start-worker.ts"]
+    "includes": ["src/**", "start-worker.ts", "start-mcp.ts"]
   },
   "linter": {
     "enabled": true,
@@ -45,6 +45,6 @@
     }
   },
   "files": {
-    "includes": ["src/**", "start-worker.ts", "biome.json"]
+    "includes": ["src/**", "start-worker.ts", "start-mcp.ts", "biome.json"]
   }
 }

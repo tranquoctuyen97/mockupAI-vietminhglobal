@@ -1,35 +1,70 @@
 import { NextResponse } from "next/server";
-import { requireFeature } from "@/lib/auth/guards";
-import { prisma } from "@/lib/db";
-import { hashPassword } from "@/lib/auth/password";
-import { logAudit, getRequestInfo } from "@/lib/audit";
 import { z } from "zod";
+import { getRequestInfo, logAudit } from "@/lib/audit";
+import { requireFeature } from "@/lib/auth/guards";
+import { hashPassword } from "@/lib/auth/password";
+import { getPermissionSet } from "@/lib/auth/roles";
+import { prisma } from "@/lib/db";
+import { deriveMcpUserStatus } from "@/lib/mcp/status";
 
 // GET /api/admin/users — List users (paginated)
 export async function GET() {
   const { session: currentUser, response } = await requireFeature("users");
   if (response) return response;
 
-  const users = await prisma.user.findMany({
-    where: { tenantId: currentUser.tenantId },
-    select: {
-      id: true,
-      email: true,
-      role: true,
-      status: true,
-      mustChangePassword: true,
-      createdAt: true,
-      createdBy: true,
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  const [users, adminPermissions] = await Promise.all([
+    prisma.user.findMany({
+      where: { tenantId: currentUser.tenantId },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        status: true,
+        mustChangePassword: true,
+        createdAt: true,
+        createdBy: true,
+        mcpProfile: {
+          select: {
+            status: true,
+            credentials: {
+              select: {
+                status: true,
+                expiresAt: true,
+                revokedAt: true,
+              },
+            },
+            oauthGrants: {
+              select: {
+                expiresAt: true,
+                revokedAt: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    getPermissionSet(currentUser.tenantId, "ADMIN"),
+  ]);
 
-  return NextResponse.json({ users });
+  const hasMcpAccess = adminPermissions.has("mcp_access");
+  return NextResponse.json({
+    users: users.map(({ mcpProfile, ...user }) => ({
+      ...user,
+      mcpStatus: deriveMcpUserStatus({
+        role: user.role,
+        userStatus: user.status,
+        hasMcpAccess,
+        profile: mcpProfile,
+      }),
+    })),
+  });
 }
 
 // POST /api/admin/users — Create user
 const createUserSchema = z.object({
-  email: z.string()
+  email: z
+    .string()
     .transform((v) => v.replace(/^["'\s]+|["'\s]+$/g, "").toLowerCase())
     .pipe(z.string().email("Email không hợp lệ")),
   password: z.string().min(8, "Mật khẩu tối thiểu 8 ký tự"),

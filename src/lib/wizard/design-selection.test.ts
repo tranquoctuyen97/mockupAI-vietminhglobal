@@ -1,16 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  getDraftDesignIds,
-  normalizeDesignIds,
-  sameDesignSelection,
-} from "./design-selection";
+import { getDraftDesignIds, normalizeDesignIds, sameDesignSelection } from "./design-selection";
 
 test("normalizeDesignIds keeps unique ids in order", () => {
-  assert.deepEqual(
-    normalizeDesignIds(["design_1", "design_2", "design_1", "design_3"]),
-    ["design_1", "design_2", "design_3"],
-  );
+  assert.deepEqual(normalizeDesignIds(["design_1", "design_2", "design_1", "design_3"]), [
+    "design_1",
+    "design_2",
+    "design_3",
+  ]);
 });
 
 test("normalizeDesignIds rejects more than eighty designs", () => {
@@ -24,10 +21,7 @@ test("getDraftDesignIds prefers child rows and falls back to legacy designId", (
   assert.deepEqual(
     getDraftDesignIds({
       designId: "legacy_design",
-      draftDesigns: [
-        { designId: "design_1" },
-        { designId: "design_2" },
-      ],
+      draftDesigns: [{ designId: "design_1" }, { designId: "design_2" }],
     }),
     ["design_1", "design_2"],
   );

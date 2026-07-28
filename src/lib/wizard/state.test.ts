@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { sanitizeDraftPatch } from "./state";
@@ -46,10 +46,7 @@ test("latest stale trigger migration tracks current wizard draft columns", () =>
 });
 
 test("getDraft includes mockup job images for review step", () => {
-  const source = readFileSync(
-    join(process.cwd(), "src/lib/wizard/state.ts"),
-    "utf8",
-  );
+  const source = readFileSync(join(process.cwd(), "src/lib/wizard/state.ts"), "utf8");
 
   assert.match(source, /mockupJobs:\s*{/);
   assert.match(source, /include:\s*{\s*images:\s*{/);
@@ -81,65 +78,74 @@ test("wizard draft state accepts designIds patches", () => {
 });
 
 test("getDraft and updateDraft include ordered draftDesigns with design and job images", () => {
-  const source = readFileSync(
-    join(process.cwd(), "src/lib/wizard/state.ts"),
-    "utf8",
-  );
+  const source = readFileSync(join(process.cwd(), "src/lib/wizard/state.ts"), "utf8");
 
-  assert.match(source, /const draftDesignsWithRelationsInclude = {\s*orderBy:\s*{\s*sortOrder:\s*"asc"/);
-  assert.match(source, /draftDesignsWithRelationsInclude[\s\S]*where:\s*{\s*design:\s*{\s*status:\s*"ACTIVE"/);
-  assert.match(source, /draftDesignsWithRelationsInclude[\s\S]*include:\s*{[\s\S]*design:\s*true/);
-  assert.match(source, /draftDesignsWithRelationsInclude[\s\S]*jobs:\s*{[\s\S]*include:\s*{[\s\S]*images:\s*{[\s\S]*orderBy:\s*{\s*sortOrder:\s*"asc"/);
-  assert.equal(
-    source.match(/draftDesigns:\s*draftDesignsWithRelationsInclude/g)?.length,
-    2,
+  assert.match(
+    source,
+    /const draftDesignsWithRelationsInclude = {\s*orderBy:\s*{\s*sortOrder:\s*"asc"/,
   );
-  assert.match(source, /findUniqueOrThrow\(\{[\s\S]*draftDesigns:\s*draftDesignsWithRelationsInclude/);
+  assert.match(
+    source,
+    /draftDesignsWithRelationsInclude[\s\S]*where:\s*{\s*design:\s*{\s*status:\s*"ACTIVE"/,
+  );
+  assert.match(source, /draftDesignsWithRelationsInclude[\s\S]*include:\s*{[\s\S]*design:\s*true/);
+  assert.match(
+    source,
+    /draftDesignsWithRelationsInclude[\s\S]*jobs:\s*{[\s\S]*include:\s*{[\s\S]*images:\s*{[\s\S]*orderBy:\s*{\s*sortOrder:\s*"asc"/,
+  );
+  assert.equal(source.match(/draftDesigns:\s*draftDesignsWithRelationsInclude/g)?.length, 2);
+  assert.match(
+    source,
+    /findUniqueOrThrow\(\{[\s\S]*draftDesigns:\s*draftDesignsWithRelationsInclude/,
+  );
 });
 
 test("updateDraft normalizes legacy designId patches before validation and child sync", () => {
-  const source = readFileSync(
-    join(process.cwd(), "src/lib/wizard/state.ts"),
-    "utf8",
-  );
+  const source = readFileSync(join(process.cwd(), "src/lib/wizard/state.ts"), "utf8");
 
   assert.match(source, /designId:\s*sanitizedDesignId/);
-  assert.match(source, /sanitizedDesignId\s*!==\s*undefined[\s\S]*normalizeDesignIds\(sanitizedDesignId\s*===\s*null\s*\?\s*\[\]\s*:\s*\[sanitizedDesignId\]\)/);
-  assert.match(source, /id:\s*{\s*in:\s*nextDesignIds\s*}[\s\S]*tenantId[\s\S]*status:\s*"ACTIVE"[\s\S]*deletedAt:\s*null/);
-  assert.match(source, /if \(nextDesignIds !== undefined\)[\s\S]*wizardDraftDesign\.deleteMany[\s\S]*wizardDraftDesign\.upsert/);
+  assert.match(
+    source,
+    /sanitizedDesignId\s*!==\s*undefined[\s\S]*normalizeDesignIds\(sanitizedDesignId\s*===\s*null\s*\?\s*\[\]\s*:\s*\[sanitizedDesignId\]\)/,
+  );
+  assert.match(
+    source,
+    /id:\s*{\s*in:\s*nextDesignIds\s*}[\s\S]*tenantId[\s\S]*status:\s*"ACTIVE"[\s\S]*deletedAt:\s*null/,
+  );
+  assert.match(
+    source,
+    /if \(nextDesignIds !== undefined\)[\s\S]*wizardDraftDesign\.deleteMany[\s\S]*wizardDraftDesign\.upsert/,
+  );
 });
 
 test("updateDraft validates selected designs inside transaction and by draft store", () => {
-  const source = readFileSync(
-    join(process.cwd(), "src/lib/wizard/state.ts"),
-    "utf8",
-  );
+  const source = readFileSync(join(process.cwd(), "src/lib/wizard/state.ts"), "utf8");
 
-  assert.match(source, /return prisma\.\$transaction\(async \(tx\) => \{[\s\S]*tx\.design\.findMany/);
+  assert.match(
+    source,
+    /return prisma\.\$transaction\(async \(tx\) => \{[\s\S]*tx\.design\.findMany/,
+  );
   assert.doesNotMatch(source, /await prisma\.design\.findMany/);
   assert.match(source, /storeId:\s*draft\.storeId/);
   assert.match(source, /Select a store before selecting designs/);
 });
 
 test("updateDraft rebuilds design pairs without wiping unchanged aiContent", () => {
-  const source = readFileSync(
-    join(process.cwd(), "src/lib/wizard/state.ts"),
-    "utf8",
-  );
+  const source = readFileSync(join(process.cwd(), "src/lib/wizard/state.ts"), "utf8");
 
   assert.match(source, /const existingByStableKey = new Map/);
   assert.match(source, /existingPairs\.map\(\(pair\) => \[stablePairKey\(pair\), pair\]\)/);
-  assert.match(source, /wizardDraftDesignPair\.update\({[\s\S]*data:\s*{\s*sortOrder:\s*pairRow\.sortOrder\s*}/);
+  assert.match(
+    source,
+    /wizardDraftDesignPair\.update\({[\s\S]*data:\s*{\s*sortOrder:\s*pairRow\.sortOrder\s*}/,
+  );
   assert.match(source, /pairRowsToCreate/);
   assert.match(source, /wizardDraftDesignPair\.deleteMany[\s\S]*wizardDraftDesignPair\.create/);
   assert.doesNotMatch(source, /assertPairingIsPublishable/);
 });
 
 test("updateDraft marks mockups stale when template changes", () => {
-  const source = readFileSync(
-    join(process.cwd(), "src/lib/wizard/state.ts"),
-    "utf8",
-  );
+  const source = readFileSync(join(process.cwd(), "src/lib/wizard/state.ts"), "utf8");
 
   assert.match(source, /templateChanged/);
   assert.match(source, /mockupsStale:\s*true/);
@@ -157,7 +163,9 @@ test("step 1 resets templateId when store changes", () => {
 
 test("multi-design wizard migration backfills child design rows and removes single-listing uniqueness", () => {
   const migrations = readdirSync(join(process.cwd(), "prisma/migrations"))
-    .filter((name) => name.includes("multi_design_wizard") || name.includes("add_multi_design_wizard"))
+    .filter(
+      (name) => name.includes("multi_design_wizard") || name.includes("add_multi_design_wizard"),
+    )
     .sort();
 
   assert.ok(migrations.length > 0, "expected add_multi_design_wizard migration");

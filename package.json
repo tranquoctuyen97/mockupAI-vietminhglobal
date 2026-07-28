@@ -24,7 +24,9 @@
     "mailbox:matrix:checklist": "tsx scripts/verify-rt-gmail-live-matrix.ts checklist",
     "mailbox:matrix:template": "tsx scripts/verify-rt-gmail-live-matrix.ts template",
     "ai-hub:codex-web:sync": "node scripts/sync-codex-web-fork.mjs",
-    "worker": "npx tsx start-worker.ts"
+    "worker": "npx tsx start-worker.ts",
+    "mcp": "tsx start-mcp.ts",
+    "mcp:smoke": "tsx scripts/smoke-mcp-wizard.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -32,6 +34,7 @@
   "dependencies": {
     "@google/genai": "^1.50.1",
     "@hookform/resolvers": "^5.2.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/adapter-pg": "^7.7.0",
     "@prisma/client": "^7.7.0",
     "@resvg/resvg-js": "^2.6.2",

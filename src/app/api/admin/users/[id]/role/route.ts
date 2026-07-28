@@ -3,6 +3,7 @@ import { requireFeature } from "@/lib/auth/guards";
 import { revokeAllSessions } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { logAudit, getRequestInfo } from "@/lib/audit";
+import { suspendMcpProfileForUser } from "@/lib/mcp/profile-service";
 import { z } from "zod";
 
 const roleSchema = z.object({
@@ -56,6 +57,10 @@ export async function PATCH(
       where: { id },
       data: { role: newRole },
     });
+
+    if (targetUser.role === "ADMIN" && newRole !== "ADMIN") {
+      await suspendMcpProfileForUser(id, "ROLE_CHANGED");
+    }
 
     // Revoke sessions so the user re-authenticates with the new role
     await revokeAllSessions(id);

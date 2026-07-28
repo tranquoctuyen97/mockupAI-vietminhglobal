@@ -101,12 +101,14 @@ fi
 
 # Other configs with defaults
 APP_PORT="${PORT:-3000}"
+MCP_PORT="${MCP_PORT:-3101}"
 UPLOAD_PATH="${UPLOAD_DIR:-${SCRIPT_DIR}/uploads}"
 CERTBOT_EMAIL="${ADMIN_EMAIL:-}"
 
 log_ok ".env loaded"
 log_info "Domain:     ${BOLD}$DOMAIN${NC}"
 log_info "Port:       ${BOLD}$APP_PORT${NC}"
+log_info "MCP port:   ${BOLD}$MCP_PORT${NC}"
 log_info "Upload dir: ${BOLD}$UPLOAD_PATH${NC}"
 log_info "Email:      ${BOLD}${CERTBOT_EMAIL:-<chưa set>}${NC}"
 
@@ -124,6 +126,11 @@ fi
 # Validate port is a number
 if [[ ! "$APP_PORT" =~ ^[0-9]+$ ]]; then
   log_err "PORT phải là số: $APP_PORT"
+  ERRORS=$((ERRORS + 1))
+fi
+
+if [[ ! "$MCP_PORT" =~ ^[0-9]+$ ]]; then
+  log_err "MCP_PORT phải là số: $MCP_PORT"
   ERRORS=$((ERRORS + 1))
 fi
 
@@ -192,6 +199,18 @@ NGINX_CONFIG="server {
         alias ${UPLOAD_PATH_SLASH};
         expires 7d;
         add_header Cache-Control \"public, immutable\";
+    }
+
+    # Streamable HTTP MCP server (OAuth and well-known routes stay on Next.js)
+    location = /mcp {
+        proxy_pass http://127.0.0.1:${MCP_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_buffering off;
+        proxy_read_timeout 300s;
     }
 
     # Reverse proxy → Next.js (PM2)

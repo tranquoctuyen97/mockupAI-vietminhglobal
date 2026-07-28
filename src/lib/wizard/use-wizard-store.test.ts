@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  filterChangedDraftPatch,
-  getDraftDesignIdsFromDraft,
-} from "./use-wizard-store";
+import { filterChangedDraftPatch, getDraftDesignIdsFromDraft } from "./use-wizard-store";
 
 test("filterChangedDraftPatch drops structurally unchanged values", () => {
   const draft = {

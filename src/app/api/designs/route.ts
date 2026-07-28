@@ -30,6 +30,7 @@ export async function GET(request: Request) {
   const where = {
     tenantId: session.tenantId,
     status: "ACTIVE" as const,
+    scope: "LIBRARY" as const,
     ...storeFilter,
     ...(q ? { name: { contains: q, mode: "insensitive" as const } } : {}),
   };

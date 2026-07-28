@@ -20,6 +20,7 @@ export interface DraftPatch {
   // Per-color sizes: { colorName → string[] }
   enabledSizesByColor?: Record<string, string[]> | null;
   enabledVariantIdsOverride?: number[];
+  priceBySizeOverride?: Record<string, number> | null;
   placementOverride?: unknown | null;
   aiContent?: unknown | null;
   currentStep?: number;
@@ -35,6 +36,7 @@ const draftPatchKeys = [
   "enabledSizes",
   "enabledSizesByColor",
   "enabledVariantIdsOverride",
+  "priceBySizeOverride",
   "placementOverride",
   "aiContent",
   "currentStep",
@@ -83,7 +85,7 @@ export async function createDraft(tenantId: string) {
   });
 }
 
-async function syncDraftDesignPairs(tx: Prisma.TransactionClient, draftId: string) {
+export async function syncDraftDesignPairs(tx: Prisma.TransactionClient, draftId: string) {
   const selectedDraftDesigns = await tx.wizardDraftDesign.findMany({
     where: { draftId },
     orderBy: { sortOrder: "asc" },
@@ -231,6 +233,7 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
   const {
     designId: sanitizedDesignId,
     designIds: sanitizedDesignIds,
+    priceBySizeOverride: sanitizedPriceBySizeOverride,
     ...draftDataPatch
   } = sanitized;
   const nextDesignIds =
@@ -295,6 +298,13 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
           storeId: draft.storeId,
           status: "ACTIVE",
           deletedAt: null,
+          OR: [
+            { scope: "LIBRARY" },
+            {
+              scope: "TEMPORARY_MCP",
+              draftDesigns: { some: { draftId: id } },
+            },
+          ],
         },
         select: { id: true },
       });
@@ -322,6 +332,12 @@ export async function updateDraft(id: string, tenantId: string, patch: DraftPatc
             ? sanitized.enabledSizesByColor === null
               ? Prisma.JsonNull
               : (sanitized.enabledSizesByColor as Prisma.InputJsonValue)
+            : undefined,
+        priceBySizeOverride:
+          sanitizedPriceBySizeOverride !== undefined
+            ? sanitizedPriceBySizeOverride === null
+              ? Prisma.JsonNull
+              : (sanitizedPriceBySizeOverride as Prisma.InputJsonValue)
             : undefined,
         aiContent:
           sanitized.aiContent !== undefined

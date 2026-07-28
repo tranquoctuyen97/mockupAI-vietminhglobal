@@ -28,6 +28,8 @@ model Tenant {
   mailboxes          Mailbox[]
   responseMetrics    MailboxResponseMetric[]
   aiHubWorkspaces    AiHubWorkspace[]
+  mcpProfiles        McpProfile[]
+  mcpAssetTransfers  McpAssetTransfer[]
 
   @@map("tenants")
 }
@@ -52,6 +54,7 @@ model User {
   mailboxComposerAttachments MailboxComposerAttachment[] @relation("MailboxComposerAttachmentUploadedBy")
   mailboxSkippedSenders      MailboxSkippedSender[] @relation("MailboxSkippedSenderCreatedBy")
   aiHubMemberWorkspaces      AiHubMemberWorkspace[]
+  mcpProfile                 McpProfile?
 
   @@index([tenantId])
   @@index([email, status])
@@ -260,6 +263,7 @@ model Store {
   mockupLibraryItems MockupLibraryItem[]
   mailboxes          Mailbox[]
   responseMetrics    MailboxResponseMetric[]
+  mcpDefaultForProfiles McpProfile[]
 
   @@unique([tenantId, shopifyDomain])
   @@index([tenantId, status])
@@ -423,6 +427,7 @@ model MockupLibraryItem {
   store         Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
   uploadedBy    User?                @relation("MockupLibraryUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
   templateItems TemplateMockupItem[]
+  draftSources  WizardDraftMockupSource[]
 
   @@index([tenantId, storeId, isActive, deletedAt])
   @@index([tenantId, name])
@@ -453,6 +458,11 @@ model TemplateMockupItem {
 // PHASE 2 — Design Library
 // ============================================================
 
+enum DesignScope {
+  LIBRARY
+  TEMPORARY_MCP
+}
+
 model Design {
   id               String       @id @default(cuid())
   tenantId         String       @map("tenant_id")
@@ -468,6 +478,9 @@ model Design {
   fileSizeBytes    Int          @map("file_size_bytes")
   mimeType         String       @map("mime_type")
   status           DesignStatus @default(ACTIVE)
+  scope            DesignScope  @default(LIBRARY)
+  expiresAt        DateTime?    @map("expires_at")
+  sourceUrlRedacted String?     @map("source_url_redacted")
   deletedAt        DateTime?    @map("deleted_at")
   createdAt        DateTime     @default(now()) @map("created_at")
   updatedAt        DateTime     @updatedAt @map("updated_at")
@@ -480,6 +493,8 @@ model Design {
 
   @@index([tenantId, status])
   @@index([tenantId, storeId, status])
+  @@index([tenantId, scope, status])
+  @@index([scope, expiresAt])
   @@index([tenantId, name])
   @@map("designs")
 }
@@ -541,9 +556,40 @@ model WizardDraft {
   templateId         String?                        @map("template_id")
   template           StoreMockupTemplate?           @relation(fields: [templateId], references: [id], onDelete: SetNull)
   mockupLibraryPicks WizardDraftMockupLibraryPick[]
+  mockupSources      WizardDraftMockupSource[]
+  mcpAssetTransfers  McpAssetTransfer[]
 
   @@index([tenantId, updatedAt])
   @@map("wizard_drafts")
+}
+
+model WizardDraftMockupSource {
+  id                  String            @id @default(cuid())
+  draftId             String            @map("wizard_draft_id")
+  name                String
+  storagePath         String?           @map("storage_path")
+  sourceUrlRedacted   String?           @map("source_url_redacted")
+  mockupLibraryItemId String?           @map("mockup_library_item_id")
+  view                MockupLibraryView
+  appliesToColorIds   String[]          @default([]) @map("applies_to_color_ids")
+  appliesToAll        Boolean           @default(false) @map("applies_to_all")
+  compositeRegionPx   Json?             @map("composite_region_px")
+  width               Int
+  height              Int
+  mimeType            String            @map("mime_type")
+  fileSizeBytes       Int               @map("file_size_bytes")
+  isPrimary           Boolean           @default(false) @map("is_primary")
+  sortOrder           Int               @default(0) @map("sort_order")
+  expiresAt           DateTime?         @map("expires_at")
+  createdAt           DateTime          @default(now()) @map("created_at")
+
+  draft             WizardDraft       @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  mockupLibraryItem MockupLibraryItem? @relation(fields: [mockupLibraryItemId], references: [id], onDelete: Restrict)
+
+  @@index([draftId, sortOrder])
+  @@index([expiresAt])
+  @@index([mockupLibraryItemId])
+  @@map("wizard_draft_mockup_sources")
 }
 
 model WizardDraftDesign {
@@ -1380,4 +1426,185 @@ model MailboxResponseMetric {
   @@index([latestAdminReplyAt])
   @@index([latestAdminReplyActorUserId, responseStartedAt])
   @@map("mailbox_response_metrics")
+}
+
+// ============================================================
+// ADMIN-owned Model Context Protocol access
+// ============================================================
+
+enum McpProfileStatus {
+  SETUP_INCOMPLETE
+  ENABLED
+  DISABLED
+  SUSPENDED
+}
+
+enum McpCredentialStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum McpIdempotencyStatus {
+  IN_PROGRESS
+  SUCCEEDED
+}
+
+enum McpAssetTransferStatus {
+  FETCHING
+  READY
+  ATTACHED
+  FAILED
+}
+
+enum McpAssetKind {
+  DESIGN
+  MOCKUP
+}
+
+model McpProfile {
+  id                 String           @id @default(cuid())
+  tenantId           String           @map("tenant_id")
+  ownerUserId        String           @unique @map("owner_user_id")
+  status             McpProfileStatus @default(SETUP_INCOMPLETE)
+  suspensionReason   String?          @map("suspension_reason")
+  version            Int              @default(1)
+  defaultStoreId     String?          @map("default_store_id")
+  toolPreferences    Json?            @map("tool_preferences")
+  enabledAt          DateTime?        @map("enabled_at")
+  resumedAt          DateTime?        @map("resumed_at")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+
+  tenant             Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  owner              User                        @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  defaultStore       Store?                      @relation(fields: [defaultStoreId], references: [id], onDelete: SetNull)
+  credentials        McpCredential[]
+  oauthGrants        McpOAuthGrant[]
+  authorizationCodes McpOAuthAuthorizationCode[]
+  idempotencyRecords McpIdempotencyRecord[]
+  assetTransfers     McpAssetTransfer[]
+
+  @@index([tenantId, status])
+  @@map("mcp_profiles")
+}
+
+model McpCredential {
+  id          String              @id @default(cuid())
+  profileId   String              @map("profile_id")
+  label       String
+  tokenHash   String              @unique @map("token_hash")
+  tokenPrefix String              @map("token_prefix")
+  scopes      String[]
+  status      McpCredentialStatus @default(ACTIVE)
+  expiresAt   DateTime            @map("expires_at")
+  lastUsedAt  DateTime?           @map("last_used_at")
+  revokedAt   DateTime?           @map("revoked_at")
+  createdAt   DateTime            @default(now()) @map("created_at")
+
+  profile McpProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, status])
+  @@map("mcp_credentials")
+}
+
+model McpOAuthClient {
+  id                      String   @id @default(cuid())
+  clientId                String   @unique @map("client_id")
+  clientName              String   @map("client_name")
+  redirectUris            String[] @map("redirect_uris")
+  grantTypes              String[] @map("grant_types")
+  responseTypes           String[] @map("response_types")
+  tokenEndpointAuthMethod String   @default("none") @map("token_endpoint_auth_method")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  authorizationCodes McpOAuthAuthorizationCode[]
+  grants             McpOAuthGrant[]
+
+  @@map("mcp_oauth_clients")
+}
+
+model McpOAuthAuthorizationCode {
+  id                  String    @id @default(cuid())
+  profileId           String    @map("profile_id")
+  oauthClientId       String    @map("oauth_client_id")
+  codeHash            String    @unique @map("code_hash")
+  redirectUri         String    @map("redirect_uri")
+  codeChallenge       String    @map("code_challenge")
+  codeChallengeMethod String    @default("S256") @map("code_challenge_method")
+  scopes              String[]
+  expiresAt           DateTime  @map("expires_at")
+  consumedAt          DateTime? @map("consumed_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  profile McpProfile     @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  client  McpOAuthClient @relation(fields: [oauthClientId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, expiresAt])
+  @@map("mcp_oauth_authorization_codes")
+}
+
+model McpOAuthGrant {
+  id               String    @id @default(cuid())
+  profileId        String    @map("profile_id")
+  oauthClientId    String    @map("oauth_client_id")
+  accessTokenHash  String    @unique @map("access_token_hash")
+  refreshTokenHash String    @unique @map("refresh_token_hash")
+  tokenPrefix      String    @map("token_prefix")
+  scopes           String[]
+  expiresAt        DateTime  @map("expires_at")
+  refreshExpiresAt DateTime  @map("refresh_expires_at")
+  lastUsedAt       DateTime? @map("last_used_at")
+  revokedAt        DateTime? @map("revoked_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  profile McpProfile     @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  client  McpOAuthClient @relation(fields: [oauthClientId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, revokedAt])
+  @@map("mcp_oauth_grants")
+}
+
+model McpIdempotencyRecord {
+  id             String               @id @default(cuid())
+  profileId      String               @map("profile_id")
+  toolName       String               @map("tool_name")
+  idempotencyKey String               @map("idempotency_key")
+  requestHash    String               @map("request_hash")
+  status         McpIdempotencyStatus @default(IN_PROGRESS)
+  response       Json?
+  expiresAt      DateTime             @map("expires_at")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  profile McpProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, toolName, idempotencyKey])
+  @@index([expiresAt])
+  @@map("mcp_idempotency_records")
+}
+
+model McpAssetTransfer {
+  id                 String                 @id @default(cuid())
+  tenantId           String                 @map("tenant_id")
+  profileId          String?                @map("profile_id")
+  draftId            String?                @map("wizard_draft_id")
+  kind               McpAssetKind
+  status             McpAssetTransferStatus @default(FETCHING)
+  storagePath        String?                @map("storage_path")
+  previewPath        String?                @map("preview_path")
+  sourceUrlRedacted  String                 @map("source_url_redacted")
+  attachedResourceId String?                @map("attached_resource_id")
+  expiresAt          DateTime               @map("expires_at")
+  createdAt          DateTime               @default(now()) @map("created_at")
+  updatedAt          DateTime               @updatedAt @map("updated_at")
+
+  tenant  Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  profile McpProfile?  @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  draft   WizardDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
+
+  @@index([status, expiresAt])
+  @@index([tenantId, draftId])
+  @@map("mcp_asset_transfers")
 }

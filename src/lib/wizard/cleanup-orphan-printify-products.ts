@@ -18,15 +18,15 @@ export function shouldCleanupPrintifyDraft(
 ): boolean {
   return Boolean(
     draft.storeId &&
-    draft.printifyDraftProductId &&
-    draft.status === "ABANDONED" &&
-    draft.updatedAt < cutoff,
+      draft.printifyDraftProductId &&
+      draft.status === "ABANDONED" &&
+      draft.updatedAt < cutoff,
   );
 }
 
-export async function cleanupOrphanPrintifyProducts(options: {
-  retentionDays?: number;
-} = {}): Promise<{ cleanedCount: number; errors: string[] }> {
+export async function cleanupOrphanPrintifyProducts(
+  options: { retentionDays?: number } = {},
+): Promise<{ cleanedCount: number; errors: string[] }> {
   const retentionDays = options.retentionDays ?? DEFAULT_RETENTION_DAYS;
   const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
   const errors: string[] = [];
@@ -71,7 +71,7 @@ export async function cleanupOrphanPrintifyProducts(options: {
   try {
     const stores = await prisma.store.findMany({
       where: { printifyShopId: { not: null } },
-      select: { id: true, printifyShopId: true }
+      select: { id: true, printifyShopId: true },
     });
 
     for (const store of stores) {
@@ -80,13 +80,15 @@ export async function cleanupOrphanPrintifyProducts(options: {
         const { client, externalShopId } = await getClientForStore(store.id);
         const res = await client.getProducts(externalShopId, 1);
         if (res.data) {
-          const orphans = res.data.filter((p: any) => p.title.startsWith(DUMMY_PRODUCT_TITLE_PREFIX));
+          const orphans = res.data.filter((p: any) =>
+            p.title.startsWith(DUMMY_PRODUCT_TITLE_PREFIX),
+          );
           for (const orphan of orphans) {
             try {
               await client.deleteProduct(externalShopId, orphan.id);
               cleanedCount++;
             } catch (err) {
-               errors.push(`Failed to clean dummy product ${orphan.id}: ${err}`);
+              errors.push(`Failed to clean dummy product ${orphan.id}: ${err}`);
             }
           }
         }
@@ -95,7 +97,7 @@ export async function cleanupOrphanPrintifyProducts(options: {
       }
     }
   } catch (err) {
-     errors.push(`Failed fetching stores for dummy product cleanup: ${err}`);
+    errors.push(`Failed fetching stores for dummy product cleanup: ${err}`);
   }
 
   return { cleanedCount, errors };

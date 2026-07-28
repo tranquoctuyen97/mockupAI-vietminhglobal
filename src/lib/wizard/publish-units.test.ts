@@ -10,7 +10,11 @@ import {
 
 describe("wizard publish units", () => {
   const draftDesigns = [
-    { id: "dd-light", designId: "design-light", design: { id: "design-light", name: "Lion Light" } },
+    {
+      id: "dd-light",
+      designId: "design-light",
+      design: { id: "design-light", name: "Lion Light" },
+    },
     { id: "dd-dark", designId: "design-dark", design: { id: "design-dark", name: "Lion Dark" } },
     { id: "dd-single", designId: "design-single", design: { id: "design-single", name: "Tiger" } },
   ];
@@ -21,9 +25,10 @@ describe("wizard publish units", () => {
 
   it("derives paired ids and independent draft designs", () => {
     assert.deepEqual([...getPairedDraftDesignIds(designPairs)].sort(), ["dd-dark", "dd-light"]);
-    assert.deepEqual(getIndependentDraftDesigns(draftDesigns, designPairs).map((d) => d.id), [
-      "dd-single",
-    ]);
+    assert.deepEqual(
+      getIndependentDraftDesigns(draftDesigns, designPairs).map((d) => d.id),
+      ["dd-single"],
+    );
   });
 
   it("formats mixed labels", () => {
@@ -36,7 +41,11 @@ describe("wizard publish units", () => {
   it("treats unmatched suffix designs as independent publish units", () => {
     const unmatchedDraftDesigns = [
       { id: "dd-dark", designId: "design-dark", design: { id: "design-dark", name: "Lion Dark" } },
-      { id: "dd-single", designId: "design-single", design: { id: "design-single", name: "Tiger" } },
+      {
+        id: "dd-single",
+        designId: "design-single",
+        design: { id: "design-single", name: "Tiger" },
+      },
     ];
 
     assert.deepEqual(

@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  buildPairRowsFromDraftDesigns,
-  stablePairKey,
-} from "./design-pairs";
+import { buildPairRowsFromDraftDesigns, stablePairKey } from "./design-pairs";
 
 test("buildPairRowsFromDraftDesigns maps selected design ids to draft design ids", () => {
   const rows = buildPairRowsFromDraftDesigns({

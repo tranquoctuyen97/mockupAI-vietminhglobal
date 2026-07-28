@@ -109,6 +109,10 @@ export async function loadMockupGenerationContext(draftId: string, tenantId: str
       mockupLibraryPicks: {
         select: { templateMockupItemId: true, isPrimary: true, sortOrder: true, compositeRegionPx: true, colorId: true },
       },
+      mockupSources: {
+        orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }],
+        include: { mockupLibraryItem: true },
+      },
     },
   });
 
@@ -429,7 +433,33 @@ export async function createCustomMockupJobForDraftDesign(
     },
   });
 
-  // Build source-like entries from picks for the custom mockup image row builder
+  const temporarySources = draft.mockupSources.flatMap((source) => {
+    const applicableColorIds = source.appliesToAll
+      ? colorIds
+      : source.appliesToColorIds.filter((colorId) => enabledColorSet.has(colorId));
+    return applicableColorIds.map((colorId) => ({
+      id: source.id,
+      colorId,
+      label: source.name,
+      view: source.view,
+      sceneType:
+        source.view === "lifestyle"
+          ? "lifestyle"
+          : source.view === "detail"
+            ? "detail"
+            : "flat_lay",
+      renderMode: "COMPOSITE" as const,
+      outputPath: null,
+      isPrimary: source.isPrimary,
+      sortOrder: source.sortOrder,
+    }));
+  });
+  const temporarySlots = new Set(
+    temporarySources.map((source) => `${source.colorId}|${source.view}`),
+  );
+
+  // Build source-like entries from picks for the custom mockup image row builder.
+  // Draft temporary rows own a (color, view) slot; Library picks only fill gaps.
   const pickSources = picks.map((pick) => ({
     id: pick.id,
     colorId: pick.colorId,
@@ -447,8 +477,17 @@ export async function createCustomMockupJobForDraftDesign(
     mockupHeight: pick.templateMockupItem.mockup.height,
   }));
 
-  const draftRows = buildCustomMockupImageRows({
-    sources: pickSources.map((s) => ({
+  const temporaryRows = buildCustomMockupImageRows({
+    sources: temporarySources,
+    colorsById,
+    variantColorLookup,
+    scope: "DRAFT",
+    sortOffset: 0,
+  });
+  const libraryRows = buildCustomMockupImageRows({
+    sources: pickSources
+      .filter((source) => !temporarySlots.has(`${source.colorId}|${source.view}`))
+      .map((s) => ({
       id: s.id,
       colorId: s.colorId,
       label: s.label,
@@ -459,13 +498,15 @@ export async function createCustomMockupJobForDraftDesign(
       isPrimary: s.isPrimary,
       sortOrder: s.sortOrder,
       templateMockupItemId: s.templateMockupItemId,
-    })),
+      })),
     colorsById,
     variantColorLookup,
     scope: "DRAFT",
-    sortOffset: 0,
+    sortOffset: 10000,
   });
   const templateRows: ReturnType<typeof buildCustomMockupImageRows> = [];
+
+  const draftRows = [...temporaryRows, ...libraryRows];
 
   // Draft rows take priority; template rows fill gaps
   const draftColorKeys = new Set(
@@ -651,7 +692,9 @@ async function validateCustomMockupCoverage(
     },
   });
 
-  if (picks.length === 0) {
+  const draftSources = draft.mockupSources ?? [];
+
+  if (picks.length === 0 && draftSources.length === 0) {
     throw new MockupGenerationError(
       "Chưa chọn mockup nào cho listing này.",
       400,
@@ -659,7 +702,12 @@ async function validateCustomMockupCoverage(
     );
   }
 
-  const coveredColorIds = new Set(picks.map((pick) => pick.colorId));
+  const coveredColorIds = new Set([
+    ...picks.map((pick) => pick.colorId),
+    ...draftSources.flatMap((source) =>
+      source.appliesToAll ? draft.enabledColorIds : source.appliesToColorIds,
+    ),
+  ]);
   const missingCustomColors = (draft.store?.colors ?? []).filter(
     (color) => selectedColorIds.has(color.id) && !coveredColorIds.has(color.id),
   );
@@ -694,6 +742,23 @@ async function validateCustomMockupCoverage(
       return !effective;
     });
   });
+
+  for (const source of draftSources) {
+    const applies =
+      source.appliesToAll ||
+      source.appliesToColorIds.some((colorId) => selectedColorIds.has(colorId));
+    const region =
+      normalizeCompositeRegionPx(source.compositeRegionPx) ??
+      normalizeCompositeRegionPx(source.mockupLibraryItem?.compositeRegionPx);
+    if (applies && !region) {
+      throw new MockupGenerationError(
+        `Custom mockup ${source.name} is missing a valid composite region.`,
+        400,
+        "CUSTOM_MOCKUP_MISSING_REGION",
+        { sourceId: source.id },
+      );
+    }
+  }
 
   if (colorsWithNoValidRegion.length > 0) {
     const missingPlacementColorNames = [

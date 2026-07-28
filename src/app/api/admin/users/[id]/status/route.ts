@@ -3,6 +3,7 @@ import { requireFeature } from "@/lib/auth/guards";
 import { revokeAllSessions } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { logAudit, getRequestInfo } from "@/lib/audit";
+import { suspendMcpProfileForUser } from "@/lib/mcp/profile-service";
 import { z } from "zod";
 
 const statusSchema = z.object({
@@ -52,6 +53,7 @@ export async function PATCH(
 
     // Revoke all sessions when disabling
     if (parsed.data.status === "DISABLED") {
+      await suspendMcpProfileForUser(id, "ACCOUNT_DISABLED");
       await revokeAllSessions(id);
     }
 
