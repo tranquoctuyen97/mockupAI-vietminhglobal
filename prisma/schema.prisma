@@ -28,6 +28,7 @@ model Tenant {
   mailboxes          Mailbox[]
   responseMetrics    MailboxResponseMetric[]
   aiHubWorkspaces    AiHubWorkspace[]
+  colorGroupOverrides ColorGroupOverride[]
 
   @@map("tenants")
 }
@@ -302,6 +303,23 @@ model StoreColor {
   @@unique([storeId, name])
   @@index([storeId])
   @@map("store_colors")
+}
+
+model ColorGroupOverride {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  colorName    String   @map("color_name")
+  colorNameKey String   @map("color_name_key")
+  colorGroup   String   @map("color_group")
+  source       String   @default("admin") // admin | legacy_code | legacy_store
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, colorNameKey])
+  @@index([tenantId, colorGroup])
+  @@map("color_group_overrides")
 }
 
 model StoreMockupTemplate {
