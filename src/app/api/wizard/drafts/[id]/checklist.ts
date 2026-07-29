@@ -1,5 +1,6 @@
 import { PRODUCT_DEFAULTS } from "@/lib/config/runtime-controls";
 import { resolveColorGroups, type EffectiveColorGroup } from "@/lib/designs/color-classifier";
+import { loadColorGroupOverrideMap } from "@/lib/designs/color-group-overrides";
 import { applyEffectivePrintifyColorHexes } from "@/lib/designs/effective-color-hex";
 import { prisma } from "@/lib/db";
 import { getLatestJobByDraftDesignId } from "@/lib/mockup/multi-design";
@@ -34,6 +35,9 @@ export async function buildChecklist(draft: any) {
     : [];
   const effectiveStoreColors = applyEffectivePrintifyColorHexes(storeColors, printifyColorHexes);
   const selectedColors = effectiveStoreColors.filter((color) => selectedColorIds.has(color.id));
+  const globalColorGroupOverrides = draft.tenantId
+    ? await loadColorGroupOverrideMap(draft.tenantId)
+    : new Map<string, EffectiveColorGroup>();
   const latestJobsByDesign = getLatestJobByDraftDesignId(
     (draft.mockupJobs ?? []) as Array<{
       id: string;
@@ -76,6 +80,7 @@ export async function buildChecklist(draft: any) {
         hex: c.hex,
         colorGroup: (c as any).colorGroup ?? "auto",
       })),
+      globalColorGroupOverrides,
     );
   }
 

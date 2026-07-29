@@ -12,6 +12,7 @@ import { isPublishDryRun, PRODUCT_DEFAULTS } from "@/lib/config/runtime-controls
 import { decrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
 import { classifyColorHex, resolveColorGroups } from "@/lib/designs/color-classifier";
+import { loadColorGroupOverrideMap } from "@/lib/designs/color-group-overrides";
 import { applyEffectivePrintifyColorHexes } from "@/lib/designs/effective-color-hex";
 import {
   normalizeCompositeRegionPx,
@@ -399,6 +400,7 @@ export async function runPublishWorker(
   const publishChannelId = `publish:${listingId}`;
   const draftChannelId = draftId; // Also emit to draft events for Step 5 review page
   let draftDesignIdForEvents: string | null = null;
+  const globalColorGroupOverrides = await loadColorGroupOverrideMap(tenantId);
 
   const emitEvent = (type: string, data: Record<string, unknown> = {}) => {
     const payload = { ...data, listingId, draftId, draftDesignId: draftDesignIdForEvents };
@@ -1099,7 +1101,8 @@ export async function runPrintifyStage(
         colorNameToId.set(c.name.trim().toLowerCase(), c.id);
       }
 
-      const colorGroups = resolveColorGroups(effectiveStoreColors);
+      const globalColorGroupOverrides = await loadColorGroupOverrideMap(store.tenantId);
+      const colorGroups = resolveColorGroups(effectiveStoreColors, globalColorGroupOverrides);
 
       const lightVariantIds: number[] = [];
       const darkVariantIds: number[] = [];
@@ -1359,6 +1362,7 @@ async function runPrintifyShopifyChannelPublish(input: {
     retryOwner,
     emitEvent,
   } = input;
+  const globalColorGroupOverrides = await loadColorGroupOverrideMap(store.tenantId);
   const printifyJob = listing.publishJobs.find((job: any) => job.stage === "PRINTIFY");
   const shopifyJob = listing.publishJobs.find((job: any) => job.stage === "SHOPIFY");
 
@@ -1455,6 +1459,7 @@ async function runPrintifyShopifyChannelPublish(input: {
                   draftDesign?.printifyDraftProductId ??
                   draft.printifyDraftProductId ??
                   null,
+                globalColorGroupOverrides,
               });
             })();
         const printifyRecoveryData = publishInput ? buildPrintifyRecoveryData(publishInput) : null;
@@ -2376,6 +2381,7 @@ async function resolvePrintifyProductPublishInput(input: {
   printifyClient: Awaited<ReturnType<typeof getClientForStore>>["client"];
   externalShopId: number;
   productId: string | null;
+  globalColorGroupOverrides: Awaited<ReturnType<typeof loadColorGroupOverrideMap>>;
 }): Promise<{
   productId: string | null;
   blueprintId: number;
@@ -2504,7 +2510,10 @@ async function resolvePrintifyProductPublishInput(input: {
     for (const color of effectiveStoreColors) {
       colorNameToId.set(color.name.trim().toLowerCase(), color.id);
     }
-    const colorGroups = resolveColorGroups(effectiveStoreColors);
+    const colorGroups = resolveColorGroups(
+      effectiveStoreColors,
+      input.globalColorGroupOverrides,
+    );
     const lightVariantIds: number[] = [];
     const darkVariantIds: number[] = [];
 

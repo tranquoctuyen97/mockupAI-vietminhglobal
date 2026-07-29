@@ -1,6 +1,8 @@
 import type { Prisma } from "@prisma/client";
 import { isMockupFallbackForcedForDev } from "@/lib/config/runtime-controls";
 import { prisma } from "@/lib/db";
+import type { EffectiveColorGroup } from "@/lib/designs/color-classifier";
+import { loadColorGroupOverrideMap } from "@/lib/designs/color-group-overrides";
 import { applyEffectivePrintifyColorHexes } from "@/lib/designs/effective-color-hex";
 import { normalizeCompositeRegionPx } from "@/lib/mockup/custom-library";
 import {
@@ -67,6 +69,8 @@ export type PreparedMockupGeneration = {
   variantColorLookup: Map<number, { colorName: string }>;
   /** Store colors with Printify cache hex applied, matching wizard UI grouping */
   effectiveStoreColors: NonNullable<MockupGenerationContext["draft"]["store"]>["colors"];
+  /** Tenant-global manual color group rules keyed by normalized color name */
+  globalColorGroupOverrides: Map<string, EffectiveColorGroup>;
 };
 
 export async function loadMockupGenerationContext(draftId: string, tenantId: string) {
@@ -253,6 +257,7 @@ export async function prepareMockupGeneration(
     draft.store?.colors ?? [],
     printifyColorHexes,
   );
+  const globalColorGroupOverrides = await loadColorGroupOverrideMap(context.tenantId);
 
   // For Printify path only: validate that selected colors exist in Printify catalog
   if (!isCustom) {
@@ -286,6 +291,7 @@ export async function prepareMockupGeneration(
     isCustom,
     variantColorLookup,
     effectiveStoreColors,
+    globalColorGroupOverrides,
   };
 }
 
@@ -303,6 +309,7 @@ export async function createMockupJobForDraftDesign(
     context,
     draftDesign.id,
     prepared.effectiveStoreColors,
+    prepared.globalColorGroupOverrides,
   );
   const variantIds = resolveVariantIdsForColorFilter({
     enabledVariantIds: prepared.enabledVariantIds,
@@ -401,6 +408,7 @@ export async function createCustomMockupJobForDraftDesign(
     context,
     draftDesign.id,
     prepared.effectiveStoreColors,
+    prepared.globalColorGroupOverrides,
   );
 
   // Reuse variant-color lookup from prepare step (avoids duplicate Printify API call)
@@ -582,6 +590,7 @@ function getColorFilterForDraftDesign(
   context: MockupGenerationContext,
   draftDesignId: string | null,
   storeColors = context.draft.store?.colors ?? [],
+  globalColorGroupOverrides: Map<string, EffectiveColorGroup> = new Map(),
 ): PairColorFilterResult {
   const { draft } = context;
   const filter = resolveColorFilterForDraftDesign({
@@ -589,6 +598,7 @@ function getColorFilterForDraftDesign(
     selectedColorIds: draft.enabledColorIds,
     storeColors,
     pairs: draft.designPairs ?? [],
+    globalColorGroupOverrides,
   });
 
   assertColorFilterHasColors(filter);

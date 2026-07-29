@@ -3,7 +3,11 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { resolveColorGroups, type EffectiveColorGroup } from "@/lib/designs/color-classifier";
+import {
+  normalizeColorNameKey,
+  resolveColorGroups,
+  type EffectiveColorGroup,
+} from "@/lib/designs/color-classifier";
 import { useWizardStore } from "@/lib/wizard/use-wizard-store";
 import { useAuthedUser } from "@/lib/auth/user-context";
 
@@ -972,14 +976,17 @@ export default function Step3PreviewPage() {
     updateDraft({ enabledColorIds: Array.from(next) });
   };
 
-  const updateColorGroup = async (colorId: string, colorGroup: StoreColorGroup) => {
-    if (!draft?.storeId) return;
+  const updateColorGroup = async (colorName: string, colorGroup: StoreColorGroup) => {
     const previousStoreColors = storeColors;
     const applyColorGroup = <T extends { id: string; colorGroup?: StoreColorGroup | null }>(
       colors: T[],
     ) =>
       colors.map((color) =>
-        color.id === colorId ? { ...color, colorGroup } : color,
+        "name" in color &&
+        typeof color.name === "string" &&
+        normalizeColorNameKey(color.name) === normalizeColorNameKey(colorName)
+          ? { ...color, colorGroup }
+          : color,
       );
 
     setStoreColors((current) => applyColorGroup(current));
@@ -994,10 +1001,10 @@ export default function Step3PreviewPage() {
     );
 
     try {
-      const res = await fetch(`/api/stores/${draft.storeId}/colors/${colorId}/group`, {
+      const res = await fetch("/api/admin/color-groups", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ colorGroup }),
+        body: JSON.stringify({ colorName, colorGroup }),
       });
       if (!res.ok) throw new Error("Failed to update color group");
     } catch {
@@ -1520,7 +1527,7 @@ export default function Step3PreviewPage() {
                       className="input"
                       value={color.colorGroup ?? "auto"}
                       onChange={(event) => {
-                        void updateColorGroup(color.id, event.target.value as StoreColorGroup);
+                        void updateColorGroup(color.name, event.target.value as StoreColorGroup);
                       }}
                       style={{ height: 34, fontSize: "0.75rem", padding: "0 8px" }}
                     >

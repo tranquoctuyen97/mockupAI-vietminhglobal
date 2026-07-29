@@ -15,23 +15,21 @@
 
 import { NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
+import {
+  loadColorGroupOverrideMap,
+  resolveEffectiveColorGroupValue,
+} from "@/lib/designs/color-group-overrides";
 import { prisma } from "@/lib/db";
 import { enrichColorHex } from "@/lib/printify/color-hex";
 import {
   loadTemplateDefaultCollections,
   loadTemplateDefaultTags,
 } from "@/lib/stores/store-service";
-import {
-  getTemplateReadiness,
-  getTemplateReadinessLabel,
-} from "@/lib/stores/template-readiness";
+import { getTemplateReadiness, getTemplateReadinessLabel } from "@/lib/stores/template-readiness";
 
 export const runtime = "nodejs";
 
-export async function GET(
-  _request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await validateSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -85,26 +83,34 @@ export async function GET(
       }
     }),
   );
-  const defaultTagsByTemplateId = await loadTemplateDefaultTags(
-    store.templates.map((template) => template.id),
-  );
-  const defaultCollectionsByTemplateId = await loadTemplateDefaultCollections(
-    store.templates.map((template) => template.id),
-  );
+  const [defaultTagsByTemplateId, defaultCollectionsByTemplateId, globalColorGroupOverrides] =
+    await Promise.all([
+      loadTemplateDefaultTags(store.templates.map((template) => template.id)),
+      loadTemplateDefaultCollections(store.templates.map((template) => template.id)),
+      loadColorGroupOverrideMap(session.tenantId),
+    ]);
 
   // Shape templates
   const templates = store.templates.map((template) => {
     const readiness = getTemplateReadiness(template);
     const customMockupCountByColorId = new Map<string, number>();
     for (const item of template.mockupItems) {
-      const colorIds = Array.isArray(item.appliesToColorIds) ? item.appliesToColorIds.filter((v): v is string => typeof v === "string") : [];
+      const colorIds = Array.isArray(item.appliesToColorIds)
+        ? item.appliesToColorIds.filter((v): v is string => typeof v === "string")
+        : [];
       if (colorIds.length === 0) {
         for (const entry of template.colors) {
-          customMockupCountByColorId.set(entry.color.id, (customMockupCountByColorId.get(entry.color.id) ?? 0) + 1);
+          customMockupCountByColorId.set(
+            entry.color.id,
+            (customMockupCountByColorId.get(entry.color.id) ?? 0) + 1,
+          );
         }
       } else {
         for (const colorId of colorIds) {
-          customMockupCountByColorId.set(colorId, (customMockupCountByColorId.get(colorId) ?? 0) + 1);
+          customMockupCountByColorId.set(
+            colorId,
+            (customMockupCountByColorId.get(colorId) ?? 0) + 1,
+          );
         }
       }
     }
@@ -127,7 +133,10 @@ export async function GET(
       enabledVariantIds: template.enabledVariantIds,
       enabledSizes: template.enabledSizes,
       // Per-color size map; null means use enabledSizes as global fallback
-      enabledSizesByColor: (template.enabledSizesByColor ?? null) as Record<string, string[]> | null,
+      enabledSizesByColor: (template.enabledSizesByColor ?? null) as Record<
+        string,
+        string[]
+      > | null,
       defaultPlacement: template.defaultPlacement,
       readiness: {
         ready: readiness.ready,
@@ -137,15 +146,16 @@ export async function GET(
       colors: template.colors.map((entry) => ({
         id: entry.color.id,
         name: entry.color.name,
-        hex:
-          cacheHexMap.get(entry.color.name) ||
-          enrichColorHex(entry.color.name, entry.color.hex),
+        hex: cacheHexMap.get(entry.color.name) || enrichColorHex(entry.color.name, entry.color.hex),
         enabled: entry.color.enabled,
-        colorGroup: entry.color.colorGroup,
+        colorGroup: resolveEffectiveColorGroupValue({
+          colorName: entry.color.name,
+          storeColorGroup: entry.color.colorGroup,
+          globalOverrides: globalColorGroupOverrides,
+        }),
         sortOrder: entry.sortOrder,
         customMockupCount: customMockupCountByColorId.get(entry.color.id) ?? 0,
-        hasCustomMockup:
-          (customMockupCountByColorId.get(entry.color.id) ?? 0) > 0,
+        hasCustomMockup: (customMockupCountByColorId.get(entry.color.id) ?? 0) > 0,
       })),
     };
   });
@@ -156,11 +166,18 @@ export async function GET(
     name: c.name,
     hex: enrichColorHex(c.name, c.hex),
     enabled: c.enabled,
-    colorGroup: c.colorGroup,
+    colorGroup: resolveEffectiveColorGroupValue({
+      colorName: c.name,
+      storeColorGroup: c.colorGroup,
+      globalOverrides: globalColorGroupOverrides,
+    }),
     sortOrder: c.sortOrder,
   }));
 
-  return NextResponse.json({ templates, colors }, {
-    headers: { "Cache-Control": "private, max-age=30" },
-  });
+  return NextResponse.json(
+    { templates, colors },
+    {
+      headers: { "Cache-Control": "private, max-age=30" },
+    },
+  );
 }
