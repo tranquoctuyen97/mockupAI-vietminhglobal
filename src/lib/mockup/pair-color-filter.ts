@@ -22,6 +22,7 @@ export function resolveColorFilterForDraftDesign(input: {
   selectedColorIds: string[];
   storeColors: PairColorFilterColor[];
   pairs: PairColorFilterPair[];
+  globalColorGroupOverrides?: Map<string, EffectiveColorGroup>;
 }): PairColorFilterResult {
   if (!input.draftDesignId) {
     return { colorIds: input.selectedColorIds, colorGroup: null };
@@ -39,7 +40,10 @@ export function resolveColorFilterForDraftDesign(input: {
   const colorGroup: EffectiveColorGroup =
     pair.lightDraftDesignId === input.draftDesignId ? "light" : "dark";
   const selectedColorIdSet = new Set(input.selectedColorIds);
-  const colorGroups = resolveColorGroups(input.storeColors);
+  const colorGroups = resolveColorGroups(
+    input.storeColors,
+    input.globalColorGroupOverrides,
+  );
   const colorIds = input.storeColors
     .filter((color) => selectedColorIdSet.has(color.id) && colorGroups.get(color.id) === colorGroup)
     .map((color) => color.id);

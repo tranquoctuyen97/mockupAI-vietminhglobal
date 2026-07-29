@@ -15,12 +15,13 @@ test("store color group route validates tenant-owned color and allowed values", 
   assert.match(source, /data:\s*{\s*colorGroup\s*}/);
 });
 
-test("wizard config exposes colorGroup for template and store colors", () => {
+test("wizard config exposes globally resolved colorGroup for template and store colors", () => {
   const source = readFileSync(
     join(process.cwd(), "src/app/api/stores/[id]/wizard-config/route.ts"),
     "utf8",
   );
 
-  assert.match(source, /colorGroup:\s*entry\.color\.colorGroup/);
-  assert.match(source, /colorGroup:\s*c\.colorGroup/);
+  assert.match(source, /loadColorGroupOverrideMap\(session\.tenantId\)/);
+  assert.match(source, /resolveEffectiveColorGroupValue\({[\s\S]*colorName:\s*entry\.color\.name/);
+  assert.match(source, /resolveEffectiveColorGroupValue\({[\s\S]*colorName:\s*c\.name/);
 });

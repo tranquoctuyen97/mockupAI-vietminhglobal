@@ -1,8 +1,10 @@
 export type EffectiveColorGroup = "light" | "dark";
 
-const AUTO_GROUP_OVERRIDES = new Map<string, EffectiveColorGroup>([
-  ["heather mauve", "dark"],
-]);
+export type ColorGroupOverrideMap = Map<string, EffectiveColorGroup>;
+
+export function normalizeColorNameKey(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
 
 export function classifyColorHex(hex: string): EffectiveColorGroup {
   const normalized = hex.trim();
@@ -19,14 +21,19 @@ export function classifyColorHex(hex: string): EffectiveColorGroup {
 
 export function resolveColorGroups(
   colors: Array<{ id: string; name?: string; hex: string; colorGroup: string }>,
+  globalOverrides: ColorGroupOverrideMap = new Map(),
 ): Map<string, EffectiveColorGroup> {
   const result = new Map<string, EffectiveColorGroup>();
   for (const color of colors) {
-    if (color.colorGroup === "light" || color.colorGroup === "dark") {
+    const nameOverride = color.name
+      ? globalOverrides.get(normalizeColorNameKey(color.name))
+      : undefined;
+    if (nameOverride) {
+      result.set(color.id, nameOverride);
+    } else if (color.colorGroup === "light" || color.colorGroup === "dark") {
       result.set(color.id, color.colorGroup);
     } else {
-      const nameOverride = AUTO_GROUP_OVERRIDES.get(color.name?.trim().toLowerCase() ?? "");
-      result.set(color.id, nameOverride ?? classifyColorHex(color.hex));
+      result.set(color.id, classifyColorHex(color.hex));
     }
   }
   return result;

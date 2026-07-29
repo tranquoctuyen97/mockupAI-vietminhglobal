@@ -81,6 +81,13 @@ const ADMIN_ITEMS: NavItemConfig[] = [
     feature: "ai_settings",
   },
   {
+    label: "Color Matching",
+    href: "/admin/color-groups",
+    icon: <Palette size={18} />,
+    adminOnly: true,
+    feature: "stores",
+  },
+  {
     label: "AI Hub Admin",
     href: "/admin/ai-hub",
     icon: <Bot size={18} />,
