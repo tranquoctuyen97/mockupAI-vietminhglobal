@@ -64,6 +64,20 @@ describe("mailbox proxy source", () => {
     expect(functionBody(source, "handleReportConversationSpam")).toContain("isUnread: false");
   });
 
+  it("archives a conversation by removing Gmail Inbox and the app Inbox label", () => {
+    const source = readFileSync("src/app/api/mailbox-proxy/[...path]/route.ts", "utf8");
+    const body = functionBody(source, "handleArchiveConversation");
+
+    expect(source).toContain('proxyPath.match(/^\\/conversations\\/([^/]+)\\/archive$/)');
+    expect(source).toContain("return handleArchiveConversation(request, session.tenantId, session.id, archiveMatch[1])");
+    expect(body).toContain("archiveThread(conversation.gmailThreadId)");
+    expect(body).toContain('type: "INBOX"');
+    expect(body).toContain("conversationLabel.deleteMany");
+    expect(body).not.toContain("isUnread: false");
+    expect(body).toContain('action: "mailbox.archive"');
+    expect(body).toContain('action: "archive"');
+  });
+
   it("allows Gmail-only conversations to reply without an RT ticket route", () => {
     const source = readFileSync("src/app/api/mailbox-proxy/[...path]/route.ts", "utf8");
     const body = functionBody(source, "handleReply");

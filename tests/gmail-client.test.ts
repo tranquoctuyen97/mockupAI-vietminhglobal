@@ -558,6 +558,40 @@ describe("Gmail IMAP adapter", () => {
     expect(client.messageFlagsRemove).toHaveBeenCalledWith([1], ["\\Inbox"], { uid: true, useLabels: true });
   });
 
+  it("archives a known Gmail thread by removing Inbox without changing read state", async () => {
+    const client = mockClient({
+      fetchAll: vi.fn().mockResolvedValue([
+        {
+          uid: 1,
+          emailId: "msg-1",
+          threadId: "thread-1",
+          internalDate: new Date("2026-06-01"),
+          flags: new Set<string>(["\\Seen"]),
+          labels: new Set(["\\Inbox", "\\Important"]),
+          headers: Buffer.from("Message-ID: <one@example.com>\r\n"),
+        },
+        {
+          uid: 2,
+          emailId: "msg-2",
+          threadId: "thread-1",
+          internalDate: new Date("2026-06-01"),
+          flags: new Set<string>(),
+          labels: new Set(["\\Important"]),
+          headers: Buffer.from("Message-ID: <two@example.com>\r\n"),
+        },
+      ]),
+    });
+    const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, () => client as never);
+
+    await adapter.archiveThread("thread-1");
+
+    expect(client.getMailboxLock).toHaveBeenCalledWith("[Gmail]/All Mail");
+    expect(client.search).toHaveBeenCalledWith({ threadId: "thread-1" }, { uid: true });
+    expect(client.messageFlagsRemove).toHaveBeenCalledWith([1], ["\\Inbox"], { uid: true, useLabels: true });
+    expect(client.messageFlagsRemove).not.toHaveBeenCalledWith([2], ["\\Inbox"], expect.anything());
+    expect(client.messageFlagsAdd).not.toHaveBeenCalledWith(expect.anything(), ["\\Seen"], expect.anything());
+  });
+
   it("moves scanned Inbox UIDs to Spam without marking them read", async () => {
     const client = mockClient();
     const adapter = createGmailAdapter({ email: "support@example.com", appPassword: "secret" }, () => client as never);

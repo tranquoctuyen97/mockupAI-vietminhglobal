@@ -512,6 +512,26 @@ export function createGmailAdapter(
       }
     }),
 
+    archiveThread: (gmailThreadId: string) => withClient(async (connection) => {
+      if (!gmailThreadId) throw new Error("gmail_thread_id_required");
+      const allMail = (await connection.list()).find((mailbox) => mailbox.specialUse === "\\All")?.path ?? DEFAULT_ALL_MAIL;
+      const lock = await connection.getMailboxLock(allMail);
+      try {
+        const uids = await connection.search({ threadId: gmailThreadId }, { uid: true });
+        if (!uids || uids.length === 0) return;
+        const fetched = await connection.fetchAll(uids, FETCH_METADATA, { uid: true });
+        const inboxUids = fetched
+          .filter((message) => [...(message.labels ?? [])].some((label) => isInboxLabel(label)))
+          .map((message) => Number(message.uid));
+
+        if (inboxUids.length > 0) {
+          await connection.messageFlagsRemove(inboxUids, ["\\Inbox"], { uid: true, useLabels: true });
+        }
+      } finally {
+        lock.release();
+      }
+    }),
+
     moveInboxMessagesToSpam: (uids: number[]) => withClient(async (connection) => {
       const deduped = [...new Set(uids.filter((uid) => Number.isInteger(uid) && uid > 0))];
       if (deduped.length === 0) return;

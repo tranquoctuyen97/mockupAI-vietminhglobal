@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -425,6 +426,67 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
       setPendingConversationActionId(null);
     }
   }, [clearConversationPageCache, pendingConversationActionId, selectedMailbox, selectedStoreId, syncConversationUnreadState]);
+
+  const archiveConversation = useCallback(async (conv: Conversation) => {
+    if (!selectedStoreId || !selectedMailbox) return;
+    const actionId = `archive:${conv.id}`;
+    if (pendingConversationActionId) return;
+    const conversationInInbox = (conv.labels ?? []).some((label) => label.type === "INBOX" && label.state === "ACTIVE");
+    setPendingConversationActionId(actionId);
+    const toastId = toast.loading("Archiving...");
+    try {
+      await apiFetch(
+        `/api/mailbox-proxy/conversations/${conv.id}/archive?storeId=${encodeURIComponent(selectedStoreId)}&mailboxId=${encodeURIComponent(selectedMailbox.id)}`,
+        { method: "POST" },
+      );
+      clearConversationPageCache();
+      if (isInboxView) {
+        setConversations((items) => items.filter((item) => item.id !== conv.id));
+        setSelectedConv((current) => (current?.id === conv.id ? null : current));
+        if (selectedConv?.id === conv.id) {
+          setThreads([]);
+          setReplyText("");
+          setComposerAttachments([]);
+        }
+        setPageInfo((current) =>
+          current
+            ? { ...current, totalElements: Math.max(0, current.totalElements - 1) }
+            : current,
+        );
+      }
+      if (conversationInInbox && conv.unread) {
+        setSelectedMailbox((current) =>
+          current
+            ? {
+                ...current,
+                unreadCount:
+                  typeof current.unreadCount === "number"
+                    ? Math.max(0, current.unreadCount - 1)
+                    : current.unreadCount,
+              }
+            : current,
+        );
+        setMailboxes((items) =>
+          items.map((item) =>
+            item.id === selectedMailbox.id
+              ? {
+                  ...item,
+                  unreadCount:
+                    typeof item.unreadCount === "number"
+                      ? Math.max(0, item.unreadCount - 1)
+                      : item.unreadCount,
+                }
+              : item,
+          ),
+        );
+      }
+      toast.success("Archived", { id: toastId });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Khong the archive email", { id: toastId });
+    } finally {
+      setPendingConversationActionId(null);
+    }
+  }, [clearConversationPageCache, isInboxView, pendingConversationActionId, selectedMailbox, selectedConv?.id, selectedStoreId]);
 
   const reportConversationSpam = useCallback(async (conv: Conversation) => {
     if (!selectedStoreId || !selectedMailbox) return;
@@ -1081,6 +1143,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
                 onSaveLabels={(conversation, labelIds) => void saveConversationLabels(conversation, labelIds)}
                 onMarkRead={(conversation) => void markConversationRead(conversation)}
                 onMarkUnread={(conversation) => void markConversationUnread(conversation)}
+                onArchive={(conversation) => void archiveConversation(conversation)}
                 onReportSpam={(conversation) => void reportConversationSpam(conversation)}
                 onDelete={(conversation) => void deleteConversation(conversation)}
                 onSkipSender={(conversation) => void skipConversationSender(conversation)}
@@ -1673,6 +1736,7 @@ function ConversationList({
   onSaveLabels,
   onMarkRead,
   onMarkUnread,
+  onArchive,
   onReportSpam,
   onDelete,
   onSkipSender,
@@ -1693,6 +1757,7 @@ function ConversationList({
   onSaveLabels: (conversation: Conversation, labelIds: string[]) => void;
   onMarkRead: (conversation: Conversation) => void;
   onMarkUnread: (conversation: Conversation) => void;
+  onArchive: (conversation: Conversation) => void;
   onReportSpam: (conversation: Conversation) => void;
   onDelete: (conversation: Conversation) => void;
   onSkipSender: (conversation: Conversation) => void;
@@ -1769,6 +1834,9 @@ function ConversationList({
           </button>
           <button type="button" style={bulkActionButton} onClick={() => selectedConversations.forEach(onMarkUnread)}>
             Mark unread
+          </button>
+          <button type="button" style={bulkActionButton} onClick={() => selectedConversations.forEach(onArchive)}>
+            Archive
           </button>
           <button
             type="button"
@@ -1851,6 +1919,7 @@ function ConversationList({
               onSaveLabels={(labelIds) => onSaveLabels(conversation, labelIds)}
               onMarkRead={() => onMarkRead(conversation)}
               onMarkUnread={() => onMarkUnread(conversation)}
+              onArchive={() => onArchive(conversation)}
               onReportSpam={() => onReportSpam(conversation)}
               onDelete={() => onDelete(conversation)}
               onSkipSender={() => onSkipSender(conversation)}
@@ -1905,6 +1974,7 @@ function ConversationRow({
   onSaveLabels,
   onMarkRead,
   onMarkUnread,
+  onArchive,
   onReportSpam,
   onDelete,
   onSkipSender,
@@ -1924,6 +1994,7 @@ function ConversationRow({
   onSaveLabels: (labelIds: string[]) => void;
   onMarkRead: () => void;
   onMarkUnread: () => void;
+  onArchive: () => void;
   onReportSpam: () => void;
   onDelete: () => void;
   onSkipSender: () => void;
@@ -1931,6 +2002,8 @@ function ConversationRow({
   const [labelQuery, setLabelQuery] = useState("");
   const [draftLabelIds, setDraftLabelIds] = useState<string[]>([]);
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [menuSize, setMenuSize] = useState<{ width: number; height: number }>({ width: 300, height: 520 });
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const [notesOpen, setNotesOpen] = useState(false);
   const contactName = displayMailboxIdentity(conversation);
   const rowLabels = conversation.labels ?? [];
@@ -1953,8 +2026,13 @@ function ConversationRow({
       && !label.name.startsWith("[Gmail]")
       && (!query || label.name.toLocaleLowerCase("en-US").includes(query));
   });
-  const menuLeft = menuPosition ? Math.max(8, Math.min(menuPosition.x, window.innerWidth - 312)) : 8;
-  const menuTop = menuPosition ? Math.max(8, Math.min(menuPosition.y, window.innerHeight - 420)) : 8;
+  const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 0;
+  const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 0;
+  const menuMaxHeight = Math.max(280, viewportHeight - 16);
+  const menuLeft = menuPosition ? Math.max(8, Math.min(menuPosition.x, viewportWidth - menuSize.width - 8)) : 8;
+  const menuTop = menuPosition
+    ? Math.max(8, Math.min(menuPosition.y, viewportHeight - Math.min(menuSize.height, menuMaxHeight) - 8))
+    : 8;
   const actionPending = pendingActionId?.endsWith(`:${conversation.id}`) ?? false;
   const responseAge = conversation.responseMetric?.latestAdminReplyAt
     ? conversation.responseMetric.responseDurationMs
@@ -1969,6 +2047,36 @@ function ConversationRow({
     onOpenMenu();
   };
 
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    const closeMenu = () => {
+      onCloseMenu();
+    };
+    const closeMenuOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onCloseMenu();
+      }
+    };
+
+    document.addEventListener("pointerdown", closeMenu);
+    document.addEventListener("keydown", closeMenuOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeMenu);
+      document.removeEventListener("keydown", closeMenuOnEscape);
+    };
+  }, [menuOpen, onCloseMenu]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      const rect = menuRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setMenuSize({ width: rect.width, height: rect.height });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [filteredUserLabels.length, labelQuery, menuOpen]);
+
   return (
     <div
       role="button"
@@ -1976,7 +2084,6 @@ function ConversationRow({
       onClick={onClick}
       onContextMenu={(event) => {
         event.preventDefault();
-        onClick();
         openLabelMenu(event.clientX, event.clientY);
       }}
       onKeyDown={(event) => {
@@ -2069,9 +2176,11 @@ function ConversationRow({
           </span>
         ) : null}
       </div>
-      {menuOpen ? (
+      {menuOpen && typeof document !== "undefined" ? createPortal((
         <div
-          style={{ ...rowLabelMenu, left: menuLeft, top: menuTop }}
+          ref={menuRef}
+          style={{ ...rowLabelMenu, left: menuLeft, top: menuTop, maxHeight: menuMaxHeight }}
+          onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => event.stopPropagation()}
         >
@@ -2112,6 +2221,17 @@ function ConversationRow({
                 {pendingActionId === `unread:${conversation.id}` ? "Marking..." : "Mark as unread"}
               </button>
             )}
+            <button
+              type="button"
+              style={actionMenuButton}
+              disabled={actionPending}
+              onClick={() => {
+                onArchive();
+                onCloseMenu();
+              }}
+            >
+              {pendingActionId === `archive:${conversation.id}` ? "Archiving..." : "Archive"}
+            </button>
             <button
               type="button"
               style={{ ...actionMenuButton, color: "#b42318" }}
@@ -2192,7 +2312,7 @@ function ConversationRow({
             </button>
           </div>
         </div>
-      ) : null}
+      ), document.body) : null}
     </div>
   );
 }

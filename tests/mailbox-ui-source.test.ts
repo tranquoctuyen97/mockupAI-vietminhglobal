@@ -91,10 +91,28 @@ describe("mailbox UI source", () => {
 
   it("renders Gmail-style conversation label menu actions and tree labels", () => {
     expect(source).toContain("openLabelMenu(event.clientX, event.clientY)");
+    expect(source).toContain("onContextMenu={(event) => {\n        event.preventDefault();\n        openLabelMenu(event.clientX, event.clientY);\n      }}");
+    expect(source).toContain('import { createPortal } from "react-dom";');
+    expect(source).toContain("createPortal((");
+    expect(source).toContain("document.body");
+    expect(source).toContain('document.addEventListener("pointerdown", closeMenu)');
+    expect(source).toContain('document.removeEventListener("pointerdown", closeMenu)');
+    expect(source).toContain('event.key === "Escape"');
+    expect(source).toContain("onPointerDown={(event) => event.stopPropagation()}");
+    expect(source).toContain("const [menuSize, setMenuSize] = useState<{ width: number; height: number }>({ width: 300, height: 520 })");
+    expect(source).toContain("const menuMaxHeight = Math.max(280, viewportHeight - 16)");
+    expect(source).toContain("setMenuSize({ width: rect.width, height: rect.height })");
+    expect(source).toContain("maxHeight: menuMaxHeight");
+    expect(source).not.toContain("window.innerHeight - 420");
     expect(source).toContain("const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null)");
     expect(source).toContain("position: \"fixed\"");
     expect(source).toContain("<span>Actions</span>");
     expect(source).toContain("Mark as unread");
+    expect(source).toContain("Archive");
+    expect(source).toContain("archiveConversation");
+    expect(source).toContain("`archive:${conv.id}`");
+    expect(source).toContain('toast.loading("Archiving...")');
+    expect(source).toContain('toast.success("Archived", { id: toastId })');
     expect(source).toContain("Report spam");
     expect(source).toContain('window.confirm("Report this email as spam?")');
     expect(source).toContain('window.confirm("Move this email to Trash?")');
@@ -130,8 +148,10 @@ describe("mailbox UI source", () => {
     expect(source).toContain("onClick={(event) => event.stopPropagation()}");
     expect(source).toContain("onChange={onToggleBulk}");
     expect(source).toContain("bulkToolbar");
+    expect(source).toContain("selectedConversations.forEach(onArchive)");
     expect(source).toContain("selectedConversations.forEach(onReportSpam)");
     expect(source).toContain("selectedConversations.forEach(onDelete)");
+    expect(source).toContain("Archive");
     expect(source).toContain("Delete");
     expect(source).toContain("applyBulkLabels");
     expect(source).toContain("[...new Set([...currentUserLabelIds, ...bulkLabelIds])]");

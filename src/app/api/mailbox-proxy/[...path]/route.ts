@@ -427,6 +427,11 @@ async function handler(
     return handleMarkConversationUnread(request, session.tenantId, unreadMatch[1]);
   }
 
+  const archiveMatch = proxyPath.match(/^\/conversations\/([^/]+)\/archive$/);
+  if (method === "POST" && archiveMatch) {
+    return handleArchiveConversation(request, session.tenantId, session.id, archiveMatch[1]);
+  }
+
   const spamMatch = proxyPath.match(/^\/conversations\/([^/]+)\/report-spam$/);
   if (method === "POST" && spamMatch) {
     return handleReportConversationSpam(request, session.tenantId, session.id, spamMatch[1]);
@@ -1509,6 +1514,58 @@ async function handleReportConversationSpam(
   });
 
   return json({ ok: true });
+}
+
+async function handleArchiveConversation(
+  request: NextRequest,
+  tenantId: string,
+  actorUserId: string,
+  conversationToken: string,
+) {
+  const resolved = await resolveGmailConversation(request, tenantId, conversationToken);
+  if (resolved instanceof NextResponse) return resolved;
+  const { storeId, mailbox, conversation } = resolved;
+
+  const appPassword = await getDecryptedAppPassword(mailbox.id);
+  await createGmailAdapter({
+    email: mailbox.email,
+    appPassword,
+  }).archiveThread(conversation.gmailThreadId);
+
+  await prisma.$transaction(async (tx) => {
+    const inboxLabels = await tx.gmailLabel.findMany({
+      where: {
+        mailboxId: mailbox.id,
+        type: "INBOX",
+      },
+      select: { id: true },
+    });
+
+    if (inboxLabels.length > 0) {
+      await tx.conversationLabel.deleteMany({
+        where: {
+          conversationId: conversation.id,
+          labelId: { in: inboxLabels.map((label) => label.id) },
+        },
+      });
+    }
+  });
+
+  await logAudit({
+    actorUserId,
+    tenantId,
+    action: "mailbox.archive",
+    resourceType: "rt_ticket",
+    resourceId: String(conversation.rtTicketId ?? conversation.id),
+    metadata: {
+      mailboxId: mailbox.id,
+      storeId,
+      gmailThreadId: conversation.gmailThreadId,
+      action: "archive",
+    },
+  });
+
+  return json({ ok: true, action: "archive", conversationId: conversation.id });
 }
 
 async function handleDeleteConversation(
