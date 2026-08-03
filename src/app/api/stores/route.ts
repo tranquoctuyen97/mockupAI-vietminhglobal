@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
-import { validateSession } from "@/lib/auth/session";
-import { requireFeature } from "@/lib/auth/guards";
-import { listStores } from "@/lib/stores/store-service";
-import { prisma } from "@/lib/db";
-import { encrypt } from "@/lib/crypto/envelope";
-import { sanitizeShopDomain } from "@/lib/shopify/oauth";
 import { z } from "zod";
+import { requireFeature } from "@/lib/auth/guards";
+import { validateSession } from "@/lib/auth/session";
+import { encrypt } from "@/lib/crypto/envelope";
+import { prisma } from "@/lib/db";
+import { fetchInkhubShopStats } from "@/lib/inkhub/orders-client";
+import { enqueueInkhubInitialSync } from "@/lib/inkhub/queue";
+import { sanitizeShopDomain } from "@/lib/shopify/oauth";
+import { listStores } from "@/lib/stores/store-service";
 
 const CreateStoreSchema = z.object({
   name: z.string().min(1, "Store name is required").max(100),
@@ -15,6 +17,11 @@ const CreateStoreSchema = z.object({
     .regex(/\.myshopify\.com$/, "Must be a valid .myshopify.com domain"),
   shopifyClientId: z.string().min(10, "Client ID too short"),
   shopifyClientSecret: z.string().min(10, "Client Secret too short"),
+  inkhubShopId: z.preprocess(
+    (value) =>
+      value === "" || value === undefined ? undefined : value === null ? null : Number(value),
+    z.number().int().nonnegative().nullable().optional(),
+  ),
 });
 
 export async function GET() {
@@ -43,7 +50,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { name, shopifyDomain, shopifyClientId, shopifyClientSecret } = parsed.data;
+  const { name, shopifyDomain, shopifyClientId, shopifyClientSecret, inkhubShopId } = parsed.data;
 
   let cleanDomain: string;
   try {
@@ -60,6 +67,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Store already connected" }, { status: 409 });
   }
 
+  let inkhubShopLabel: string | null = null;
+  if (inkhubShopId !== undefined && inkhubShopId !== null) {
+    const duplicateInkhubShop = await prisma.store.findFirst({
+      where: { tenantId: session.tenantId, inkhubShopId, deletedAt: null },
+      select: { id: true },
+    });
+    if (duplicateInkhubShop) {
+      return NextResponse.json(
+        { error: "This Inkhub shop is already mapped to another store" },
+        { status: 409 },
+      );
+    }
+    try {
+      const shop = (await fetchInkhubShopStats(session.tenantId)).find(
+        (candidate) => candidate.id === inkhubShopId,
+      );
+      if (!shop) return NextResponse.json({ error: "Inkhub shop not found" }, { status: 400 });
+      inkhubShopLabel = shop.label;
+    } catch (error) {
+      console.error("[Stores] Failed to validate Inkhub shop mapping:", error);
+      return NextResponse.json(
+        { error: "Unable to validate Inkhub shop right now" },
+        { status: 502 },
+      );
+    }
+  }
+
   // Encrypt client secret
   const { encrypted: secretEnc, keyId } = encrypt(shopifyClientSecret);
 
@@ -69,6 +103,8 @@ export async function POST(request: Request) {
       tenantId: session.tenantId,
       name,
       shopifyDomain: cleanDomain,
+      inkhubShopId: inkhubShopId ?? null,
+      inkhubShopLabel,
       status: "ACTIVE",
       createdBy: session.id,
       credentials: {
@@ -81,5 +117,23 @@ export async function POST(request: Request) {
     },
   });
 
-  return NextResponse.json({ storeId: store.id, shopifyDomain: cleanDomain });
+  let inkhubInitialSyncQueued = false;
+  if (inkhubShopId !== undefined && inkhubShopId !== null) {
+    try {
+      await enqueueInkhubInitialSync({
+        tenantId: session.tenantId,
+        storeId: store.id,
+        shopIds: [inkhubShopId],
+      });
+      inkhubInitialSyncQueued = true;
+    } catch (error) {
+      console.error("[Stores] Failed to enqueue Inkhub initial sync:", error);
+    }
+  }
+
+  return NextResponse.json({
+    storeId: store.id,
+    shopifyDomain: cleanDomain,
+    inkhubInitialSyncQueued,
+  });
 }

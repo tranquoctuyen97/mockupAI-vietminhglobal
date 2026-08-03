@@ -11,8 +11,7 @@ describe("Triple Whale daily sync", () => {
     expect(client).toContain("function metricsToRecords");
     expect(client).toContain("metric?.charts?.current");
     expect(client).toContain("return eachDay(startDate, endDate).map");
-    expect(sync).toContain("startDate,");
-    expect(sync).toContain("endDate: today");
+    expect(sync).toContain("syncStoreRange({ credentialId, from: startDate, to: today })");
     expect(sync).not.toContain("for (const day of eachDay(startDate, today))");
     expect(rebuild).toContain("deleteMany({ where: { credentialId: credential.id } })");
     expect(rebuild).toContain("syncStore(credential.id)");

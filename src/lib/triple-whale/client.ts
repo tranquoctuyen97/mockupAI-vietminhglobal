@@ -1,3 +1,8 @@
+import {
+  parseTripleWhaleRateLimitHeaders,
+  type TripleWhaleRateLimitMetadata,
+  type TripleWhaleRequestGate,
+} from "./request-gate";
 import type { TWDailyRecord, TWMetric, TWSummaryResponse } from "./types";
 
 const TW_API_BASE = "https://api.triplewhale.com/api/v2";
@@ -30,15 +35,25 @@ function chartValue(metric: TWMetric | undefined, index: number): number {
 }
 
 /** Convert TW metrics response into daily records using chart points. */
-function metricsToRecords(metrics: TWMetric[], startDate: string, endDate: string): TWDailyRecord[] {
+function metricsToRecords(
+  metrics: TWMetric[],
+  startDate: string,
+  endDate: string,
+): TWDailyRecord[] {
   const byMetric: Record<string, TWMetric> = Object.fromEntries(
-    metrics.flatMap((metric) => [[metric.metricId, metric], [metric.id, metric]]),
+    metrics.flatMap((metric) => [
+      [metric.metricId, metric],
+      [metric.id, metric],
+    ]),
   );
   return eachDay(startDate, endDate).map((date, index) => {
     const orderRevenue = chartValue(byMetric.totalSales ?? byMetric.sales, index);
     const netProfit = chartValue(byMetric.totalNetProfit, index);
     const orders = Math.round(chartValue(byMetric.totalOrders ?? byMetric.orders, index));
-    const paymentGateways = chartValue(byMetric.totalPaymentGatewayCosts ?? byMetric.paymentGateways, index);
+    const paymentGateways = chartValue(
+      byMetric.totalPaymentGatewayCosts ?? byMetric.paymentGateways,
+      index,
+    );
     const shipping = chartValue(byMetric.totalShippingCosts ?? byMetric.shipping, index);
     const blendedAdSpend = chartValue(byMetric.blendedAds ?? byMetric.adsSpend, index);
     const cogs = chartValue(byMetric.totalProductCosts ?? byMetric.cogs, index);
@@ -89,7 +104,9 @@ export async function fetchSummaryData(opts: {
   startDate: string;
   endDate: string;
   todayHour?: number;
+  requestGate?: Pick<TripleWhaleRequestGate, "beforeRequest" | "afterRateLimit">;
 }): Promise<TWDailyRecord[]> {
+  await opts.requestGate?.beforeRequest();
   const res = await fetch(`${TW_API_BASE}/summary-page/get-data`, {
     method: "POST",
     headers: {
@@ -105,12 +122,26 @@ export async function fetchSummaryData(opts: {
       todayHour: opts.todayHour ?? new Date().getUTCHours(),
     }),
   });
+  const rateLimit = parseTripleWhaleRateLimitHeaders(res.headers);
 
   if (res.status === 401 || res.status === 403) {
     throw new TWAuthError("Invalid API key");
   }
   if (res.status === 429) {
-    throw new TWRateLimitError("Rate limited by Triple Whale");
+    const error = new TWRateLimitError({
+      ...rateLimit,
+      shopDomain: opts.shopDomain,
+      range: { from: opts.startDate, to: opts.endDate },
+    });
+    try {
+      await opts.requestGate?.afterRateLimit(rateLimit);
+    } catch (gateError) {
+      console.warn("[TripleWhaleClient] Failed to persist rate-limit cooldown:", {
+        shopDomain: opts.shopDomain,
+        error: gateError instanceof Error ? gateError.message : String(gateError),
+      });
+    }
+    throw error;
   }
   if (!res.ok) {
     throw new Error(`Triple Whale API error: ${res.status} ${res.statusText}`);
@@ -136,8 +167,24 @@ export class TWAuthError extends Error {
 }
 
 export class TWRateLimitError extends Error {
-  constructor(message: string) {
-    super(message);
+  public readonly retryAfterMs: number | null;
+  public readonly policy: string | null;
+  public readonly limit: string | null;
+  public readonly shopDomain: string;
+  public readonly range: { from: string; to: string };
+
+  constructor(
+    metadata: TripleWhaleRateLimitMetadata & {
+      shopDomain: string;
+      range: { from: string; to: string };
+    },
+  ) {
+    super("Rate limited by Triple Whale");
     this.name = "TWRateLimitError";
+    this.retryAfterMs = metadata.retryAfterMs;
+    this.policy = metadata.policy;
+    this.limit = metadata.limit;
+    this.shopDomain = metadata.shopDomain;
+    this.range = metadata.range;
   }
 }

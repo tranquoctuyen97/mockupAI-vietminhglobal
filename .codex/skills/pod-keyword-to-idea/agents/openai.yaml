@@ -1,0 +1,4 @@
+interface:
+  display_name: "POD Keyword to Idea"
+  short_description: "Turn trend signals into traceable POD ideas"
+  default_prompt: "Use $pod-keyword-to-idea to turn my exported POD keyword JSONL into an evidence-backed shortlist."

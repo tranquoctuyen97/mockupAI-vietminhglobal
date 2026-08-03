@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pod-competitor-ad-v1.schema.json",
+  "type": "object",
+  "required": ["schemaVersion", "observationId", "competitorId", "identityId", "identityConfidence", "platform", "advertiserName", "sourceUrl", "capturedAt", "platformStatus", "copy", "destination", "warnings"],
+  "properties": {
+    "schemaVersion": { "const": "pod-competitor-ad/v1" },
+    "observationId": { "type": "string" },
+    "competitorId": { "type": "string" },
+    "identityId": { "type": "string" },
+    "identityConfidence": { "enum": ["high", "medium", "low"] },
+    "platform": { "enum": ["meta", "google", "tiktok", "x", "pinterest"] },
+    "advertiserName": { "type": "string" },
+    "sourceUrl": { "type": "string" },
+    "capturedAt": { "type": "string" },
+    "platformStatus": { "enum": ["active", "inactive", "unknown"] },
+    "copy": { "type": "object" },
+    "destination": { "type": "object" },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

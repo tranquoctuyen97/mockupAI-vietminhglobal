@@ -19,6 +19,8 @@ interface StoreData {
   name: string;
   shopifyDomain: string;
   printifyShopId: string | null;
+  inkhubShopId: number | null;
+  inkhubShopLabel: string | null;
   status: "ACTIVE" | "TOKEN_EXPIRED" | "ERROR";
   lastHealthCheck: string | null;
   colors: Array<{ id: string; name: string; hex: string; enabled?: boolean }>;
@@ -134,6 +136,11 @@ export default function StoresClient({
                         <span>{store.shopifyDomain}</span>
                       )}
                     </div>
+                    {store.inkhubShopId !== null && (
+                      <div style={{ fontSize: "0.76rem", opacity: 0.55, marginTop: 4 }}>
+                        Inkhub: {store.inkhubShopLabel || `Shop #${store.inkhubShopId}`} · #{store.inkhubShopId}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-6" style={{ fontSize: "0.875rem" }}>

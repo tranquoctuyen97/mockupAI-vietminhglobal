@@ -32,4 +32,7 @@ export interface TWSummaryResponse {
 export interface TWSyncJobPayload {
   credentialId: string;
   tenantId: string;
+  kind?: "scheduled" | "backfill";
+  from?: string;
+  to?: string;
 }

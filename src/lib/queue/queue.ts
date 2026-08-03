@@ -37,6 +37,7 @@ const globalForQueues = globalThis as unknown as {
   healthCheckQueue?: Queue;
   mockupQueue?: Queue;
   tripleWhaleSyncQueue?: Queue;
+  inkhubOrderSyncQueue?: Queue;
   mailboxSyncQueue?: Queue;
   mailboxBackfillQueue?: Queue;
   mailboxResponseMetricsQueue?: Queue;
@@ -108,6 +109,26 @@ export function getTripleWhaleSyncQueue(): Queue {
     });
   }
   return globalForQueues.tripleWhaleSyncQueue;
+}
+
+export const INKHUB_ORDER_SYNC_QUEUE_NAME = "inkhub-order-sync";
+
+export function getInkhubOrderSyncQueue(): Queue {
+  if (!globalForQueues.inkhubOrderSyncQueue) {
+    globalForQueues.inkhubOrderSyncQueue = new Queue(INKHUB_ORDER_SYNC_QUEUE_NAME, {
+      connection: redisConnection,
+      defaultJobOptions: {
+        removeOnComplete: 100,
+        removeOnFail: 50,
+        attempts: 4,
+        backoff: { type: "exponential" as const, delay: 10_000 },
+      },
+    });
+    globalForQueues.inkhubOrderSyncQueue.on("error", (err) => {
+      console.error("[Queue/inkhub-order-sync] Redis error:", err.message);
+    });
+  }
+  return globalForQueues.inkhubOrderSyncQueue;
 }
 
 export const MAILBOX_SYNC_QUEUE_NAME = "mailbox-sync";

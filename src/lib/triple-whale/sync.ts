@@ -2,41 +2,44 @@ import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { decrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
 import { fetchSummaryData } from "./client";
+import { TripleWhaleRequestGate } from "./request-gate";
+import type { TWDailyRecord } from "./types";
 
-export async function syncStore(credentialId: string): Promise<void> {
+export async function syncStoreRange(input: {
+  credentialId: string;
+  from: string;
+  to: string;
+}): Promise<void> {
   const credential = await prisma.tripleWhaleCredential.findUnique({
-    where: { id: credentialId },
+    where: { id: input.credentialId },
     include: { tenant: true },
   });
-  if (!credential) throw new Error(`No Triple Whale credential for ID ${credentialId}`);
+  if (!credential) throw new Error(`No Triple Whale credential for ID ${input.credentialId}`);
 
   const timezone = credential.tenant.twTimezone ?? "America/Los_Angeles";
-  const now = new Date();
-  const today = formatInTimeZone(now, timezone, "yyyy-MM-dd");
-  const startDate = credential.lastSyncedAt
-    ? formatInTimeZone(credential.lastSyncedAt, timezone, "yyyy-MM-dd")
-    : formatInTimeZone(credential.syncFromDate, timezone, "yyyy-MM-dd");
-
-  if (startDate > today) return;
-
-  const todayHour = Number(formatInTimeZone(now, timezone, "H"));
-
-  const records = await fetchSummaryData({
-    apiKey: decrypt(credential.apiKeyEncrypted),
-    shopDomain: credential.shopDomain,
-    startDate,
-    endDate: today,
-    todayHour,
-  });
+  const requestGate = new TripleWhaleRequestGate();
+  let records: TWDailyRecord[];
+  try {
+    records = await fetchSummaryData({
+      apiKey: decrypt(credential.apiKeyEncrypted),
+      shopDomain: credential.shopDomain,
+      startDate: input.from,
+      endDate: input.to,
+      todayHour: Number(formatInTimeZone(new Date(), timezone, "H")),
+      requestGate,
+    });
+  } finally {
+    requestGate.close();
+  }
 
   for (const record of records) {
     if (!record.date) continue;
     const date = fromZonedTime(`${record.date}T00:00:00`, timezone);
 
     await prisma.tripleWhaleDailyStat.upsert({
-      where: { credentialId_date: { credentialId, date } },
+      where: { credentialId_date: { credentialId: input.credentialId, date } },
       create: {
-        credentialId,
+        credentialId: input.credentialId,
         date,
         orderRevenue: record.orderRevenue,
         netProfit: record.netProfit,
@@ -62,6 +65,25 @@ export async function syncStore(credentialId: string): Promise<void> {
       },
     });
   }
+}
+
+export async function syncStore(credentialId: string): Promise<void> {
+  const credential = await prisma.tripleWhaleCredential.findUnique({
+    where: { id: credentialId },
+    include: { tenant: true },
+  });
+  if (!credential) throw new Error(`No Triple Whale credential for ID ${credentialId}`);
+
+  const timezone = credential.tenant.twTimezone ?? "America/Los_Angeles";
+  const now = new Date();
+  const today = formatInTimeZone(now, timezone, "yyyy-MM-dd");
+  const startDate = credential.lastSyncedAt
+    ? formatInTimeZone(credential.lastSyncedAt, timezone, "yyyy-MM-dd")
+    : formatInTimeZone(credential.syncFromDate, timezone, "yyyy-MM-dd");
+
+  if (startDate > today) return;
+
+  await syncStoreRange({ credentialId, from: startDate, to: today });
 
   await prisma.tripleWhaleCredential.update({
     where: { id: credentialId },

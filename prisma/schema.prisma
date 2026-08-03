@@ -17,17 +17,17 @@ model Tenant {
   createdAt  DateTime @default(now()) @map("created_at")
   twTimezone String   @default("America/Los_Angeles") @map("tw_timezone")
 
-  users              User[]
-  auditEvents        AuditEvent[]
-  stores             Store[]
-  wizardDrafts       WizardDraft[]
-  rolePermissions    TenantRolePermission[]
-  inkhubCredential   InkhubCredential?
-  twCredentials      TripleWhaleCredential[]
-  mockupLibraryItems MockupLibraryItem[]
-  mailboxes          Mailbox[]
-  responseMetrics    MailboxResponseMetric[]
-  aiHubWorkspaces    AiHubWorkspace[]
+  users               User[]
+  auditEvents         AuditEvent[]
+  stores              Store[]
+  wizardDrafts        WizardDraft[]
+  rolePermissions     TenantRolePermission[]
+  inkhubCredential    InkhubCredential?
+  twCredentials       TripleWhaleCredential[]
+  mockupLibraryItems  MockupLibraryItem[]
+  mailboxes           Mailbox[]
+  responseMetrics     MailboxResponseMetric[]
+  aiHubWorkspaces     AiHubWorkspace[]
   colorGroupOverrides ColorGroupOverride[]
 
   @@map("tenants")
@@ -45,13 +45,13 @@ model User {
   createdAt          DateTime   @default(now()) @map("created_at")
   updatedAt          DateTime   @updatedAt @map("updated_at")
 
-  tenant                     Tenant              @relation(fields: [tenantId], references: [id])
+  tenant                     Tenant                      @relation(fields: [tenantId], references: [id])
   sessions                   Session[]
-  uploadedMockupLibraryItems MockupLibraryItem[] @relation("MockupLibraryUploadedBy")
-  mailboxResponseMetrics     MailboxResponseMetric[] @relation("MailboxResponseLatestReplyActor")
-  mailboxInternalNotes       MailboxInternalNote[] @relation("MailboxInternalNoteActor")
+  uploadedMockupLibraryItems MockupLibraryItem[]         @relation("MockupLibraryUploadedBy")
+  mailboxResponseMetrics     MailboxResponseMetric[]     @relation("MailboxResponseLatestReplyActor")
+  mailboxInternalNotes       MailboxInternalNote[]       @relation("MailboxInternalNoteActor")
   mailboxComposerAttachments MailboxComposerAttachment[] @relation("MailboxComposerAttachmentUploadedBy")
-  mailboxSkippedSenders      MailboxSkippedSender[] @relation("MailboxSkippedSenderCreatedBy")
+  mailboxSkippedSenders      MailboxSkippedSender[]      @relation("MailboxSkippedSenderCreatedBy")
   aiHubMemberWorkspaces      AiHubMemberWorkspace[]
 
   @@index([tenantId])
@@ -210,15 +210,15 @@ enum PrintifyAccountStatus {
 }
 
 model PrintifyShop {
-  id                         String   @id @default(cuid())
-  printifyAccountId          String   @map("printify_account_id")
-  externalShopId             Int      @map("external_shop_id") // Printify's numeric shop ID
-  title                      String
-  salesChannel               String?  @map("sales_channel") // shopify|custom|etsy
-  externalDomain             String?  @map("external_domain") // domain if native Shopify
-  disconnected               Boolean  @default(false)
+  id                        String   @id @default(cuid())
+  printifyAccountId         String   @map("printify_account_id")
+  externalShopId            Int      @map("external_shop_id") // Printify's numeric shop ID
+  title                     String
+  salesChannel              String?  @map("sales_channel") // shopify|custom|etsy
+  externalDomain            String?  @map("external_domain") // domain if native Shopify
+  disconnected              Boolean  @default(false)
   unpublishAfterShopifySync Boolean  @default(false) @map("unpublish_after_shopify_sync")
-  syncedAt                   DateTime @default(now()) @map("synced_at")
+  syncedAt                  DateTime @default(now()) @map("synced_at")
 
   account PrintifyAccount @relation(fields: [printifyAccountId], references: [id], onDelete: Cascade)
   stores  Store[] // reverse relation — shops linked by stores
@@ -239,6 +239,8 @@ model Store {
   shopifyShopId     String?     @map("shopify_shop_id") // gid://shopify/Shop/...
   printifyShopId    String?     @unique @map("printify_shop_id") // 1 shop = 1 store
   printifyShopTitle String?     @map("printify_shop_title") // Cached shop display name
+  inkhubShopId      Int?        @map("inkhub_shop_id") // Inkhub shop id; stable sync key
+  inkhubShopLabel   String?     @map("inkhub_shop_label") // Cached Inkhub display name
   status            StoreStatus @default(ACTIVE)
   lastHealthCheck   DateTime?   @map("last_health_check")
   createdBy         String?     @map("created_by")
@@ -250,8 +252,8 @@ model Store {
   defaultPriceUsd Decimal @default(24.99) @map("default_price_usd") @db.Decimal(10, 2)
   publishMode     String  @default("draft") @map("publish_mode") // 'draft' | 'active'
 
-  tenant             Tenant                @relation(fields: [tenantId], references: [id])
-  printifyShop       PrintifyShop?         @relation(fields: [printifyShopId], references: [id], onDelete: SetNull)
+  tenant             Tenant                  @relation(fields: [tenantId], references: [id])
+  printifyShop       PrintifyShop?           @relation(fields: [printifyShopId], references: [id], onDelete: SetNull)
   credentials        StoreCredentials?
   colors             StoreColor[]
   templates          StoreMockupTemplate[]
@@ -263,7 +265,9 @@ model Store {
   responseMetrics    MailboxResponseMetric[]
 
   @@unique([tenantId, shopifyDomain])
+  @@unique([tenantId, inkhubShopId])
   @@index([tenantId, status])
+  @@index([tenantId, inkhubShopId])
   @@map("stores")
 }
 
@@ -829,8 +833,9 @@ model Listing {
   wizardDraftDesign     WizardDraftDesign?     @relation(fields: [wizardDraftDesignId], references: [id], onDelete: SetNull)
   wizardDraftDesignPair WizardDraftDesignPair? @relation(fields: [wizardDraftDesignPairId], references: [id], onDelete: SetNull)
   activePublishAttempt  PublishAttempt?        @relation("ListingActivePublishAttempt", fields: [activePublishAttemptId], references: [id], onDelete: SetNull)
-  publishAttempts       PublishAttempt[]        @relation("ListingPublishAttempts")
+  publishAttempts       PublishAttempt[]       @relation("ListingPublishAttempts")
   variants              ListingVariant[]
+  orderLineItems        OrderLineItem[]
   publishJobs           PublishJob[]
 
   @@index([tenantId, status])
@@ -857,30 +862,30 @@ model ListingVariant {
 }
 
 model PublishJob {
-  id              String       @id @default(cuid())
-  listingId       String       @map("listing_id")
-  idempotencyKey  String       @unique @map("idempotency_key")
-  publishAttemptId String?     @map("publish_attempt_id")
-  stage           PublishStage
-  status          String       @default("PENDING")
-  attempts        Int          @default(0)
-  phase           String?
-  progressMessage String?    @map("progress_message")
-  progressData    Json?      @map("progress_data")
-  phaseStartedAt  DateTime?  @map("phase_started_at")
-  nextRetryAt     DateTime?    @map("next_retry_at")
-  reasonCode      String?      @map("reason_code")
-  lastErrorCode   String?      @map("last_error_code")
-  lastError       String?      @map("last_error")
-  createdAt       DateTime     @default(now()) @map("created_at")
-  completedAt     DateTime?    @map("completed_at")
+  id               String       @id @default(cuid())
+  listingId        String       @map("listing_id")
+  idempotencyKey   String       @unique @map("idempotency_key")
+  publishAttemptId String?      @map("publish_attempt_id")
+  stage            PublishStage
+  status           String       @default("PENDING")
+  attempts         Int          @default(0)
+  phase            String?
+  progressMessage  String?      @map("progress_message")
+  progressData     Json?        @map("progress_data")
+  phaseStartedAt   DateTime?    @map("phase_started_at")
+  nextRetryAt      DateTime?    @map("next_retry_at")
+  reasonCode       String?      @map("reason_code")
+  lastErrorCode    String?      @map("last_error_code")
+  lastError        String?      @map("last_error")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  completedAt      DateTime?    @map("completed_at")
 
-  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  listing Listing         @relation(fields: [listingId], references: [id], onDelete: Cascade)
   attempt PublishAttempt? @relation(fields: [publishAttemptId], references: [id], onDelete: Cascade)
 
+  @@unique([publishAttemptId, stage], name: "attempt_stage")
   @@index([listingId])
   @@index([listingId, publishAttemptId])
-  @@unique([publishAttemptId, stage], name: "attempt_stage")
   @@map("publish_jobs")
 }
 
@@ -898,8 +903,8 @@ model PublishAttempt {
   createdAt                   DateTime  @default(now()) @map("created_at")
   updatedAt                   DateTime  @updatedAt @map("updated_at")
 
-  listing       Listing         @relation("ListingPublishAttempts", fields: [listingId], references: [id], onDelete: Cascade)
-  activeListing Listing?        @relation("ListingActivePublishAttempt")
+  listing       Listing        @relation("ListingPublishAttempts", fields: [listingId], references: [id], onDelete: Cascade)
+  activeListing Listing?       @relation("ListingActivePublishAttempt")
   jobs          PublishJob[]
   outbox        PublishOutbox?
 
@@ -942,39 +947,69 @@ enum FulfillmentStatus {
 }
 
 model Order {
-  id                 String            @id @default(cuid())
-  tenantId           String            @map("tenant_id")
-  storeId            String            @map("store_id")
-  listingId          String?           @map("listing_id")
-  shopifyOrderId     String            @unique @map("shopify_order_id")
-  shopifyOrderNumber String?           @map("shopify_order_number")
-  customerEmail      String?           @map("customer_email")
-  totalUsd           Float             @map("total_usd")
-  currency           String            @default("USD")
-  fulfillmentStatus  FulfillmentStatus @default(UNFULFILLED)
-  printifyOrderId    String?           @map("printify_order_id")
-  printifyStatus     String?           @map("printify_status")
-  createdAt          DateTime          @default(now()) @map("created_at")
+  id                    String            @id @default(cuid())
+  tenantId              String            @map("tenant_id")
+  storeId               String            @map("store_id")
+  listingId             String?           @map("listing_id")
+  shopifyOrderId        String?           @unique @map("shopify_order_id")
+  shopifyOrderNumber    String?           @map("shopify_order_number")
+  customerEmail         String?           @map("customer_email")
+  totalUsd              Float             @map("total_usd")
+  currency              String            @default("USD")
+  fulfillmentStatus     FulfillmentStatus @default(UNFULFILLED)
+  printifyOrderId       String?           @map("printify_order_id")
+  printifyStatus        String?           @map("printify_status")
+  inkhubOrderId         Int?              @map("inkhub_order_id")
+  inkhubShopId          Int?              @map("inkhub_shop_id")
+  inkhubCode            String?           @map("inkhub_code")
+  inkhubCreatedAt       DateTime?         @map("inkhub_created_at")
+  inkhubUpdatedAt       DateTime?         @map("inkhub_updated_at")
+  inkhubSyncedAt        DateTime?         @map("inkhub_synced_at")
+  inkhubStatus          String?           @map("inkhub_status")
+  actualFulfillmentCost Decimal?          @map("actual_fulfillment_cost") @db.Decimal(12, 2)
+  actualShippingCost    Decimal?          @map("actual_shipping_cost") @db.Decimal(12, 2)
+  actualTaxCost         Decimal?          @map("actual_tax_cost") @db.Decimal(12, 2)
+  actualOtherCost       Decimal?          @map("actual_other_cost") @db.Decimal(12, 2)
+  actualTotalCost       Decimal?          @map("actual_total_cost") @db.Decimal(12, 2)
+  actualCostStatus      String            @default("PENDING") @map("actual_cost_status")
+  createdAt             DateTime          @default(now()) @map("created_at")
 
   lineItems OrderLineItem[]
 
+  @@unique([tenantId, inkhubShopId, inkhubOrderId], name: "orders_tenant_inkhub_shop_order_key")
   @@index([tenantId, createdAt])
   @@index([storeId])
   @@index([listingId])
+  @@index([tenantId, inkhubShopId, inkhubCreatedAt])
   @@map("orders")
 }
 
 model OrderLineItem {
-  id               String  @id @default(cuid())
-  orderId          String  @map("order_id")
-  listingVariantId String? @map("listing_variant_id")
-  title            String
-  quantity         Int
-  priceUsd         Float   @map("price_usd")
+  id                    String   @id @default(cuid())
+  orderId               String   @map("order_id")
+  listingId             String?  @map("listing_id")
+  listingVariantId      String?  @map("listing_variant_id")
+  inkhubItemId          Int?     @map("inkhub_item_id")
+  inkhubProductId       String?  @map("inkhub_product_id")
+  inkhubVariantId       String?  @map("inkhub_variant_id")
+  sku                   String?
+  title                 String
+  quantity              Int
+  priceUsd              Float    @map("price_usd")
+  actualFulfillmentCost Decimal? @map("actual_fulfillment_cost") @db.Decimal(12, 2)
+  actualShippingCost    Decimal? @map("actual_shipping_cost") @db.Decimal(12, 2)
+  actualTaxCost         Decimal? @map("actual_tax_cost") @db.Decimal(12, 2)
+  actualOtherCost       Decimal? @map("actual_other_cost") @db.Decimal(12, 2)
+  actualTotalCost       Decimal? @map("actual_total_cost") @db.Decimal(12, 2)
+  actualCostStatus      String   @default("PENDING") @map("actual_cost_status")
 
-  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  listing Listing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
+  @@unique([orderId, inkhubItemId], name: "order_line_items_order_inkhub_item_key")
   @@index([orderId])
+  @@index([listingId])
+  @@index([inkhubProductId, inkhubVariantId])
   @@map("order_line_items")
 }
 
@@ -1061,18 +1096,18 @@ model PrintifyVariantCache {
 }
 
 model TripleWhaleCredential {
-  id              String    @id @default(cuid())
-  tenantId        String    @map("tenant_id")
-  shopDomain      String    @map("shop_domain")
-  customName      String    @map("custom_name")
-  apiKeyEncrypted Bytes     @map("api_key_encrypted")
-  encryptionKeyId String    @map("encryption_key_id")
-  lastSyncedAt    DateTime? @map("last_synced_at")
-  syncFromDate    DateTime  @map("sync_from_date") @db.Date
-  syncIntervalMinutes Int   @default(30) @map("sync_interval_minutes")
-  syncError       String?   @map("sync_error")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  id                  String    @id @default(cuid())
+  tenantId            String    @map("tenant_id")
+  shopDomain          String    @map("shop_domain")
+  customName          String    @map("custom_name")
+  apiKeyEncrypted     Bytes     @map("api_key_encrypted")
+  encryptionKeyId     String    @map("encryption_key_id")
+  lastSyncedAt        DateTime? @map("last_synced_at")
+  syncFromDate        DateTime  @map("sync_from_date") @db.Date
+  syncIntervalMinutes Int       @default(30) @map("sync_interval_minutes")
+  syncError           String?   @map("sync_error")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
   tenant     Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   dailyStats TripleWhaleDailyStat[]
@@ -1171,17 +1206,17 @@ model Mailbox {
   createdAt            DateTime          @default(now()) @map("created_at")
   updatedAt            DateTime          @updatedAt @map("updated_at")
 
-  tenant        Tenant                @relation(fields: [tenantId], references: [id])
-  store         Store                 @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  syncCursor    MailboxSyncCursor?
-  labels        GmailLabel[]
-  conversations MailboxConversation[]
-  messageLinks  GmailMessageLink[]
-  operations    GmailLabelOperation[]
-  responseMetrics MailboxResponseMetric[]
-  internalNotes MailboxInternalNote[]
+  tenant              Tenant                      @relation(fields: [tenantId], references: [id])
+  store               Store                       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  syncCursor          MailboxSyncCursor?
+  labels              GmailLabel[]
+  conversations       MailboxConversation[]
+  messageLinks        GmailMessageLink[]
+  operations          GmailLabelOperation[]
+  responseMetrics     MailboxResponseMetric[]
+  internalNotes       MailboxInternalNote[]
   composerAttachments MailboxComposerAttachment[]
-  skippedSenders MailboxSkippedSender[]
+  skippedSenders      MailboxSkippedSender[]
 
   @@unique([tenantId, email])
   @@index([tenantId, storeId, isActive])
@@ -1237,31 +1272,31 @@ model GmailLabel {
 }
 
 model MailboxConversation {
-  id             String                @id @default(cuid())
-  mailboxId      String                @map("mailbox_id")
-  rtTicketId     Int?                  @map("rt_ticket_id")
-  gmailThreadId  String                @map("gmail_thread_id")
-  subject        String?               @map("subject")
-  senderName     String?               @map("sender_name")
-  senderEmail    String?               @map("sender_email")
-  latestMessagePreview String?         @map("latest_message_preview")
-  status         String                @default("active")
-  isUnread       Boolean               @default(false) @map("is_unread")
-  articleCount   Int                   @default(0) @map("article_count")
-  rtStatus       String?               @map("rt_status")
-  rtCreatedAt    DateTime?             @map("rt_created_at")
-  rtLastUpdatedAt DateTime?            @map("rt_last_updated_at")
-  lastActivityAt DateTime?             @map("last_activity_at")
-  syncErrorCode  String?               @map("sync_error_code")
-  createdAt      DateTime              @default(now()) @map("created_at")
-  updatedAt      DateTime              @updatedAt @map("updated_at")
-  mailbox        Mailbox               @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
-  messages       GmailMessageLink[]
-  labels         ConversationLabel[]
-  operations     GmailLabelOperation[]
-  responseMetric MailboxResponseMetric?
-  internalNotes  MailboxInternalNote[]
-  composerAttachments MailboxComposerAttachment[]
+  id                   String                      @id @default(cuid())
+  mailboxId            String                      @map("mailbox_id")
+  rtTicketId           Int?                        @map("rt_ticket_id")
+  gmailThreadId        String                      @map("gmail_thread_id")
+  subject              String?                     @map("subject")
+  senderName           String?                     @map("sender_name")
+  senderEmail          String?                     @map("sender_email")
+  latestMessagePreview String?                     @map("latest_message_preview")
+  status               String                      @default("active")
+  isUnread             Boolean                     @default(false) @map("is_unread")
+  articleCount         Int                         @default(0) @map("article_count")
+  rtStatus             String?                     @map("rt_status")
+  rtCreatedAt          DateTime?                   @map("rt_created_at")
+  rtLastUpdatedAt      DateTime?                   @map("rt_last_updated_at")
+  lastActivityAt       DateTime?                   @map("last_activity_at")
+  syncErrorCode        String?                     @map("sync_error_code")
+  createdAt            DateTime                    @default(now()) @map("created_at")
+  updatedAt            DateTime                    @updatedAt @map("updated_at")
+  mailbox              Mailbox                     @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  messages             GmailMessageLink[]
+  labels               ConversationLabel[]
+  operations           GmailLabelOperation[]
+  responseMetric       MailboxResponseMetric?
+  internalNotes        MailboxInternalNote[]
+  composerAttachments  MailboxComposerAttachment[]
 
   @@unique([mailboxId, rtTicketId])
   @@unique([mailboxId, gmailThreadId])
@@ -1310,16 +1345,16 @@ model MailboxComposerAttachment {
 }
 
 model GmailMessageLink {
-  id              String                @id @default(cuid())
-  mailboxId       String                @map("mailbox_id")
-  conversationId  String?               @map("conversation_id")
-  gmailMessageId  String                @map("gmail_message_id")
-  gmailThreadId   String                @map("gmail_thread_id")
-  rfcMessageId    String?               @map("rfc_message_id")
-  imapUid         BigInt                @map("imap_uid")
-  uidValidity     BigInt                @map("uid_validity")
-  rtTicketId      Int?                  @map("rt_ticket_id")
-  rtTransactionId Int?                  @map("rt_transaction_id")
+  id                String                @id @default(cuid())
+  mailboxId         String                @map("mailbox_id")
+  conversationId    String?               @map("conversation_id")
+  gmailMessageId    String                @map("gmail_message_id")
+  gmailThreadId     String                @map("gmail_thread_id")
+  rfcMessageId      String?               @map("rfc_message_id")
+  imapUid           BigInt                @map("imap_uid")
+  uidValidity       BigInt                @map("uid_validity")
+  rtTicketId        Int?                  @map("rt_ticket_id")
+  rtTransactionId   Int?                  @map("rt_transaction_id")
   direction         GmailMessageDirection
   gmailInternalDate DateTime?             @map("gmail_internal_date")
   body              String?
@@ -1376,22 +1411,22 @@ model GmailLabelOperation {
 }
 
 model MailboxResponseMetric {
-  conversationId     String    @id @map("conversation_id")
-  mailboxId          String    @map("mailbox_id")
-  tenantId           String    @map("tenant_id")
-  storeId            String    @map("store_id")
-  responseStartedAt  DateTime  @map("response_started_at")
-  latestAdminReplyAt DateTime? @map("latest_admin_reply_at")
-  latestAdminReplyActorUserId String? @map("latest_admin_reply_actor_user_id")
-  responseDurationMs BigInt?   @map("response_duration_ms")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
+  conversationId              String    @id @map("conversation_id")
+  mailboxId                   String    @map("mailbox_id")
+  tenantId                    String    @map("tenant_id")
+  storeId                     String    @map("store_id")
+  responseStartedAt           DateTime  @map("response_started_at")
+  latestAdminReplyAt          DateTime? @map("latest_admin_reply_at")
+  latestAdminReplyActorUserId String?   @map("latest_admin_reply_actor_user_id")
+  responseDurationMs          BigInt?   @map("response_duration_ms")
+  createdAt                   DateTime  @default(now()) @map("created_at")
+  updatedAt                   DateTime  @updatedAt @map("updated_at")
 
-  conversation MailboxConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  mailbox      Mailbox             @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
-  tenant       Tenant              @relation(fields: [tenantId], references: [id])
-  store        Store               @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  latestAdminReplyActor User?      @relation("MailboxResponseLatestReplyActor", fields: [latestAdminReplyActorUserId], references: [id], onDelete: SetNull)
+  conversation          MailboxConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  mailbox               Mailbox             @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  tenant                Tenant              @relation(fields: [tenantId], references: [id])
+  store                 Store               @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  latestAdminReplyActor User?               @relation("MailboxResponseLatestReplyActor", fields: [latestAdminReplyActorUserId], references: [id], onDelete: SetNull)
 
   @@index([tenantId, storeId, responseStartedAt])
   @@index([mailboxId, responseStartedAt])
