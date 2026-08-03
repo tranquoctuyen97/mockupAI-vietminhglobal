@@ -352,19 +352,30 @@ function mailboxConversationWhere(input: {
   mailboxId: string;
   status?: AppStatus;
   labelId?: string | null;
+  q?: string;
 }) {
+  const trimmedQ = input.q?.trim();
   return {
     mailboxId: input.mailboxId,
-    ...(input.status ? { status: input.status } : {}),
-    ...(input.labelId
+    ...(trimmedQ
       ? {
-          labels: {
-            some: {
-              labelId: input.labelId,
-            },
-          },
+          OR: [
+            { subject: { contains: trimmedQ, mode: "insensitive" as const } },
+            { latestMessagePreview: { contains: trimmedQ, mode: "insensitive" as const } },
+          ],
         }
-      : {}),
+      : {
+          ...(input.status ? { status: input.status } : {}),
+          ...(input.labelId
+            ? {
+                labels: {
+                  some: {
+                    labelId: input.labelId,
+                  },
+                },
+              }
+            : {}),
+        }),
   };
 }
 
@@ -756,6 +767,7 @@ async function handleListConversations(request: NextRequest, tenantId: string) {
   const labelId = url.searchParams.get("labelId");
   const selectedLabel = labelId ? mailbox.labels.find((label) => label.id === labelId) : undefined;
   if (labelId && !selectedLabel) return errorJson("Label not found", 404);
+  const q = url.searchParams.get("q") ?? undefined;
 
   const currentPage = pageNumber(url.searchParams.get("page"));
   const currentPageSize = pageSize(url.searchParams.get("pageSize"));
@@ -763,6 +775,7 @@ async function handleListConversations(request: NextRequest, tenantId: string) {
     mailboxId: mailbox.id,
     status: effectiveStatus,
     labelId: selectedLabel?.id ?? null,
+    q,
   });
   const [totalElements, conversationRows] = await Promise.all([
     prisma.mailboxConversation.count({ where }),

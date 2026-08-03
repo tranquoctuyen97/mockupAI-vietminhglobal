@@ -12,6 +12,7 @@ import {
   Paperclip,
   Plus,
   RefreshCw,
+  Search,
   Send,
   Settings,
   StickyNote,
@@ -191,6 +192,8 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
   const [labels, setLabels] = useState<MailboxLabel[]>([]);
   const [labelsReady, setLabelsReady] = useState(false);
   const [selectedLabelId, setSelectedLabelId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [labelComposerOpen, setLabelComposerOpen] = useState(false);
   const [newLabelName, setNewLabelName] = useState("");
   const [labelSaving, setLabelSaving] = useState(false);
@@ -230,6 +233,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
     [labels],
   );
   const effectiveSelectedLabelId = selectedLabelId ?? inboxLabel?.id ?? null;
+const searchActive = debouncedQuery.trim().length > 0;
   const selectedLabel = useMemo(
     () => labels.find((label) => label.id === effectiveSelectedLabelId) ?? null,
     [effectiveSelectedLabelId, labels],
@@ -251,20 +255,31 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
       [
         selectedStoreId ?? "",
         selectedMailbox?.id ?? "",
-        effectiveSelectedLabelId ?? "",
+        searchActive ? `q:${debouncedQuery.trim()}` : (effectiveSelectedLabelId ?? ""),
         page,
         pageSize,
       ].join(":"),
-    [selectedStoreId, selectedMailbox?.id, effectiveSelectedLabelId],
+    [selectedStoreId, selectedMailbox?.id, effectiveSelectedLabelId, searchActive, debouncedQuery],
   );
   const clearConversationPageCache = useCallback(() => {
     conversationPageCacheRef.current.clear();
   }, []);
 
+  useEffect(() => {
+    const handle = setTimeout(() => setDebouncedQuery(searchQuery), 350);
+    return () => clearTimeout(handle);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedQuery]);
+
   const chooseStore = (storeId: string | null) => {
     clearConversationPageCache();
     setSelectedStoreId(storeId);
     setSelectedMailbox(null);
+    setSearchQuery("");
+    setDebouncedQuery("");
     setLabels([]);
     setLabelsReady(false);
     setSelectedLabelId(null);
@@ -663,7 +678,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
   const loadConversations = useCallback(async () => {
     if (!selectedMailbox || !selectedStoreId) return;
     if (!labelsReady) return;
-    if (labels.length > 0 && !effectiveSelectedLabelId) return;
+    if (!searchActive && labels.length > 0 && !effectiveSelectedLabelId) return;
     const pageSize = 25;
     const cacheKey = conversationPageCacheKey(currentPage, pageSize);
     const cached = conversationPageCacheRef.current.get(cacheKey);
@@ -679,7 +694,11 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
         page: String(currentPage),
         pageSize: String(pageSize),
       });
-      if (effectiveSelectedLabelId) qs.set("labelId", effectiveSelectedLabelId);
+      if (searchActive) {
+        qs.set("q", debouncedQuery.trim());
+      } else if (effectiveSelectedLabelId) {
+        qs.set("labelId", effectiveSelectedLabelId);
+      }
       const data = await apiFetch<{ conversations: Conversation[]; page: PageInfo }>(
         `/api/mailbox-proxy/conversations?${qs}`,
       );
@@ -716,11 +735,13 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
     labels.length,
     labelsReady,
     conversationPageCacheKey,
+    searchActive,
+    debouncedQuery,
   ]);
 
   useEffect(() => {
     clearConversationPageCache();
-  }, [selectedStoreId, selectedMailbox?.id, effectiveSelectedLabelId, clearConversationPageCache]);
+  }, [selectedStoreId, selectedMailbox?.id, effectiveSelectedLabelId, debouncedQuery, clearConversationPageCache]);
 
   useEffect(() => {
     if (!selectedStoreId || !selectedMailbox) {
@@ -750,6 +771,8 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
 
   const chooseMailbox = (mailboxId: string) => {
     clearConversationPageCache();
+    setSearchQuery("");
+    setDebouncedQuery("");
     const mailbox = mailboxes.find((candidate) => candidate.id === mailboxId) ?? null;
     setSelectedMailbox(mailbox);
     setLabelsReady(false);
@@ -1046,6 +1069,31 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
             onChooseMailbox={chooseMailbox}
           />
         </div>
+        {selectedMailbox ? (
+          <div style={searchBarRow}>
+            <Search size={16} style={searchBarIcon} />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search subject or content..."
+              style={searchBarInput}
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  setDebouncedQuery("");
+                }}
+                style={searchBarClearButton}
+                aria-label="Clear search"
+              >
+                <X size={14} />
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </header>
 
       {metricsOpen && selectedMailbox ? (
@@ -1096,7 +1144,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
               selectedMailbox={selectedMailbox}
               inboxUnreadCount={mailboxUnreadCount}
               labels={labels}
-              selectedLabelId={effectiveSelectedLabelId}
+              selectedLabelId={searchActive ? null : effectiveSelectedLabelId}
               labelComposerOpen={labelComposerOpen}
               newLabelName={newLabelName}
               labelSaving={labelSaving}
@@ -1104,6 +1152,8 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
               onToggleCollapsed={() => setRailCollapsed((value) => !value)}
               onLabel={(labelId) => {
                 setSelectedLabelId(labelId);
+                setSearchQuery("");
+                setDebouncedQuery("");
                 setCurrentPage(1);
                 setSelectedConv(null);
                 selectedConversationIdRef.current = null;
@@ -1124,8 +1174,8 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
               <ConversationList
                 conversations={conversations}
                 selectedId={null}
-                title={conversationListTitle}
-                total={isInboxView ? null : totalConversations}
+                title={searchActive ? `Search results for "${debouncedQuery.trim()}"` : conversationListTitle}
+                total={searchActive ? totalConversations : (isInboxView ? null : totalConversations)}
                 loading={convLoading}
                 currentPage={currentPage}
                 pageInfo={pageInfo}
@@ -2978,6 +3028,46 @@ const storeSwitcherRow: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   minWidth: 0,
+};
+
+const searchBarRow: React.CSSProperties = {
+  position: "relative",
+  display: "flex",
+  alignItems: "center",
+  width: "100%",
+};
+
+const searchBarIcon: React.CSSProperties = {
+  position: "absolute",
+  left: 12,
+  color: "#6b7280",
+  pointerEvents: "none",
+};
+
+const searchBarInput: React.CSSProperties = {
+  width: "100%",
+  height: 44,
+  border: "1px solid #d8dee8",
+  borderRadius: 8,
+  background: "#fff",
+  padding: "0 40px 0 38px",
+  outline: "none",
+  fontSize: 14,
+  color: "#101828",
+};
+
+const searchBarClearButton: React.CSSProperties = {
+  position: "absolute",
+  right: 10,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 24,
+  height: 24,
+  border: "none",
+  background: "transparent",
+  color: "#6b7280",
+  cursor: "pointer",
 };
 
 const pageTitle: React.CSSProperties = {

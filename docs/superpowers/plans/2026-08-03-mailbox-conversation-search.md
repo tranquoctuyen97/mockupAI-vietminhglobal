@@ -83,7 +83,7 @@ describe("mailbox conversation search source", () => {
     const listBody = functionBody(source, "handleListConversations");
 
     expect(listBody).toContain('url.searchParams.get("q")');
-    expect(listBody).toContain("q:");
+    expect(listBody).toContain("labelId: selectedLabel?.id ?? null,\n    q,");
     expect(listBody).toContain("mailboxConversationWhere({");
   });
 });
