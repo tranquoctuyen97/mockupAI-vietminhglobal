@@ -28,7 +28,7 @@ export function extractEnabledPrintifyVariantMatrix(
 ): EnabledPrintifyVariantMatrixRow[] {
   const optionLookup = buildOptionLookup(product.options ?? []);
   const rows = (product.variants ?? [])
-    .filter((variant) => variant.is_enabled === true)
+    .filter((variant) => variant.is_enabled === true && variant.is_available !== false)
     .map((variant) => {
       const sku = variant.sku?.trim() ?? "";
       if (!sku) {

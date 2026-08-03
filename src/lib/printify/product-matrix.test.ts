@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { PrintifyProductResponse } from "./client";
-import {
-  PrintifyVariantMatrixError,
-  extractEnabledPrintifyVariantMatrix,
-} from "./product-matrix";
+import { PrintifyVariantMatrixError, extractEnabledPrintifyVariantMatrix } from "./product-matrix";
 
 const product = (overrides: Partial<PrintifyProductResponse> = {}): PrintifyProductResponse => ({
   id: "printify-product-1",
@@ -80,6 +77,38 @@ describe("extractEnabledPrintifyVariantMatrix", () => {
         priceCents: 3299,
       },
     ]);
+  });
+
+  it("excludes enabled variants that Printify marks unavailable", () => {
+    const rows = extractEnabledPrintifyVariantMatrix(
+      product({
+        variants: [
+          {
+            id: 101,
+            title: "Black / S",
+            sku: "BLACK-S",
+            price: 3199,
+            is_enabled: true,
+            is_available: true,
+            options: [10, 20],
+          },
+          {
+            id: 104,
+            title: "White / M",
+            sku: "WHITE-M",
+            price: 3299,
+            is_enabled: true,
+            is_available: false,
+            options: [11, 21],
+          },
+        ],
+      }),
+    );
+
+    assert.deepEqual(
+      rows.map((row) => row.sku),
+      ["BLACK-S"],
+    );
   });
 
   it("falls back to parsing variant title when option IDs are missing", () => {

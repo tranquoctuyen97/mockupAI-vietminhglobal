@@ -2142,11 +2142,11 @@ function skuSetFromListingVariants(listing: any): Set<string> {
 }
 
 function skuSetFromPrintifyPayloadVariants(
-  variants: Array<{ sku?: string; is_enabled: boolean }> | undefined,
+  variants: Array<{ sku?: string; is_enabled: boolean; is_available?: boolean }> | undefined,
 ): Set<string> {
   return new Set(
     (variants ?? [])
-      .filter((variant) => variant.is_enabled)
+      .filter((variant) => variant.is_enabled && variant.is_available !== false)
       .map((variant) => variant.sku?.trim() ?? "")
       .filter(Boolean),
   );
@@ -2171,12 +2171,12 @@ type PrintifyRecoveryData = {
 function buildPrintifyRecoveryData(input: {
   blueprintId: number;
   printProviderId: number;
-  variants?: Array<{ sku?: string; is_enabled: boolean }>;
+  variants?: Array<{ sku?: string; is_enabled: boolean; is_available?: boolean }>;
 }): Prisma.InputJsonObject {
   const expectedSkus = Array.from(
     new Set(
       (input.variants ?? [])
-        .filter((variant) => variant.is_enabled)
+        .filter((variant) => variant.is_enabled && variant.is_available !== false)
         .map((variant) => variant.sku?.trim() ?? "")
         .filter(Boolean),
     ),
@@ -2212,7 +2212,9 @@ function enabledSkuSetFromPrintifyProduct(product: any): Set<string> {
   const variants = Array.isArray(product?.variants) ? product.variants : [];
   return new Set(
     variants
-      .filter((variant: any) => variant?.is_enabled !== false)
+      .filter(
+        (variant: any) => variant?.is_enabled !== false && variant?.is_available !== false,
+      )
       .map((variant: any) => (typeof variant.sku === "string" ? variant.sku.trim() : ""))
       .filter(Boolean),
   );
