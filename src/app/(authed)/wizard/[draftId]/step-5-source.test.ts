@@ -50,7 +50,7 @@ test("step 5 keeps polling failed listings while an active retry still exists", 
   assert.match(source, /getLatestSucceededAttemptJobs\(allJobs\) \?\? \[\]/);
   assert.match(
     source,
-    /const hasRunningJob =[\s\S]*?const hasActiveRetry =[\s\S]*?Boolean\(listing\.activePublishAttemptId\)[\s\S]*?hasRunningJob;/,
+    /const hasRunningJob =[\s\S]*?const hasFailedJob =[\s\S]*?const hasActiveRetry =[\s\S]*?Boolean\(listing\.activePublishAttemptId\)[\s\S]*?\(hasRunningJob \|\| hasFailedJob\);/,
   );
   assert.match(source, /if \(hasActiveRetry\)/);
   assert.match(source, /retrying:\s*true/);
@@ -61,6 +61,19 @@ test("step 5 keeps polling failed listings while an active retry still exists", 
   );
   assert.match(source, /if \(!isTerminalListing && \(hasRunningJob/);
   assert.match(source, /const successLogs = logs\.filter/);
+});
+
+test("step 5 treats an intermediate publish completion error as retrying", () => {
+  assert.match(
+    source,
+    /const hasActiveRetry =[\s\S]*?Boolean\(listing\.activePublishAttemptId\)[\s\S]*?\(hasRunningJob \|\| hasFailedJob\);/,
+  );
+  assert.match(source, /eventType === "publish\.complete"/);
+  assert.match(source, /stage: "RETRY"/);
+  assert.match(source, /Đang xác nhận kết quả publish\. Hệ thống đang thử lại\.\.\./);
+  assert.match(source, /status: "PUBLISHING"/);
+  assert.match(source, /retrying: true/);
+  assert.match(source, /Đang xác nhận kết quả publish/);
 });
 
 test("step 5 polls persisted publish state while workers run in another process", () => {

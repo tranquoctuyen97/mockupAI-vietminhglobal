@@ -358,11 +358,11 @@ function publishStateFromPersistedListing(listing: PersistedPublishListing): Pub
   const hasRunningJob = jobs.some((job) =>
     ["PENDING", "RUNNING", "RETRY_SCHEDULED"].includes(job.status),
   );
+  const hasFailedJob = jobs.some((job) => job.status === "FAILED");
   const hasActiveRetry =
     Boolean(listing.activePublishAttemptId) &&
     ["FAILED", "PARTIAL_FAILURE"].includes(listing.status) &&
-    hasRunningJob;
-  const hasFailedJob = jobs.some((job) => job.status === "FAILED");
+    (hasRunningJob || hasFailedJob);
   const logs = jobs.map(jobToPublishLog).filter((log): log is PublishLog => Boolean(log));
 
   if (listing.status === "ACTIVE") {
@@ -986,11 +986,12 @@ export default function Step5ReviewPage() {
 
             return {
               ...appendPublishLog(next, {
-                stage: "ERROR",
-                message: data.data?.reason || "Có lỗi xảy ra",
-                status: "error",
+                stage: "RETRY",
+                message: "Đang xác nhận kết quả publish. Hệ thống đang thử lại...",
+                status: "pending",
               }),
-              status: "ERROR",
+              status: "PUBLISHING",
+              retrying: true,
             };
           }
 

@@ -30,11 +30,13 @@ describe("mailbox conversation search UI source", () => {
     expect(source).toContain("setSelectedLabelId(labelId);\n                setSearchQuery(\"\");");
   });
 
-  it("renders a full-width search bar below the store switcher", () => {
+  it("renders a bounded rounded search bar below the store switcher", () => {
     expect(source).toContain('placeholder="Search subject or content..."');
     expect(source).toContain("value={searchQuery}");
     expect(source).toContain("onChange={(event) => setSearchQuery(event.target.value)}");
     expect(source).toContain("aria-label=\"Clear search\"");
+    expect(source).toContain('width: "min(100%, 1060px)"');
+    expect(source).toContain("borderRadius: 999");
   });
 
   it("hides the active label highlight and relabels the list while searching", () => {

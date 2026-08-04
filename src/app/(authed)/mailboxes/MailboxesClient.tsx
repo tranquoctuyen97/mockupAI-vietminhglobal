@@ -1071,12 +1071,13 @@ const searchActive = debouncedQuery.trim().length > 0;
         </div>
         {selectedMailbox ? (
           <div style={searchBarRow}>
-            <Search size={16} style={searchBarIcon} />
+            <Search size={20} strokeWidth={2.2} style={searchBarIcon} />
             <input
               type="text"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="Search subject or content..."
+              aria-label="Search subject or content"
               style={searchBarInput}
             />
             {searchQuery ? (
@@ -3005,13 +3006,13 @@ const pageShell: React.CSSProperties = {
   flexDirection: "column",
   gap: 18,
   overflow: "hidden",
-  background: "#f8faf7",
-  padding: "24px 26px 26px",
+  background: "#f6f8fc",
+  padding: "28px 32px 32px",
 };
 
 const topHeader: React.CSSProperties = {
   display: "grid",
-  gap: 18,
+  gap: 20,
   minWidth: 0,
 };
 
@@ -3034,39 +3035,45 @@ const searchBarRow: React.CSSProperties = {
   position: "relative",
   display: "flex",
   alignItems: "center",
-  width: "100%",
+  width: "min(100%, 1060px)",
+  height: 56,
+  borderRadius: 999,
+  background: "#eaf0f8",
+  boxShadow: "inset 0 0 0 1px rgba(95, 99, 104, 0.08)",
+  overflow: "hidden",
 };
 
 const searchBarIcon: React.CSSProperties = {
   position: "absolute",
-  left: 12,
-  color: "#6b7280",
+  left: 18,
+  color: "#5f6368",
   pointerEvents: "none",
 };
 
 const searchBarInput: React.CSSProperties = {
   width: "100%",
-  height: 44,
-  border: "1px solid #d8dee8",
-  borderRadius: 8,
-  background: "#fff",
-  padding: "0 40px 0 38px",
+  height: "100%",
+  border: 0,
+  borderRadius: 999,
+  background: "transparent",
+  padding: "0 54px 0 56px",
   outline: "none",
-  fontSize: 14,
-  color: "#101828",
+  fontSize: 16,
+  color: "#202124",
 };
 
 const searchBarClearButton: React.CSSProperties = {
   position: "absolute",
-  right: 10,
+  right: 12,
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
-  width: 24,
-  height: 24,
+  width: 32,
+  height: 32,
   border: "none",
-  background: "transparent",
-  color: "#6b7280",
+  borderRadius: 999,
+  background: "#dfe6ef",
+  color: "#5f6368",
   cursor: "pointer",
 };
 
@@ -3097,7 +3104,7 @@ const headerActions: React.CSSProperties = {
 };
 
 const storeMenu: React.CSSProperties = {
-  height: 56,
+  height: 58,
   width: "min(720px, 100%)",
   minWidth: 0,
   display: "flex",
@@ -3105,9 +3112,9 @@ const storeMenu: React.CSSProperties = {
   gap: 12,
   padding: "0 14px",
   background: "#fff",
-  border: "1px solid #d8dee8",
-  borderRadius: 12,
-  boxShadow: "0 8px 20px rgba(16, 24, 40, 0.06)",
+  border: "1px solid #dadce0",
+  borderRadius: 16,
+  boxShadow: "0 2px 8px rgba(60, 64, 67, 0.08)",
 };
 
 const storeAvatar: React.CSSProperties = {
