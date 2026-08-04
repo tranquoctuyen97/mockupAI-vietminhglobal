@@ -1043,10 +1043,36 @@ const searchActive = debouncedQuery.trim().length > 0;
     <main style={pageShell}>
       <header style={topHeader}>
         <div style={headerTopRow}>
-          <div>
+          <div style={headerBrand}>
             <h1 style={pageTitle}>Mailboxes</h1>
             <p style={pageSubtitle}>Manage support mailboxes and customer conversations</p>
           </div>
+          {selectedMailbox ? (
+            <div style={searchBarRow}>
+              <Search size={20} strokeWidth={2.2} style={searchBarIcon} />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search subject or content..."
+                aria-label="Search subject or content"
+                style={searchBarInput}
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setDebouncedQuery("");
+                  }}
+                  style={searchBarClearButton}
+                  aria-label="Clear search"
+                >
+                  <X size={14} />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <div style={headerActions}>
             {selectedStoreId && selectedMailbox ? (
               <button type="button" style={manageButton} onClick={() => setMetricsOpen(true)}>
@@ -1069,32 +1095,6 @@ const searchActive = debouncedQuery.trim().length > 0;
             onChooseMailbox={chooseMailbox}
           />
         </div>
-        {selectedMailbox ? (
-          <div style={searchBarRow}>
-            <Search size={20} strokeWidth={2.2} style={searchBarIcon} />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search subject or content..."
-              aria-label="Search subject or content"
-              style={searchBarInput}
-            />
-            {searchQuery ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchQuery("");
-                  setDebouncedQuery("");
-                }}
-                style={searchBarClearButton}
-                aria-label="Clear search"
-              >
-                <X size={14} />
-              </button>
-            ) : null}
-          </div>
-        ) : null}
       </header>
 
       {metricsOpen && selectedMailbox ? (
@@ -3006,7 +3006,7 @@ const pageShell: React.CSSProperties = {
   flexDirection: "column",
   gap: 18,
   overflow: "hidden",
-  background: "#f6f8fc",
+  background: "#f7f8fa",
   padding: "28px 32px 32px",
 };
 
@@ -3019,9 +3019,14 @@ const topHeader: React.CSSProperties = {
 const headerTopRow: React.CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
-  alignItems: "flex-start",
-  gap: 24,
+  alignItems: "center",
+  gap: 20,
   flexWrap: "wrap",
+  minWidth: 0,
+};
+
+const headerBrand: React.CSSProperties = {
+  flex: "0 1 auto",
   minWidth: 0,
 };
 
@@ -3035,11 +3040,14 @@ const searchBarRow: React.CSSProperties = {
   position: "relative",
   display: "flex",
   alignItems: "center",
-  width: "min(100%, 1060px)",
+  width: "min(100%, 720px)",
+  flex: "1 1 420px",
+  minWidth: 0,
   height: 56,
   borderRadius: 999,
-  background: "#eaf0f8",
-  boxShadow: "inset 0 0 0 1px rgba(95, 99, 104, 0.08)",
+  background: "#fff",
+  border: "1px solid #d8dee8",
+  boxShadow: "0 1px 2px rgba(16, 24, 40, 0.04)",
   overflow: "hidden",
 };
 
@@ -3072,7 +3080,7 @@ const searchBarClearButton: React.CSSProperties = {
   height: 32,
   border: "none",
   borderRadius: 999,
-  background: "#dfe6ef",
+  background: "#f1f3f4",
   color: "#5f6368",
   cursor: "pointer",
 };
