@@ -34,15 +34,15 @@ export async function getListingOrderStats(
 
   const rows = await prisma.$queryRaw<ListingOrderRow[]>(Prisma.sql`
     SELECT
-      oli.listing_id AS "listingId",
+      COALESCE(oli.listing_id, o.listing_id) AS "listingId",
       DATE_TRUNC('day', o.created_at)::date AS "date",
       COUNT(DISTINCT oli.order_id)::int AS "count"
     FROM order_line_items oli
     INNER JOIN orders o ON o.id = oli.order_id
-    INNER JOIN listings l ON l.id = oli.listing_id
+    INNER JOIN listings l ON l.id = COALESCE(oli.listing_id, o.listing_id)
     WHERE l.tenant_id = ${tenantId}
       AND l.archived_at IS NULL
-      AND oli.listing_id IN (${Prisma.join(listingIds)})
+      AND COALESCE(oli.listing_id, o.listing_id) IN (${Prisma.join(listingIds)})
       AND o.created_at >= ${from}
       AND o.created_at < ${toExclusive}
     GROUP BY oli.listing_id, DATE_TRUNC('day', o.created_at)::date
