@@ -139,6 +139,58 @@ body {
   letter-spacing: normal;
 }
 
+.dashboard-heading {
+  font-size: clamp(2.75rem, 3.4vw, 3.75rem);
+  line-height: 0.95;
+}
+
+.dashboard-filter-sync {
+  display: flex;
+  margin-left: 0;
+}
+
+.dashboard-kpi-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11.25rem), 1fr));
+}
+
+.analytics-stat-card {
+  min-height: 8.75rem;
+  padding: 1rem;
+}
+
+.analytics-stat-card__body {
+  min-width: 0;
+}
+
+.analytics-stat-card__delta,
+.analytics-stat-card__comparison {
+  white-space: nowrap;
+}
+
+.analytics-stat-card__sparkline {
+  flex: 0 0 4.5rem;
+  width: 4.5rem;
+}
+
+@media (max-width: 640px) {
+  .dashboard-heading {
+    font-size: 2.5rem;
+  }
+
+  .dashboard-filter-toolbar > div,
+  .dashboard-filter-toolbar > label,
+  .dashboard-filter-toolbar button,
+  .dashboard-filter-toolbar select {
+    max-width: 100%;
+  }
+
+  .dashboard-filter-sync {
+    order: 3;
+  }
+}
+
 .text-sub-heading {
   font-family: var(--font-display);
   font-size: clamp(1.5rem, 2.5vw, 2.5rem); /* 40px responsive */

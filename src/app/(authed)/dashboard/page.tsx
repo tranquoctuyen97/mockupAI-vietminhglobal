@@ -1,6 +1,6 @@
-import { validateSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
-import { getDashboardSummary } from "@/lib/analytics/queries";
+
+import { validateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import DashboardClient from "./DashboardClient";
 
@@ -11,25 +11,16 @@ export const metadata = {
 
 /**
  * Dashboard — Server Component.
- * Fetches all dashboard data on the server (no client-side API calls).
+ * Loads the tenant timezone for dashboard rendering.
  */
 export default async function DashboardPage() {
   const session = await validateSession();
   if (!session) redirect("/login");
 
-  const [summary, tenant] = await Promise.all([
-    getDashboardSummary(session.tenantId),
-    prisma.tenant.findUnique({
-      where: { id: session.tenantId },
-      select: { twTimezone: true },
-    }),
-  ]);
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: session.tenantId },
+    select: { twTimezone: true },
+  });
 
-  return (
-    <DashboardClient
-      summary={summary}
-      twTimezone={tenant?.twTimezone ?? "America/Los_Angeles"}
-    />
-  );
+  return <DashboardClient twTimezone={tenant?.twTimezone ?? "America/Los_Angeles"} />;
 }
-

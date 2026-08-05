@@ -7,6 +7,7 @@ type ClosableWorker = Pick<Worker, "close" | "on">;
 let mockupWorker: ClosableWorker | null = null;
 let printifyMockupPollWorker: ClosableWorker | null = null;
 let tripleWhaleSyncWorker: ClosableWorker | null = null;
+let inkhubOrderSyncWorker: ClosableWorker | null = null;
 let mailboxSyncWorker: ClosableWorker | null = null;
 let mailboxBackfillWorker: ClosableWorker | null = null;
 let mailboxResponseMetricsWorker: ClosableWorker | null = null;
@@ -42,6 +43,7 @@ async function startWorkers() {
     { startMockupCompositeWorker },
     { startPrintifyMockupPollWorker },
     { startTripleWhaleSyncWorker },
+    { startInkhubOrderSyncWorker },
     {
       startMailboxSyncWorker,
       startMailboxBackfillWorker,
@@ -54,6 +56,7 @@ async function startWorkers() {
     import("./src/lib/mockup/worker"),
     import("./src/lib/mockup/printify-poll-worker"),
     import("./src/lib/jobs/workers/triple-whale-sync-worker"),
+    import("./src/lib/jobs/workers/inkhub-order-sync-worker"),
     import("./src/lib/jobs/workers/mailbox-sync-worker"),
     import("./src/lib/jobs/workers/publish-worker"),
     import("./src/lib/publish/outbox"),
@@ -62,6 +65,7 @@ async function startWorkers() {
   mockupWorker = startMockupCompositeWorker();
   printifyMockupPollWorker = startPrintifyMockupPollWorker();
   tripleWhaleSyncWorker = startTripleWhaleSyncWorker();
+  inkhubOrderSyncWorker = startInkhubOrderSyncWorker();
   mailboxSyncWorker = await startMailboxSyncWorker();
   mailboxBackfillWorker = startMailboxBackfillWorker();
   mailboxResponseMetricsWorker = startMailboxResponseMetricsWorker();
@@ -79,6 +83,10 @@ async function startWorkers() {
 
   tripleWhaleSyncWorker.on("ready", () => {
     console.log("Triple Whale sync worker is ready and listening to queue.");
+  });
+
+  inkhubOrderSyncWorker.on("ready", () => {
+    console.log("Inkhub order sync worker is ready and listening to queue.");
   });
 
   mailboxSyncWorker.on("ready", () => {
@@ -144,6 +152,7 @@ async function shutdown() {
     mockupWorker?.close(),
     printifyMockupPollWorker?.close(),
     tripleWhaleSyncWorker?.close(),
+    inkhubOrderSyncWorker?.close(),
     mailboxSyncWorker?.close(),
     mailboxBackfillWorker?.close(),
     mailboxResponseMetricsWorker?.close(),

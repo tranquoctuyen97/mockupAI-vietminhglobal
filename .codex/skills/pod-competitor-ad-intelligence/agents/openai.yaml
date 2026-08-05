@@ -1,0 +1,4 @@
+interface:
+  display_name: "Competitor Ad Intelligence"
+  short_description: "Analyze POD competitor ad evidence without overclaiming."
+  default_prompt: "Validate a POD competitor run folder, compare changes, group creative families, and write an evidence-backed report."

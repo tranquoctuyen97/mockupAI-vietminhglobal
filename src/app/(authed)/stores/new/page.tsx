@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Store,
@@ -17,7 +17,12 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
-const REDIRECT_URL = `${typeof window !== "undefined" ? window.location.origin : ""}/api/shopify/callback`;
+interface InkhubShopOption {
+  id: number;
+  label: string;
+  count: number;
+}
+
 const REQUIRED_SCOPES = [
   { scope: "write_products", desc: "Tạo & sửa sản phẩm" },
   { scope: "read_products", desc: "Đọc thông tin sản phẩm" },
@@ -66,6 +71,34 @@ function NewStoreContent() {
   const [domain, setDomain] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [redirectUrl, setRedirectUrl] = useState("/api/shopify/callback");
+  const [inkhubShopId, setInkhubShopId] = useState("");
+  const [inkhubShops, setInkhubShops] = useState<InkhubShopOption[]>([]);
+  const [loadingInkhubShops, setLoadingInkhubShops] = useState(false);
+
+  useEffect(() => {
+    setRedirectUrl(`${window.location.origin}/api/shopify/callback`);
+  }, []);
+
+  useEffect(() => {
+    if (step !== 2 || inkhubShops.length > 0) return;
+    const controller = new AbortController();
+    setLoadingInkhubShops(true);
+    fetch("/api/inkhub/shops", { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Unable to load Inkhub shops");
+        const data = await response.json();
+        setInkhubShops(Array.isArray(data) ? data : []);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name === "AbortError") return;
+        setError("Không tải được danh sách shop Inkhub; bạn vẫn có thể cấu hình sau trong Store.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingInkhubShops(false);
+      });
+    return () => controller.abort();
+  }, [inkhubShops.length, step]);
 
   function decodeError(err: string): string {
     const messages: Record<string, string> = {
@@ -102,6 +135,7 @@ function NewStoreContent() {
           shopifyDomain: domain,
           shopifyClientId: clientId,
           shopifyClientSecret: clientSecret,
+          inkhubShopId: inkhubShopId === "" ? null : Number(inkhubShopId),
         }),
       });
 
@@ -229,9 +263,9 @@ function NewStoreContent() {
                 wordBreak: "break-all",
               }}
             >
-              <span>{REDIRECT_URL}</span>
+              <span>{redirectUrl}</span>
               <button
-                onClick={() => handleCopy(REDIRECT_URL, "url")}
+                onClick={() => handleCopy(redirectUrl, "url")}
                 style={{
                   background: "none",
                   border: "none",
@@ -464,6 +498,31 @@ function NewStoreContent() {
               />
               <span style={{ fontSize: "0.7rem", opacity: 0.5, marginTop: 4, display: "block" }}>
                 Chỉ cần phần trước .myshopify.com cũng được
+              </span>
+            </div>
+
+            <div>
+              <label htmlFor="inkhub-shop-id" style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, marginBottom: 6 }}>
+                Shop Inkhub để đồng bộ order <span style={{ opacity: 0.5, fontWeight: 400 }}>(tuỳ chọn)</span>
+              </label>
+              <select
+                id="inkhub-shop-id"
+                value={inkhubShopId}
+                onChange={(event) => setInkhubShopId(event.currentTarget.value)}
+                className="input"
+                style={{ width: "100%" }}
+                disabled={loadingInkhubShops}
+                aria-label="Shop Inkhub để đồng bộ order"
+              >
+                <option value="">Không mapping lúc này</option>
+                {inkhubShops.map((shop) => (
+                  <option key={shop.id} value={shop.id}>
+                    {shop.label} · #{shop.id} · {shop.count.toLocaleString("en-US")} orders
+                  </option>
+                ))}
+              </select>
+              <span style={{ fontSize: "0.7rem", opacity: 0.5, marginTop: 4, display: "block" }}>
+                Nếu chọn, sau khi tạo Store hệ thống sẽ tự queue job initial để sync toàn bộ order.
               </span>
             </div>
 

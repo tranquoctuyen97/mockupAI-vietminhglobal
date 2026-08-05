@@ -94,6 +94,8 @@ interface StoreDetail {
   name: string;
   shopifyDomain: string;
   printifyShopId: string | null;
+  inkhubShopId: number | null;
+  inkhubShopLabel: string | null;
   printifyShopTitle?: string;
   printifyShop?: {
     id: string;
@@ -462,6 +464,8 @@ function OverviewTab({
     <div>
       <h3 style={{ fontWeight: 700, marginBottom: 16 }}>Thông tin kết nối</h3>
 
+      <StoreIdentitySection store={store} onRefresh={onRefresh} />
+
       {/* Shopify row */}
       <div className="card" style={{ padding: "16px 20px", marginBottom: 12 }}>
         <div className="flex items-center justify-between">
@@ -573,6 +577,119 @@ function OverviewTab({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+type InkhubShopOption = { id: number; label: string; count: number };
+
+/** Store-local name and Inkhub shop mapping are intentionally independent. */
+function StoreIdentitySection({
+  store,
+  onRefresh,
+}: {
+  store: StoreDetail;
+  onRefresh: (options?: { silent?: boolean }) => Promise<unknown> | void;
+}) {
+  const [selectedShopId, setSelectedShopId] = useState(
+    store.inkhubShopId === null ? "" : String(store.inkhubShopId),
+  );
+  const [shops, setShops] = useState<InkhubShopOption[]>([]);
+  const [loadingShops, setLoadingShops] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setSelectedShopId(store.inkhubShopId === null ? "" : String(store.inkhubShopId));
+  }, [store.inkhubShopId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoadingShops(true);
+    fetch("/api/inkhub/shops", { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Không tải được danh sách shop Inkhub");
+        const data = await response.json();
+        setShops(Array.isArray(data) ? data : []);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name === "AbortError") return;
+        toast.error("Không tải được danh sách shop Inkhub");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingShops(false);
+      });
+    return () => controller.abort();
+  }, []);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/stores/${store.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inkhubShopId: selectedShopId === "" ? null : Number(selectedShopId),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        toast.error(data.error || "Không lưu được cấu hình Store");
+        return;
+      }
+      toast.success(
+        data.inkhubInitialSyncQueued
+          ? "Đã lưu Store và xếp hàng đồng bộ Inkhub ban đầu"
+          : "Đã lưu cấu hình Store",
+      );
+      await onRefresh({ silent: true });
+    } catch {
+      toast.error("Không thể kết nối server");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+      <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
+        <div>
+          <h3 style={{ fontWeight: 700, margin: 0 }}>Kết nối shop Inkhub</h3>
+          <p style={{ fontSize: "0.78rem", opacity: 0.6, margin: "4px 0 0" }}>
+            Chọn shop Inkhub để đồng bộ order cho Store <strong>{store.name}</strong>.
+          </p>
+        </div>
+        <button onClick={handleSave} disabled={saving || loadingShops} className="btn btn-primary" style={{ fontSize: "0.8rem" }}>
+          {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+          Lưu kết nối
+        </button>
+      </div>
+
+      <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600 }}>
+        Shop Inkhub
+        <select
+          value={selectedShopId}
+          onChange={(event) => setSelectedShopId(event.currentTarget.value)}
+          className="input"
+          style={{ display: "block", width: "100%", maxWidth: 680, marginTop: 6 }}
+          disabled={loadingShops || saving}
+        >
+          <option value="">Không mapping</option>
+          {store.inkhubShopId !== null && !shops.some((shop) => shop.id === store.inkhubShopId) ? (
+            <option value={store.inkhubShopId}>
+              {store.inkhubShopLabel || `Shop #${store.inkhubShopId}`} (đang mapping)
+            </option>
+          ) : null}
+          {shops.map((shop) => (
+            <option key={shop.id} value={shop.id}>
+              {shop.label} · #{shop.id} · {shop.count.toLocaleString("en-US")} orders
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <p style={{ fontSize: "0.76rem", opacity: 0.6, margin: "12px 0 0" }}>
+        Đổi shop sẽ tự đồng bộ order ban đầu. Bỏ kết nối không xóa các order đã lưu.
+      </p>
     </div>
   );
 }

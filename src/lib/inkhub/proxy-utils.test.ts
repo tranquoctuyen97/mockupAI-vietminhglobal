@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isTextContent, rewriteApiUrls, injectTokenScript, rewriteAbsolutePaths, rewriteRootAssets } from "./proxy-utils";
+import {
+  injectTokenScript,
+  isTextContent,
+  rewriteAbsolutePaths,
+  rewriteApiUrls,
+  rewriteRootAssets,
+} from "./proxy-utils";
 
 test("isTextContent: returns true for text types", () => {
   assert.equal(isTextContent("text/html; charset=utf-8"), true);
@@ -34,6 +40,8 @@ test("injectTokenScript: injects before </head>", () => {
   const result = injectTokenScript(html, "tok123", "1");
   assert.ok(result.includes("localStorage.setItem('token','tok123')"));
   assert.ok(result.includes("localStorage.setItem('organizationId','1')"));
+  assert.ok(result.includes("history.replaceState({},'','/')"));
+  assert.ok(!result.includes("history.replaceState({},'','/orders')"));
   assert.ok(result.indexOf("<script>") < result.indexOf("</head>"));
 });
 

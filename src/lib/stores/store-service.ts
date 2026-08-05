@@ -346,7 +346,7 @@ export async function deleteStore(storeId: string) {
     // Unlink Printify shop before deleting (set FK to null)
     await tx.store.update({
       where: { id: storeId },
-      data: { printifyShopId: null },
+      data: { printifyShopId: null, inkhubShopId: null, inkhubShopLabel: null },
     });
 
     return tx.store.delete({
