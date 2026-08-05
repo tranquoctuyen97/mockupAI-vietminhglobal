@@ -44,6 +44,7 @@ interface Store {
 }
 
 const PAGE_SIZE = 20;
+const ALL_LISTINGS_ID = "__all__";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
   PUBLISHING: {
@@ -115,7 +116,7 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
   const [selectedStoreId, setSelectedStoreId] = useState("");
   const [orderStats, setOrderStats] = useState<Record<string, ListingOrderStats>>({});
   const [ordersLoading, setOrdersLoading] = useState(false);
-  const [selectedListingId, setSelectedListingId] = useState(initialListings[0]?.id ?? "");
+  const [selectedListingId, setSelectedListingId] = useState(ALL_LISTINGS_ID);
   const [listingPickerOpen, setListingPickerOpen] = useState(false);
   const [listingSearch, setListingSearch] = useState("");
 
@@ -123,13 +124,16 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
   const toDate = toDateInputValue(new Date());
 
   useEffect(() => {
-    if (!listings.some((listing) => listing.id === selectedListingId)) {
-      setSelectedListingId(listings[0]?.id ?? "");
+    if (
+      selectedListingId !== ALL_LISTINGS_ID &&
+      !listings.some((listing) => listing.id === selectedListingId)
+    ) {
+      setSelectedListingId(ALL_LISTINGS_ID);
     }
   }, [listings, selectedListingId]);
 
   useEffect(() => {
-    if (listings.length === 0) {
+    if (listings.length === 0 && total === 0) {
       setOrderStats({});
       setOrdersLoading(false);
       return;
@@ -137,7 +141,13 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
 
     const controller = new AbortController();
     const params = new URLSearchParams({ from: fromDate, to: toDate });
-    for (const listing of listings) params.append("listingId", listing.id);
+    if (selectedListingId === ALL_LISTINGS_ID) {
+      params.set("aggregate", "true");
+      params.set("status", filter);
+      if (selectedStoreId) params.set("storeId", selectedStoreId);
+    } else {
+      for (const listing of listings) params.append("listingId", listing.id);
+    }
 
     setOrdersLoading(true);
     fetch(`/api/listings/order-stats?${params.toString()}`, { signal: controller.signal })
@@ -155,7 +165,7 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
       });
 
     return () => controller.abort();
-  }, [fromDate, listings, toDate]);
+  }, [filter, fromDate, listings, selectedListingId, selectedStoreId, toDate, total]);
 
   async function fetchListings(status: string, storeId = selectedStoreId, nextPage = page) {
     setLoading(true);
@@ -200,6 +210,7 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
   }
 
   const selectedListing = listings.find((listing) => listing.id === selectedListingId);
+  const isAllListingsSelected = selectedListingId === ALL_LISTINGS_ID;
   const selectedListingStats = selectedListingId ? orderStats[selectedListingId] : undefined;
   const chartData = buildChartData(selectedListingStats, fromDate, toDate);
   const pickerListings = listings.filter((listing) =>
@@ -287,7 +298,7 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
           <div>
             <h2 style={{ fontWeight: 700, fontSize: "1rem", margin: 0 }}>Orders theo ngày</h2>
             <p style={{ fontSize: "0.78rem", opacity: 0.5, margin: "4px 0 0" }}>
-              Chỉ tính các order đã gắn với listing đang chọn.
+              Tính các order đã gắn với listing đang chọn hoặc toàn bộ listing đang lọc.
             </p>
           </div>
           <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
@@ -325,7 +336,9 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
                 <span
                   style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                 >
-                  {selectedListing?.title || "Chọn listing"}
+                  {isAllListingsSelected
+                    ? "All listings"
+                    : selectedListing?.title || "Chọn listing"}
                 </span>
                 <ChevronDown size={15} style={{ flexShrink: 0, opacity: 0.6 }} />
               </button>
@@ -370,6 +383,31 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
                     />
                   </div>
                   <div role="listbox" style={{ maxHeight: 220, overflowY: "auto", marginTop: 6 }}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={isAllListingsSelected}
+                      onClick={() => {
+                        setSelectedListingId(ALL_LISTINGS_ID);
+                        setListingPickerOpen(false);
+                        setListingSearch("");
+                      }}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        padding: "9px 8px",
+                        border: 0,
+                        borderRadius: "var(--radius-sm)",
+                        background: isAllListingsSelected ? "var(--bg-tertiary)" : "transparent",
+                        color: "inherit",
+                        textAlign: "left",
+                        fontSize: "0.8rem",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      All listings
+                    </button>
                     {pickerListings.length === 0 ? (
                       <div style={{ padding: "10px 8px", fontSize: "0.8rem", opacity: 0.5 }}>
                         Không tìm thấy listing
@@ -425,7 +463,7 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
             >
               <Loader2 size={20} className="animate-spin" />
             </div>
-          ) : !selectedListing ? (
+          ) : !isAllListingsSelected && !selectedListing ? (
             <div
               className="flex items-center justify-center"
               style={{ height: "100%", opacity: 0.5 }}
@@ -436,9 +474,9 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
             <ListingOrdersChart data={chartData} />
           )}
         </div>
-        {selectedListing && (
+        {(isAllListingsSelected || selectedListing) && (
           <div style={{ fontSize: "0.8rem", opacity: 0.65, marginTop: 4 }}>
-            {selectedListing.title || "Untitled"}:{" "}
+            {isAllListingsSelected ? "All listings" : selectedListing?.title || "Untitled"}:{" "}
             <strong>{selectedListingStats?.orderCount ?? 0}</strong> orders
           </div>
         )}
