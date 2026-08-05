@@ -78,6 +78,7 @@ export async function getAggregateListingOrderStats(
   tenantId: string,
   storeId: string | null,
   status: string | null,
+  search: string | null,
   from: Date,
   toExclusive: Date,
 ): Promise<ListingOrderStats> {
@@ -85,6 +86,14 @@ export async function getAggregateListingOrderStats(
 
   if (storeId) filters.push(Prisma.sql`l.store_id = ${storeId}`);
   if (status && status !== "all") filters.push(Prisma.sql`l.status = ${status}`);
+  if (search) {
+    const pattern = `%${search}%`;
+    filters.push(Prisma.sql`(
+      l.title ILIKE ${pattern}
+      OR COALESCE(l.shopify_product_id, '') ILIKE ${pattern}
+      OR COALESCE(l.printify_product_id, '') ILIKE ${pattern}
+    )`);
+  }
 
   const rows = await prisma.$queryRaw<AggregateListingOrderRow[]>(Prisma.sql`
     SELECT

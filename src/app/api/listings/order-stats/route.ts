@@ -53,6 +53,7 @@ export async function GET(request: Request) {
       session.tenantId,
       url.searchParams.get("storeId") || null,
       url.searchParams.get("status") || null,
+      url.searchParams.get("search")?.trim() || null,
       from,
       toExclusive,
     );

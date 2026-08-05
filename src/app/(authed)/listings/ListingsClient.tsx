@@ -14,7 +14,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import ListingOrdersChart, {
   type ListingOrderChartPoint,
@@ -119,6 +119,9 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
   const [selectedListingId, setSelectedListingId] = useState(ALL_LISTINGS_ID);
   const [listingPickerOpen, setListingPickerOpen] = useState(false);
   const [listingSearch, setListingSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const hasMountedSearch = useRef(false);
 
   const fromDate = daysAgo(29);
   const toDate = toDateInputValue(new Date());
@@ -145,6 +148,7 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
       params.set("aggregate", "true");
       params.set("status", filter);
       if (selectedStoreId) params.set("storeId", selectedStoreId);
+      if (search) params.set("search", search);
     } else {
       for (const listing of listings) params.append("listingId", listing.id);
     }
@@ -165,9 +169,14 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
       });
 
     return () => controller.abort();
-  }, [filter, fromDate, listings, selectedListingId, selectedStoreId, toDate, total]);
+  }, [filter, fromDate, listings, search, selectedListingId, selectedStoreId, toDate, total]);
 
-  async function fetchListings(status: string, storeId = selectedStoreId, nextPage = page) {
+  const fetchListings = useCallback(async function fetchListings(
+    status: string,
+    storeId: string,
+    nextPage: number,
+    searchTerm: string,
+  ) {
     setLoading(true);
     try {
       const params = new URLSearchParams({
@@ -176,6 +185,7 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
         limit: String(PAGE_SIZE),
       });
       if (storeId) params.set("storeId", storeId);
+      if (searchTerm) params.set("search", searchTerm);
 
       const url = `/api/listings?${params.toString()}`;
       const res = await fetch(url);
@@ -190,23 +200,37 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!hasMountedSearch.current) {
+      hasMountedSearch.current = true;
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      const nextSearch = searchInput.trim();
+      setSearch(nextSearch);
+      setPage(1);
+      fetchListings(filter, selectedStoreId, 1, nextSearch);
+    }, 300);
+
+    return () => window.clearTimeout(timeout);
+  }, [fetchListings, filter, searchInput, selectedStoreId]);
 
   function handleFilterChange(key: string) {
     setFilter(key);
     setPage(1);
-    fetchListings(key, selectedStoreId, 1);
   }
 
   function handleStoreChange(storeId: string) {
     setSelectedStoreId(storeId);
     setPage(1);
-    fetchListings(filter, storeId, 1);
   }
 
   function handlePageChange(nextPage: number) {
     if (nextPage < 1 || nextPage > totalPages || nextPage === page) return;
-    fetchListings(filter, selectedStoreId, nextPage);
+    fetchListings(filter, selectedStoreId, nextPage, search);
   }
 
   const selectedListing = listings.find((listing) => listing.id === selectedListingId);
@@ -221,7 +245,7 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
     if (!confirm("Archive listing này?")) return;
     await fetch(`/api/listings/${id}`, { method: "DELETE" });
     const nextPage = listings.length === 1 && page > 1 ? page - 1 : page;
-    fetchListings(filter, selectedStoreId, nextPage);
+    fetchListings(filter, selectedStoreId, nextPage, search);
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -264,6 +288,36 @@ export default function ListingsClient({ initialListings, initialTotal, stores }
             </button>
           ))}
         </div>
+
+        <label
+          className="flex items-center gap-2"
+          style={{
+            flex: "1 1 320px",
+            maxWidth: 460,
+            minWidth: 240,
+            padding: "0 10px",
+            border: "1px solid var(--border-default)",
+            borderRadius: "var(--radius-sm)",
+            background: "var(--bg-primary)",
+          }}
+        >
+          <Search size={15} style={{ opacity: 0.5, flexShrink: 0 }} />
+          <input
+            aria-label="Search listings"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            placeholder="Tìm theo tên, Shopify Product ID hoặc Printify Product ID"
+            style={{
+              width: "100%",
+              padding: "8px 0",
+              border: 0,
+              outline: 0,
+              background: "transparent",
+              color: "inherit",
+              fontSize: "0.8rem",
+            }}
+          />
+        </label>
 
         <label className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}>
           <span style={{ opacity: 0.6 }}>Store</span>

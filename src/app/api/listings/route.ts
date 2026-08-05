@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
   const limit =
     Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, 100) : 20;
   const storeId = searchParams.get("storeId")?.trim();
+  const search = searchParams.get("search")?.trim();
   const skip = (page - 1) * limit;
 
   const where: Record<string, unknown> = {
@@ -33,6 +34,14 @@ export async function GET(request: NextRequest) {
 
   if (storeId) {
     where.storeId = storeId;
+  }
+
+  if (search) {
+    where.OR = [
+      { title: { contains: search, mode: "insensitive" } },
+      { shopifyProductId: { contains: search, mode: "insensitive" } },
+      { printifyProductId: { contains: search, mode: "insensitive" } },
+    ];
   }
 
   const [listings, total] = await Promise.all([
