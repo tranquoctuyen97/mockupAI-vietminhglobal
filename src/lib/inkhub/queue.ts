@@ -10,18 +10,34 @@ export type InkhubOrderSyncJob = {
   tenantId: string;
   storeId: string;
   shopIds: number[];
-  kind: "initial" | "recent";
+  kind: "initial" | "recent" | "backfill";
+  fromDate?: string;
+  toDate?: string;
 };
 
 export async function enqueueInkhubInitialSync(
   payload: Omit<InkhubOrderSyncJob, "kind">,
   queue: Queue = getInkhubOrderSyncQueue(),
 ) {
+  const rangeSuffix = [payload.fromDate, payload.toDate].filter(Boolean).join("-");
   return queue.add(
     "sync-inkhub-orders",
     { ...payload, kind: "initial" } satisfies InkhubOrderSyncJob,
     {
-      jobId: `inkhub-initial-${payload.storeId}-${payload.shopIds.join("-")}-${Date.now()}`,
+      jobId: `inkhub-initial-${payload.storeId}-${payload.shopIds.join("-")}-${rangeSuffix || Date.now()}`,
+    },
+  );
+}
+
+export async function enqueueInkhubBackfillSync(
+  payload: Omit<InkhubOrderSyncJob, "kind"> & { fromDate: string; toDate: string },
+  queue: Queue = getInkhubOrderSyncQueue(),
+) {
+  return queue.add(
+    "backfill-inkhub-orders",
+    { ...payload, kind: "backfill" } satisfies InkhubOrderSyncJob,
+    {
+      jobId: `inkhub-backfill-${payload.storeId}-${payload.shopIds.join("-")}-${payload.fromDate}-${payload.toDate}`,
     },
   );
 }

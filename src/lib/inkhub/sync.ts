@@ -1,18 +1,21 @@
 import { prisma } from "@/lib/db";
 import { type InkhubOrderItem, normalizeInkhubOrderCosts } from "@/lib/inkhub/costs";
-import { fetchInkhubOrdersPage } from "@/lib/inkhub/orders-client";
+import {
+  fetchInkhubOrdersPage,
+  INKHUB_PAGE_SIZE,
+  type InkhubOrderDateRange,
+} from "@/lib/inkhub/orders-client";
 
 const RECENT_SYNC_DAYS = 31;
-const RECENT_SORT_BUFFER_DAYS = 3;
 
-export type InkhubSyncMode = "initial" | "recent";
+export type InkhubSyncMode = "initial" | "recent" | "backfill";
 
 export type InkhubSyncInput = {
   tenantId: string;
   storeId: string;
   shopId: number;
   mode: InkhubSyncMode;
-};
+} & InkhubOrderDateRange;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -33,6 +36,33 @@ function date(value: unknown): Date | null {
   if (!value) return null;
   const parsed = new Date(String(value));
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function normalizedDateParam(value: Date | string | undefined, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) throw new Error(`Invalid Inkhub sync ${field}`);
+  return parsed.toISOString();
+}
+
+function syncDateRange(input: InkhubSyncInput, now: Date): InkhubOrderDateRange {
+  const requestedFrom = normalizedDateParam(input.fromDate, "fromDate");
+  const requestedTo = normalizedDateParam(input.toDate, "toDate");
+  if (requestedFrom && requestedTo && requestedFrom > requestedTo) {
+    throw new Error("Inkhub sync fromDate must be before or equal to toDate");
+  }
+
+  if (input.mode === "recent") {
+    const cutoff = new Date(now.getTime() - RECENT_SYNC_DAYS * 24 * 60 * 60 * 1000);
+    const fromDate = requestedFrom ?? cutoff.toISOString();
+    const toDate = requestedTo ?? now.toISOString();
+    if (fromDate > toDate) {
+      throw new Error("Inkhub sync fromDate must be before or equal to toDate");
+    }
+    return { fromDate, toDate };
+  }
+
+  return { fromDate: requestedFrom, toDate: requestedTo };
 }
 
 function money(cents: number | null): string | null {
@@ -117,13 +147,6 @@ function withinRecentWindow(order: JsonRecord, cutoff: Date): boolean {
   const createdAt = date(order.createdAt);
   const updatedAt = date(order.updatedAt);
   return Boolean((createdAt && createdAt >= cutoff) || (updatedAt && updatedAt >= cutoff));
-}
-
-function canStopRecentPage(items: JsonRecord[], cutoff: Date): boolean {
-  if (items.length === 0) return true;
-  const bufferedCutoff = new Date(cutoff.getTime() - RECENT_SORT_BUFFER_DAYS * 24 * 60 * 60 * 1000);
-  const printifyDates = items.map((item) => date(item.printifyCreated));
-  return printifyDates.every((value) => value !== null && value < bufferedCutoff);
 }
 
 async function upsertOrder(
@@ -239,7 +262,11 @@ export async function syncInkhubStore(input: InkhubSyncInput) {
     throw new Error("Inkhub shop mapping changed; refusing to sync stale job");
   }
 
-  const cutoff = new Date(Date.now() - RECENT_SYNC_DAYS * 24 * 60 * 60 * 1000);
+  const now = new Date();
+  const range = syncDateRange(input, now);
+  const cutoff = range.fromDate
+    ? new Date(range.fromDate)
+    : new Date(now.getTime() - RECENT_SYNC_DAYS * 24 * 60 * 60 * 1000);
   const recent = input.mode === "recent";
   let page = 1;
   let pagesFetched = 0;
@@ -248,7 +275,13 @@ export async function syncInkhubStore(input: InkhubSyncInput) {
   let totalPages = 1;
 
   while (page <= totalPages) {
-    const result = await fetchInkhubOrdersPage(input.tenantId, input.shopId, page);
+    const result = await fetchInkhubOrdersPage(
+      input.tenantId,
+      input.shopId,
+      page,
+      INKHUB_PAGE_SIZE,
+      range,
+    );
     pagesFetched += 1;
     totalPages = Math.max(totalPages, result.totalPages);
     ordersSeen += result.items.length;
@@ -259,7 +292,6 @@ export async function syncInkhubStore(input: InkhubSyncInput) {
       ordersSynced += 1;
     }
 
-    if (recent && canStopRecentPage(result.items, cutoff)) break;
     if (result.items.length === 0) break;
     page += 1;
   }

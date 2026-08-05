@@ -11,6 +11,11 @@ export type InkhubOrdersPage = {
   pageSize: number;
 };
 
+export type InkhubOrderDateRange = {
+  fromDate?: Date | string;
+  toDate?: Date | string;
+};
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -53,6 +58,7 @@ async function requestPage(
   shopId: number,
   page: number,
   pageSize: number,
+  dateRange?: InkhubOrderDateRange,
 ): Promise<Response> {
   const { token, orgId } = await getToken(tenantId);
   const query = new URLSearchParams({
@@ -60,6 +66,12 @@ async function requestPage(
     pageSize: String(pageSize),
   });
   query.append("shopIds[]", String(shopId));
+  if (dateRange?.fromDate !== undefined) {
+    query.set("fromDate", serializeDateParam(dateRange.fromDate));
+  }
+  if (dateRange?.toDate !== undefined) {
+    query.set("toDate", serializeDateParam(dateRange.toDate));
+  }
   return fetch(`${INKHUB_API_ORIGIN}/api/orders?${query.toString()}`, {
     headers: {
       accept: "application/json",
@@ -70,16 +82,21 @@ async function requestPage(
   });
 }
 
+function serializeDateParam(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
 export async function fetchInkhubOrdersPage(
   tenantId: string,
   shopId: number,
   page = 1,
   pageSize = DEFAULT_PAGE_SIZE,
+  dateRange?: InkhubOrderDateRange,
 ): Promise<InkhubOrdersPage> {
-  let response = await requestPage(tenantId, shopId, page, pageSize);
+  let response = await requestPage(tenantId, shopId, page, pageSize, dateRange);
   if (response.status === 401) {
     invalidateToken(tenantId);
-    response = await requestPage(tenantId, shopId, page, pageSize);
+    response = await requestPage(tenantId, shopId, page, pageSize, dateRange);
   }
   if (!response.ok) {
     throw new Error(`Inkhub orders request failed: ${response.status}`);

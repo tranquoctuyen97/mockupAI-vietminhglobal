@@ -24,7 +24,7 @@ export function startInkhubOrderSyncWorker(): Worker<InkhubOrderSyncJob> {
         return dispatchRecentInkhubOrderSyncs();
       }
 
-      const { tenantId, storeId, shopIds, kind } = job.data;
+      const { tenantId, storeId, shopIds, kind, fromDate, toDate } = job.data;
       if (!Array.isArray(shopIds) || shopIds.length === 0) {
         throw new Error("Inkhub sync job requires at least one shopId");
       }
@@ -32,7 +32,9 @@ export function startInkhubOrderSyncWorker(): Worker<InkhubOrderSyncJob> {
       await job.updateProgress({ status: "syncing", shopIds, kind });
       const results = [];
       for (const shopId of shopIds) {
-        results.push(await syncInkhubStore({ tenantId, storeId, shopId, mode: kind }));
+        results.push(
+          await syncInkhubStore({ tenantId, storeId, shopId, mode: kind, fromDate, toDate }),
+        );
       }
       await job.updateProgress({ status: "complete", results });
       return { success: true, results };
