@@ -2,7 +2,7 @@
  * GET /api/listings — List all listings for tenant
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { validateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 
@@ -14,8 +14,12 @@ export async function GET(request: NextRequest) {
 
   const searchParams = request.nextUrl.searchParams;
   const status = searchParams.get("status");
-  const page = parseInt(searchParams.get("page") || "1", 10);
-  const limit = parseInt(searchParams.get("limit") || "20", 10);
+  const requestedPage = Number.parseInt(searchParams.get("page") || "1", 10);
+  const requestedLimit = Number.parseInt(searchParams.get("limit") || "20", 10);
+  const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const limit =
+    Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, 100) : 20;
+  const storeId = searchParams.get("storeId")?.trim();
   const skip = (page - 1) * limit;
 
   const where: Record<string, unknown> = {
@@ -25,6 +29,10 @@ export async function GET(request: NextRequest) {
 
   if (status && status !== "all") {
     where.status = status;
+  }
+
+  if (storeId) {
+    where.storeId = storeId;
   }
 
   const [listings, total] = await Promise.all([

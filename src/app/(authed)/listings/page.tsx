@@ -1,5 +1,5 @@
-import { validateSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
+import { validateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import ListingsClient from "./ListingsClient";
 
@@ -16,7 +16,7 @@ export default async function ListingsPage() {
   const session = await validateSession();
   if (!session) redirect("/login");
 
-  const [listings, total] = await Promise.all([
+  const [listings, total, stores] = await Promise.all([
     prisma.listing.findMany({
       where: { tenantId: session.tenantId, archivedAt: null },
       include: {
@@ -29,6 +29,11 @@ export default async function ListingsPage() {
     prisma.listing.count({
       where: { tenantId: session.tenantId, archivedAt: null },
     }),
+    prisma.store.findMany({
+      where: { tenantId: session.tenantId, deletedAt: null },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
 
   // Serialize dates for client
@@ -38,5 +43,5 @@ export default async function ListingsPage() {
     archivedAt: l.archivedAt?.toISOString() ?? null,
   }));
 
-  return <ListingsClient initialListings={serialized} initialTotal={total} />;
+  return <ListingsClient initialListings={serialized} initialTotal={total} stores={stores} />;
 }

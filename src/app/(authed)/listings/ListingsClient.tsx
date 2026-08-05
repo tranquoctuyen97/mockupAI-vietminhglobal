@@ -4,6 +4,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
   Loader2,
   Search,
@@ -35,6 +37,13 @@ interface ListingOrderStats {
   orderCount: number;
   daily: Array<{ date: string; count: number }>;
 }
+
+interface Store {
+  id: string;
+  name: string;
+}
+
+const PAGE_SIZE = 20;
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
   PUBLISHING: {
@@ -92,14 +101,18 @@ function buildChartData(
 interface Props {
   initialListings: Listing[];
   initialTotal: number;
+  stores: Store[];
 }
 
-export default function ListingsClient({ initialListings }: Props) {
+export default function ListingsClient({ initialListings, initialTotal, stores }: Props) {
   const router = useRouter();
   const idPrefix = useId().replace(/:/g, "");
   const [listings, setListings] = useState<Listing[]>(initialListings);
+  const [total, setTotal] = useState(initialTotal);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("all");
+  const [selectedStoreId, setSelectedStoreId] = useState("");
   const [orderStats, setOrderStats] = useState<Record<string, ListingOrderStats>>({});
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [selectedListingId, setSelectedListingId] = useState(initialListings[0]?.id ?? "");
@@ -144,13 +157,24 @@ export default function ListingsClient({ initialListings }: Props) {
     return () => controller.abort();
   }, [fromDate, listings, toDate]);
 
-  async function fetchListings(status: string) {
+  async function fetchListings(status: string, storeId = selectedStoreId, nextPage = page) {
     setLoading(true);
     try {
-      const url = `/api/listings?status=${status}`;
+      const params = new URLSearchParams({
+        status,
+        page: String(nextPage),
+        limit: String(PAGE_SIZE),
+      });
+      if (storeId) params.set("storeId", storeId);
+
+      const url = `/api/listings?${params.toString()}`;
       const res = await fetch(url);
       const data = await res.json();
-      if (res.ok) setListings(data.listings);
+      if (res.ok) {
+        setListings(data.listings);
+        setTotal(data.total);
+        setPage(data.page);
+      }
     } catch {
       // ignore
     } finally {
@@ -160,7 +184,19 @@ export default function ListingsClient({ initialListings }: Props) {
 
   function handleFilterChange(key: string) {
     setFilter(key);
-    fetchListings(key);
+    setPage(1);
+    fetchListings(key, selectedStoreId, 1);
+  }
+
+  function handleStoreChange(storeId: string) {
+    setSelectedStoreId(storeId);
+    setPage(1);
+    fetchListings(filter, storeId, 1);
+  }
+
+  function handlePageChange(nextPage: number) {
+    if (nextPage < 1 || nextPage > totalPages || nextPage === page) return;
+    fetchListings(filter, selectedStoreId, nextPage);
   }
 
   const selectedListing = listings.find((listing) => listing.id === selectedListingId);
@@ -173,8 +209,13 @@ export default function ListingsClient({ initialListings }: Props) {
   async function handleDelete(id: string) {
     if (!confirm("Archive listing này?")) return;
     await fetch(`/api/listings/${id}`, { method: "DELETE" });
-    fetchListings(filter);
+    const nextPage = listings.length === 1 && page > 1 ? page - 1 : page;
+    fetchListings(filter, selectedStoreId, nextPage);
   }
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const firstVisible = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const lastVisible = Math.min(page * PAGE_SIZE, total);
 
   return (
     <div>
@@ -185,28 +226,60 @@ export default function ListingsClient({ initialListings }: Props) {
         </div>
       </div>
 
-      {/* Filter tabs */}
-      <div className="flex gap-2" style={{ marginBottom: 20 }}>
-        {FILTER_TABS.map((tab) => (
-          <button
-            type="button"
-            key={tab.key}
-            onClick={() => handleFilterChange(tab.key)}
+      {/* Filter tabs and store selector */}
+      <div
+        className="flex items-center justify-between gap-3"
+        style={{ marginBottom: 20, flexWrap: "wrap" }}
+      >
+        <div className="flex gap-2">
+          {FILTER_TABS.map((tab) => (
+            <button
+              type="button"
+              key={tab.key}
+              onClick={() => handleFilterChange(tab.key)}
+              style={{
+                padding: "6px 14px",
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--border-default)",
+                backgroundColor: filter === tab.key ? "var(--color-wise-green)" : "transparent",
+                color: filter === tab.key ? "white" : "inherit",
+                fontSize: "0.8rem",
+                fontWeight: 600,
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <label className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}>
+          <span style={{ opacity: 0.6 }}>Store</span>
+          <select
+            aria-label="Filter listings by store"
+            value={selectedStoreId}
+            onChange={(event) => handleStoreChange(event.target.value)}
             style={{
-              padding: "6px 14px",
+              minWidth: 190,
+              maxWidth: "min(260px, 70vw)",
+              padding: "7px 30px 7px 10px",
               borderRadius: "var(--radius-sm)",
               border: "1px solid var(--border-default)",
-              backgroundColor: filter === tab.key ? "var(--color-wise-green)" : "transparent",
-              color: filter === tab.key ? "white" : "inherit",
+              background: "var(--bg-primary)",
+              color: "inherit",
               fontSize: "0.8rem",
-              fontWeight: 600,
               cursor: "pointer",
-              transition: "all 0.15s",
             }}
           >
-            {tab.label}
-          </button>
-        ))}
+            <option value="">All stores</option>
+            {stores.map((store) => (
+              <option key={store.id} value={store.id}>
+                {store.name}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       <div className="card" style={{ padding: 20, marginBottom: 20 }}>
@@ -401,144 +474,189 @@ export default function ListingsClient({ initialListings }: Props) {
       )}
 
       {!loading && listings.length > 0 && (
-        <div className="card" style={{ overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr
-                style={{
-                  borderBottom: "1px solid var(--border-default)",
-                  fontSize: "0.8rem",
-                  fontWeight: 600,
-                  opacity: 0.5,
-                }}
-              >
-                <th style={{ textAlign: "left", padding: "12px 16px" }}>Title</th>
-                <th style={{ textAlign: "left", padding: "12px 16px" }}>Colors</th>
-                <th style={{ textAlign: "left", padding: "12px 16px" }}>Status</th>
-                <th style={{ textAlign: "right", padding: "12px 16px" }}>Orders</th>
-                <th style={{ textAlign: "right", padding: "12px 16px" }}>Price</th>
-                <th style={{ textAlign: "right", padding: "12px 16px" }}>Date</th>
-                <th style={{ textAlign: "right", padding: "12px 16px" }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {listings.map((listing, idx) => {
-                const statusCfg = STATUS_CONFIG[listing.status] || STATUS_CONFIG.FAILED;
-                return (
-                  <tr
-                    key={listing.id}
-                    style={{
-                      borderBottom:
-                        idx < listings.length - 1 ? "1px solid var(--border-default)" : "none",
-                      cursor: "pointer",
-                    }}
-                    onClick={() => router.push(`/listings/${listing.id}`)}
-                  >
-                    <td style={{ padding: "12px 16px" }}>
-                      <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>
-                        {listing.title || "Untitled"}
-                      </span>
-                    </td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <div className="flex gap-1">
-                        {listing.variants.slice(0, 5).map((v) => (
-                          <div
-                            key={v.id}
-                            title={v.colorName}
-                            style={{
-                              width: 20,
-                              height: 20,
-                              borderRadius: "50%",
-                              backgroundColor: v.colorHex,
-                              border: "1px solid var(--border-default)",
-                            }}
-                          />
-                        ))}
-                        {listing.variants.length > 5 && (
-                          <span style={{ fontSize: "0.75rem", opacity: 0.5 }}>
-                            +{listing.variants.length - 5}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <span
-                        className="flex items-center gap-1"
-                        style={{
-                          color: statusCfg.color,
-                          fontWeight: 600,
-                          fontSize: "0.8rem",
-                        }}
-                      >
-                        {statusCfg.icon} {statusCfg.label}
-                      </span>
-                    </td>
-                    <td
+        <>
+          <div className="card" style={{ overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr
+                  style={{
+                    borderBottom: "1px solid var(--border-default)",
+                    fontSize: "0.8rem",
+                    fontWeight: 600,
+                    opacity: 0.5,
+                  }}
+                >
+                  <th style={{ textAlign: "left", padding: "12px 16px" }}>Title</th>
+                  <th style={{ textAlign: "left", padding: "12px 16px" }}>Colors</th>
+                  <th style={{ textAlign: "left", padding: "12px 16px" }}>Status</th>
+                  <th style={{ textAlign: "right", padding: "12px 16px" }}>Orders</th>
+                  <th style={{ textAlign: "right", padding: "12px 16px" }}>Price</th>
+                  <th style={{ textAlign: "right", padding: "12px 16px" }}>Date</th>
+                  <th style={{ textAlign: "right", padding: "12px 16px" }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {listings.map((listing, idx) => {
+                  const statusCfg = STATUS_CONFIG[listing.status] || STATUS_CONFIG.FAILED;
+                  return (
+                    <tr
+                      key={listing.id}
                       style={{
-                        padding: "12px 16px",
-                        textAlign: "right",
-                        fontWeight: 700,
-                        fontSize: "0.9rem",
+                        borderBottom:
+                          idx < listings.length - 1 ? "1px solid var(--border-default)" : "none",
+                        cursor: "pointer",
                       }}
+                      onClick={() => router.push(`/listings/${listing.id}`)}
                     >
-                      <div className="flex items-center justify-end gap-3">
-                        <span>
-                          {ordersLoading ? "…" : (orderStats[listing.id]?.orderCount ?? 0)}
+                      <td style={{ padding: "12px 16px" }}>
+                        <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>
+                          {listing.title || "Untitled"}
                         </span>
-                        <ListingOrdersSparkline
-                          data={buildChartData(orderStats[listing.id], fromDate, toDate)}
-                        />
-                      </div>
-                    </td>
-                    <td
-                      style={{
-                        padding: "12px 16px",
-                        textAlign: "right",
-                        fontWeight: 600,
-                        fontSize: "0.9rem",
-                      }}
-                    >
-                      ${listing.priceUsd.toFixed(2)}
-                    </td>
-                    <td
-                      style={{
-                        padding: "12px 16px",
-                        textAlign: "right",
-                        fontSize: "0.8rem",
-                        opacity: 0.5,
-                      }}
-                    >
-                      {new Date(listing.createdAt).toLocaleDateString("vi-VN")}
-                    </td>
-                    <td style={{ padding: "12px 16px", textAlign: "right" }}>
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDelete(listing.id);
-                          }}
+                      </td>
+                      <td style={{ padding: "12px 16px" }}>
+                        <div className="flex gap-1">
+                          {listing.variants.slice(0, 5).map((v) => (
+                            <div
+                              key={v.id}
+                              title={v.colorName}
+                              style={{
+                                width: 20,
+                                height: 20,
+                                borderRadius: "50%",
+                                backgroundColor: v.colorHex,
+                                border: "1px solid var(--border-default)",
+                              }}
+                            />
+                          ))}
+                          {listing.variants.length > 5 && (
+                            <span style={{ fontSize: "0.75rem", opacity: 0.5 }}>
+                              +{listing.variants.length - 5}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td style={{ padding: "12px 16px" }}>
+                        <span
+                          className="flex items-center gap-1"
                           style={{
-                            background: "none",
-                            border: "none",
-                            cursor: "pointer",
-                            padding: 4,
-                            color: "var(--color-danger)",
-                            opacity: 0.5,
+                            color: statusCfg.color,
+                            fontWeight: 600,
+                            fontSize: "0.8rem",
                           }}
                         >
-                          <Trash2 size={14} />
-                        </button>
-                        <ExternalLink size={14} style={{ opacity: 0.3 }} />
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                          {statusCfg.icon} {statusCfg.label}
+                        </span>
+                      </td>
+                      <td
+                        style={{
+                          padding: "12px 16px",
+                          textAlign: "right",
+                          fontWeight: 700,
+                          fontSize: "0.9rem",
+                        }}
+                      >
+                        <div className="flex items-center justify-end gap-3">
+                          <span>
+                            {ordersLoading ? "…" : (orderStats[listing.id]?.orderCount ?? 0)}
+                          </span>
+                          <ListingOrdersSparkline
+                            data={buildChartData(orderStats[listing.id], fromDate, toDate)}
+                          />
+                        </div>
+                      </td>
+                      <td
+                        style={{
+                          padding: "12px 16px",
+                          textAlign: "right",
+                          fontWeight: 600,
+                          fontSize: "0.9rem",
+                        }}
+                      >
+                        ${listing.priceUsd.toFixed(2)}
+                      </td>
+                      <td
+                        style={{
+                          padding: "12px 16px",
+                          textAlign: "right",
+                          fontSize: "0.8rem",
+                          opacity: 0.5,
+                        }}
+                      >
+                        {new Date(listing.createdAt).toLocaleDateString("vi-VN")}
+                      </td>
+                      <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete(listing.id);
+                            }}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              cursor: "pointer",
+                              padding: 4,
+                              color: "var(--color-danger)",
+                              opacity: 0.5,
+                            }}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                          <ExternalLink size={14} style={{ opacity: 0.3 }} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div
+            className="flex items-center justify-between gap-3"
+            style={{ marginTop: 12, fontSize: "0.8rem", opacity: 0.65, flexWrap: "wrap" }}
+          >
+            <span>
+              Showing {firstVisible}-{lastVisible} of {total} listings
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handlePageChange(page - 1)}
+                disabled={loading || page <= 1}
+                aria-label="Previous listings page"
+                style={paginationButton}
+              >
+                <ChevronLeft size={15} />
+              </button>
+              <span>
+                Page {page} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => handlePageChange(page + 1)}
+                disabled={loading || page >= totalPages}
+                aria-label="Next listings page"
+                style={paginationButton}
+              >
+                <ChevronRight size={15} />
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
 }
+
+const paginationButton: React.CSSProperties = {
+  width: 30,
+  height: 30,
+  display: "grid",
+  placeItems: "center",
+  border: "1px solid var(--border-default)",
+  borderRadius: "var(--radius-sm)",
+  background: "var(--bg-primary)",
+  color: "inherit",
+  cursor: "pointer",
+};
