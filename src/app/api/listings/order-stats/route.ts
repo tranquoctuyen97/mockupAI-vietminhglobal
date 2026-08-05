@@ -7,11 +7,15 @@
  */
 
 import { NextResponse } from "next/server";
-import { getListingOrderStats } from "@/lib/analytics/listing-orders";
+import {
+  getAggregateListingOrderStats,
+  getListingOrderStats,
+} from "@/lib/analytics/listing-orders";
 import { validateSession } from "@/lib/auth/session";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_RANGE_DAYS = 366;
+const ALL_LISTINGS_ID = "__all__";
 
 function parseDate(value: string | null): Date | null {
   if (!value || !DATE_PATTERN.test(value)) return null;
@@ -42,6 +46,22 @@ export async function GET(request: Request) {
       { error: `Date range must be between 1 and ${MAX_RANGE_DAYS} days` },
       { status: 400 },
     );
+  }
+
+  if (url.searchParams.get("aggregate") === "true") {
+    const stats = await getAggregateListingOrderStats(
+      session.tenantId,
+      url.searchParams.get("storeId") || null,
+      url.searchParams.get("status") || null,
+      from,
+      toExclusive,
+    );
+
+    return NextResponse.json({
+      from: formatDate(from),
+      to: formatDate(to),
+      stats: { [ALL_LISTINGS_ID]: stats },
+    });
   }
 
   const requestedIds = [...new Set(url.searchParams.getAll("listingId"))].filter(Boolean);
