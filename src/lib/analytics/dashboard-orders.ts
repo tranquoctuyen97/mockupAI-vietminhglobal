@@ -145,8 +145,8 @@ export async function getDashboardOrderAnalytics(
         INNER JOIN listings l ON l.id = COALESCE(oli.listing_id, o.listing_id)
         WHERE ${Prisma.join(listingFilters, " AND ")}
       )
-    GROUP BY DATE_TRUNC('day', o.created_at AT TIME ZONE ${input.timezone})::date
-    ORDER BY DATE_TRUNC('day', o.created_at AT TIME ZONE ${input.timezone})::date ASC
+    GROUP BY 1
+    ORDER BY 1 ASC
   `);
 
   return summarizeDashboardOrderRows(rows, input.fromDate, input.toDate);
