@@ -19,6 +19,7 @@ import { comparisonRange, presetRange } from "@/lib/triple-whale/date-ranges";
 import AnalyticsCharts from "./AnalyticsCharts";
 import AnalyticsStatCard from "./AnalyticsStatCard";
 import DashboardFilters, { type DashboardFilterValue } from "./DashboardFilters";
+import DashboardOrderAnalytics from "./DashboardOrderAnalytics";
 import SyncStatusBanner from "./SyncStatusBanner";
 
 type AnalyticsApiResponse = Omit<TripleWhaleAnalyticsResult, "dataStatus"> & {
@@ -371,6 +372,12 @@ export default function TripleWhaleDashboard({ timezone }: { timezone: string })
           <AnalyticsMetricCards
             comparisonLabel={comparisonLabel(data.comparisonRange)}
             data={data}
+          />
+
+          <DashboardOrderAnalytics
+            from={filters.from}
+            selectedShopId={filters.selectedShopId}
+            to={filters.to}
           />
 
           <AnalyticsCharts
