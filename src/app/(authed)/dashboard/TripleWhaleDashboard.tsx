@@ -46,7 +46,7 @@ export function AnalyticsDashboardDataProvider({
 const METRIC_CARDS = [
   { key: "orderRevenue", label: "Order Revenue", currency: true },
   { key: "blendedAdSpend", label: "Ads", currency: true },
-  { key: "totalCost", label: "Total Cost", currency: true },
+  { key: "totalCost", label: "Expected Cost", currency: true },
   { key: "netProfit", label: "Net Profit", currency: true },
   { key: "orders", label: "Orders", currency: false },
 ] as const;
