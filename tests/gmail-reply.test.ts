@@ -25,6 +25,7 @@ describe("Gmail thread reply sender", () => {
       fromName: "Support Team",
       subject: "Original customer subject",
       text: "Agent reply body",
+      html: "<p><strong>Agent reply body</strong></p>",
       gmailThreadId: "thread-1",
       latestExternalMessageId: "<customer-last@example.test>",
       references: ["<customer-first@example.test>"],
@@ -38,6 +39,7 @@ describe("Gmail thread reply sender", () => {
       to: "customer@example.test",
       subject: "Re: Original customer subject",
       text: "Agent reply body",
+      html: "<p><strong>Agent reply body</strong></p>",
       messageId: "<mockupai-reply-fixed@example.test>",
       inReplyTo: "<customer-last@example.test>",
       references: "<customer-first@example.test> <customer-last@example.test>",
@@ -54,6 +56,27 @@ describe("Gmail thread reply sender", () => {
     });
     expect("appPassword" in result).toBe(false);
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("keeps legacy plain-text replies free of an HTML body", async () => {
+    const sendMail = vi.fn().mockResolvedValue({ accepted: ["customer@example.test"] });
+    const createTransport = vi.fn().mockReturnValue({ sendMail, close: vi.fn() });
+
+    await sendGmailThreadReply({
+      credentials: { email: "support@example.test", appPassword: "secret" },
+      to: "customer@example.test",
+      subject: "Subject",
+      text: "Body",
+      gmailThreadId: "thread-1",
+      latestExternalMessageId: "<customer@example.test>",
+      references: [],
+      lookupByMessageId: vi.fn().mockResolvedValue(sentMetadata),
+      createTransport,
+      generateMessageId: () => "<mockupai-reply-fixed@example.test>",
+    });
+
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ text: "Body" }));
+    expect(sendMail.mock.calls[0][0]).not.toHaveProperty("html");
   });
 
   it("rejects Gmail read-back that is not in Sent or not in the expected thread", async () => {

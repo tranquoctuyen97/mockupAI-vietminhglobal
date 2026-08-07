@@ -12,7 +12,7 @@ describe("mailbox UI source", () => {
 
   it("opens internal note mode without pretending it is persisted", () => {
     expect(source).toContain('const [composerMode, setComposerMode] = useState<"reply" | "note">("reply")');
-    expect(source).toContain('placeholder={composerMode === "reply" ? "Write your reply..." : "Write an internal note..."}');
+    expect(source).toContain('placeholder="Write an internal note..."');
     expect(source).toContain("onSaveInternalNote(internalNoteText)");
   });
 

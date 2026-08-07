@@ -54,9 +54,7 @@ function deltaIcon(direction: MetricSummary["direction"]) {
 }
 
 function trendData(points: Point[]) {
-  const allValues = points.flatMap((point) =>
-    point.previous == null ? [point.current] : [point.current, point.previous],
-  );
+  const allValues = points.map((point) => point.current);
   const min = Math.min(...allValues, 0);
   const max = Math.max(...allValues, 0);
   return {
@@ -66,15 +64,6 @@ function trendData(points: Point[]) {
       max,
     ),
     currentDotY: sparklinePoints([points[0]?.current ?? 0], min, max).split(",")[1],
-    previous: sparklinePoints(
-      points.map((point) => point.previous),
-      min,
-      max,
-    ),
-    previousDotY:
-      points[0]?.previous == null
-        ? undefined
-        : sparklinePoints([points[0].previous], min, max).split(",")[1],
   };
 }
 
@@ -177,25 +166,14 @@ export default function AnalyticsStatCard({
         </div>
         {showTrend && trend && (
           <svg
-            aria-label={`${label} current and previous period trend`}
+            aria-label={`${label} current period trend`}
             className="analytics-stat-card__sparkline"
             height="44"
             role="img"
             viewBox="0 0 96 36"
             width="96"
           >
-            <title>{`${label}: Current period compared with Previous period`}</title>
-            {trend.previous && (
-              <polyline
-                fill="none"
-                points={trend.previous}
-                stroke="var(--text-muted)"
-                strokeDasharray="3 3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-              />
-            )}
+            <title>{`${label}: Current period trend`}</title>
             <polyline
               fill="none"
               points={trend.current}
@@ -205,12 +183,7 @@ export default function AnalyticsStatCard({
               strokeWidth="2.5"
             />
             {points.length === 1 && (
-              <>
-                {points[0]?.previous != null && (
-                  <circle cx="48" cy={trend.previousDotY} fill="var(--text-muted)" r="3" />
-                )}
-                <circle cx="48" cy={trend.currentDotY} fill={color} r="3.5" />
-              </>
+              <circle cx="48" cy={trend.currentDotY} fill={color} r="3.5" />
             )}
           </svg>
         )}

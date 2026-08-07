@@ -15,6 +15,11 @@ describe("mailbox response proxy hooks", () => {
     const body = functionBody(source, "handleReply");
 
     expect(body).toContain("mailboxResponseMetrics.recordAdminReply");
+    expect(body).toContain("prepareReplyContent");
+    expect(body).toContain("html: preparedReply.html");
+    expect(body).toContain("contentType: preparedReply.contentType");
+    expect(body).toContain("latestMessagePreview: summarizeMessagePreview(preparedReply.text");
+    expect(body.indexOf("prepareReplyContent")).toBeLessThan(body.indexOf("sendGmailThreadReply"));
     expect(body.indexOf("await prisma.gmailMessageLink.create")).toBeLessThan(
       body.indexOf("mailboxResponseMetrics.recordAdminReply"),
     );

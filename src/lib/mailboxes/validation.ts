@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RICH_REPLY_HTML_MAX_LENGTH } from "./reply-content";
 
 const id = z.string().trim().min(1);
 const name = z.string().trim().min(1).max(200);
@@ -37,6 +38,7 @@ export const replaceConversationLabelsSchema = z.object({
 }).strict();
 export const replySchema = z.object({
   text: z.string().trim().min(1).max(50_000),
+  html: z.string().max(RICH_REPLY_HTML_MAX_LENGTH).optional(),
   attachmentIds: z.array(id).max(10).optional(),
 }).strict();
 export const internalNoteSchema = z.object({

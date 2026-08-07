@@ -127,4 +127,37 @@ describe("thread display enrichment", () => {
     expect(enriched[0].displayType).toBe("app_reply");
     expect(enriched[0].body).toBe("Older reply body");
   });
+
+  it("preserves rich HTML for a recorded app reply", () => {
+    const enriched = enrichThreadsForDisplay({
+      threads: [{
+        id: 302,
+        conversationId: 26,
+        subject: undefined,
+        body: [
+          "App-sent Gmail reply recorded.",
+          "Gmail-Message-ID: <rich@example.com>",
+          "Gmail-Thread-ID: 123",
+          "",
+          "<p><strong>Thanks</strong> for the update.</p>",
+        ].join("\n"),
+        contentType: "text/html",
+        from: "",
+        to: "",
+        cc: "",
+        type: "comment",
+        sender: "RT_System",
+        internal: true,
+        attachments: [],
+        createdAt: "2026-08-07T00:00:00.000Z",
+      }],
+      attachments: [],
+      mailboxEmail: "support@example.com",
+      customerEmail: "customer@example.com",
+    });
+
+    expect(enriched[0].displayType).toBe("app_reply");
+    expect(enriched[0].contentType).toBe("text/html");
+    expect(enriched[0].body).toContain("<strong>Thanks</strong>");
+  });
 });

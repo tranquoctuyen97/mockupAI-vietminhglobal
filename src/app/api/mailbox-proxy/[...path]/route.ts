@@ -11,6 +11,8 @@ import { createGmailAdapter } from "@/lib/mailboxes/gmail-client";
 import { parseEmailIdentity } from "@/lib/mailboxes/identity";
 import { sendGmailThreadReply } from "@/lib/mailboxes/gmail-reply";
 import { buildGmailReplyContext } from "@/lib/mailboxes/reply-context";
+import { prepareReplyContent } from "@/lib/mailboxes/reply-content";
+import type { PreparedReplyContent } from "@/lib/mailboxes/reply-content";
 import { buildMonthlyResponseSummary, buildResponseSummary, mailboxResponseMetrics } from "@/lib/mailboxes/response-metrics";
 import type { GmailMessageMetadata } from "@/lib/mailboxes/types";
 import {
@@ -1257,6 +1259,20 @@ async function handleReply(
     return json({ error: "Validation failed", details: parsed.error.flatten() }, 400);
   }
 
+  let preparedReply: PreparedReplyContent;
+  try {
+    preparedReply = prepareReplyContent({ text: parsed.data.text, html: parsed.data.html });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "";
+    if (code === "reply_content_empty" || code === "reply_content_too_large") {
+      return json({
+        error: "Validation failed",
+        details: { fieldErrors: { html: [code] } },
+      }, 400);
+    }
+    throw error;
+  }
+
   const conversation = await prisma.mailboxConversation.findFirst({
     where: conversationWhere(mailbox.id, token),
   });
@@ -1335,7 +1351,8 @@ async function handleReply(
     to: replyContext.to,
     fromName: mailbox.email,
     subject: replyContext.subject,
-    text: parsed.data.text,
+    text: preparedReply.text,
+    html: preparedReply.html ?? undefined,
     attachments: attachmentPayload.length ? attachmentPayload : undefined,
     gmailThreadId: conversation.gmailThreadId,
     latestExternalMessageId: replyContext.latestExternalMessageId,
@@ -1355,8 +1372,8 @@ async function handleReply(
       rtTicketId: conversation.rtTicketId,
       direction: "OUTBOUND",
       gmailInternalDate: sent.internalDate,
-      body: parsed.data.text,
-      contentType: "text/plain",
+      body: preparedReply.html ?? preparedReply.text,
+      contentType: preparedReply.contentType,
     },
   });
   if (composerAttachments.length > 0) {
@@ -1383,9 +1400,9 @@ async function handleReply(
         `Gmail-Message-ID: ${sent.rfcMessageId}`,
         `Gmail-Thread-ID: ${sent.gmailThreadId}`,
         "",
-        parsed.data.text,
+        preparedReply.html ?? preparedReply.text,
       ].join("\n"),
-      contentType: "text/plain",
+      contentType: preparedReply.contentType,
     });
   }
 
@@ -1395,7 +1412,7 @@ async function handleReply(
       articleCount: { increment: 1 },
       rtLastUpdatedAt: repliedAt,
       lastActivityAt: repliedAt,
-      latestMessagePreview: summarizeMessagePreview(parsed.data.text, "text/plain"),
+      latestMessagePreview: summarizeMessagePreview(preparedReply.text, "text/plain"),
     },
   });
 

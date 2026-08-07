@@ -10,6 +10,7 @@ export interface GmailReplyInput {
   fromName?: string;
   subject: string;
   text: string;
+  html?: string;
   gmailThreadId: string;
   latestExternalMessageId: string;
   references: string[];
@@ -76,6 +77,7 @@ export async function sendGmailThreadReply(input: GmailReplyInput): Promise<Gmai
       to: input.to,
       subject: replySubject(input.subject),
       text: input.text,
+      ...(input.html ? { html: input.html } : {}),
       messageId,
       inReplyTo: input.latestExternalMessageId,
       references: referenceHeader(input.references, input.latestExternalMessageId),

@@ -25,8 +25,10 @@ import { toast } from "sonner";
 import {
   EmailBodyRenderer,
 } from "@/components/mailboxes/EmailBodyRenderer";
+import { ReplyRichTextEditor } from "@/components/mailboxes/ReplyRichTextEditor";
 import { htmlToReadableText, isHtmlEmail } from "@/lib/mailboxes/email-body-renderer";
 import { displayMailboxIdentity, parseEmailIdentity } from "@/lib/mailboxes/identity";
+import type { ReplyComposerValue } from "@/lib/mailboxes/reply-content";
 
 interface StoreOption {
   id: string;
@@ -137,6 +139,7 @@ interface Props {
 
 const POLL_INTERVAL = 45_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const EMPTY_REPLY_CONTENT: ReplyComposerValue = { html: "", text: "" };
 
 async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { cache: "no-store", ...init });
@@ -207,7 +210,7 @@ export default function MailboxesClient({ stores, initialSelectedStoreId = null 
   const [loadingMailboxes, setLoadingMailboxes] = useState(false);
   const [convLoading, setConvLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [replyText, setReplyText] = useState("");
+  const [replyContent, setReplyContent] = useState<ReplyComposerValue>(EMPTY_REPLY_CONTENT);
   const [sending, setSending] = useState(false);
   const [pendingConversationActionId, setPendingConversationActionId] = useState<string | null>(null);
   const [composerAttachments, setComposerAttachments] = useState<ComposerAttachment[]>([]);
@@ -333,7 +336,7 @@ const searchActive = debouncedQuery.trim().length > 0;
       selectedConversationIdRef.current = conv.id;
       setSelectedConv(conv);
       setThreads([]);
-      setReplyText("");
+      setReplyContent(EMPTY_REPLY_CONTENT);
       setComposerAttachments([]);
       try {
         const data = await apiFetch<{ conversation: Conversation; threads: Thread[] }>(
@@ -460,7 +463,7 @@ const searchActive = debouncedQuery.trim().length > 0;
         setSelectedConv((current) => (current?.id === conv.id ? null : current));
         if (selectedConv?.id === conv.id) {
           setThreads([]);
-          setReplyText("");
+          setReplyContent(EMPTY_REPLY_CONTENT);
           setComposerAttachments([]);
         }
         setPageInfo((current) =>
@@ -520,7 +523,7 @@ const searchActive = debouncedQuery.trim().length > 0;
       setSelectedConv((current) => (current?.id === conv.id ? null : current));
       if (selectedConv?.id === conv.id) {
         setThreads([]);
-        setReplyText("");
+        setReplyContent(EMPTY_REPLY_CONTENT);
         setComposerAttachments([]);
       }
       setSelectedMailbox((current) =>
@@ -577,7 +580,7 @@ const searchActive = debouncedQuery.trim().length > 0;
       setSelectedConv((current) => (current?.id === conv.id ? null : current));
       if (selectedConv?.id === conv.id) {
         setThreads([]);
-        setReplyText("");
+        setReplyContent(EMPTY_REPLY_CONTENT);
         setComposerAttachments([]);
       }
       setSelectedMailbox((current) =>
@@ -635,7 +638,7 @@ const searchActive = debouncedQuery.trim().length > 0;
       setSelectedConv((current) => (current?.id === conv.id ? null : current));
       if (selectedConv?.id === conv.id) {
         setThreads([]);
-        setReplyText("");
+        setReplyContent(EMPTY_REPLY_CONTENT);
         setComposerAttachments([]);
       }
       setSelectedMailbox((current) =>
@@ -720,7 +723,7 @@ const searchActive = debouncedQuery.trim().length > 0;
       if (!refreshedSelected && selectedConversationIdRef.current === null) {
         setThreads((current) => (current.length > 0 ? [] : current));
         setConversationLabelIds((current) => (current.length > 0 ? [] : current));
-        setReplyText("");
+        setReplyContent(EMPTY_REPLY_CONTENT);
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Khong the tai conversations");
@@ -961,7 +964,7 @@ const searchActive = debouncedQuery.trim().length > 0;
   }, [loadConversations, loadMailboxes]);
 
   const sendReply = async () => {
-    if (!selectedConv || !replyText.trim() || !selectedStoreId || !selectedMailbox) return;
+    if (!selectedConv || !replyContent.text.trim() || !selectedStoreId || !selectedMailbox) return;
     setSending(true);
     const toastId = toast.loading("Sending reply...");
     try {
@@ -971,14 +974,15 @@ const searchActive = debouncedQuery.trim().length > 0;
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            text: replyText.trim(),
+            text: replyContent.text.trim(),
+            html: replyContent.html || undefined,
             attachmentIds: composerAttachments.map((attachment) => attachment.id),
           }),
         },
       );
       clearConversationPageCache();
       toast.success("Da gui reply", { id: toastId });
-      setReplyText("");
+      setReplyContent(EMPTY_REPLY_CONTENT);
       setComposerAttachments([]);
       void openConversation(selectedConv);
       void loadConversations();
@@ -1209,13 +1213,13 @@ const searchActive = debouncedQuery.trim().length > 0;
                 threads={threads}
                 loading={detailLoading}
                 labels={labels}
-                replyText={replyText}
+                replyContent={replyContent}
                 sending={sending}
                 composerAttachments={composerAttachments}
                 uploadingAttachment={uploadingAttachment}
                 selectedLabelIds={conversationLabelIds}
                 labelsSaving={conversationLabelsSaving}
-                onReplyText={setReplyText}
+                onReplyContent={setReplyContent}
                 onSend={() => void sendReply()}
                 onSaveInternalNote={(text) => void saveInternalNote(text)}
                 onUploadAttachment={(file) => void uploadComposerAttachment(file)}
@@ -2373,13 +2377,13 @@ function ConversationDetail({
   threads,
   loading,
   labels,
-  replyText,
+  replyContent,
   sending,
   composerAttachments,
   uploadingAttachment,
   selectedLabelIds,
   labelsSaving,
-  onReplyText,
+  onReplyContent,
   onSend,
   onSaveInternalNote,
   onUploadAttachment,
@@ -2394,13 +2398,13 @@ function ConversationDetail({
   threads: Thread[];
   loading: boolean;
   labels: MailboxLabel[];
-  replyText: string;
+  replyContent: ReplyComposerValue;
   sending: boolean;
   composerAttachments: ComposerAttachment[];
   uploadingAttachment: boolean;
   selectedLabelIds: string[];
   labelsSaving: boolean;
-  onReplyText: (value: string) => void;
+  onReplyContent: (value: ReplyComposerValue) => void;
   onSend: () => void;
   onSaveInternalNote: (text: string) => void;
   onUploadAttachment: (file: File) => void;
@@ -2628,16 +2632,21 @@ function ConversationDetail({
               Internal note
             </button>
           </div>
-          <textarea
-            value={composerMode === "reply" ? replyText : internalNoteText}
-            onChange={(event) => {
-              if (composerMode === "reply") onReplyText(event.target.value);
-              else setInternalNoteText(event.target.value);
-            }}
-            placeholder={composerMode === "reply" ? "Write your reply..." : "Write an internal note..."}
-            rows={4}
-            style={replyTextarea}
-          />
+          {composerMode === "reply" ? (
+            <ReplyRichTextEditor
+              value={replyContent}
+              onChange={onReplyContent}
+              disabled={sending || uploadingAttachment}
+            />
+          ) : (
+            <textarea
+              value={internalNoteText}
+              onChange={(event) => setInternalNoteText(event.target.value)}
+              placeholder="Write an internal note..."
+              rows={4}
+              style={replyTextarea}
+            />
+          )}
           {composerAttachments.length > 0 ? (
             <div style={composerAttachmentList}>
               {composerAttachments.map((attachment) => (
@@ -2683,7 +2692,7 @@ function ConversationDetail({
                 <button
                   type="button"
                   style={primaryButton}
-                  disabled={sending || !replyText.trim()}
+                  disabled={sending || !replyContent.text.trim()}
                   onClick={onSend}
                 >
                   <Send size={15} /> {sending ? "Sending..." : "Reply"}

@@ -55,9 +55,15 @@ describe("mailbox proxy source", () => {
 
   it("updates list snapshots when app-owned actions change a conversation", () => {
     const source = readFileSync("src/app/api/mailbox-proxy/[...path]/route.ts", "utf8");
+    const body = functionBody(source, "handleReply");
 
-    expect(functionBody(source, "handleReply")).toContain("articleCount");
-    expect(functionBody(source, "handleReply")).toContain("rtLastUpdatedAt");
+    expect(body).toContain("articleCount");
+    expect(body).toContain("rtLastUpdatedAt");
+    expect(body).toContain("prepareReplyContent");
+    expect(body).toContain("html: preparedReply.html");
+    expect(body).toContain("contentType: preparedReply.contentType");
+    expect(body).toContain("latestMessagePreview: summarizeMessagePreview(preparedReply.text");
+    expect(body.indexOf("prepareReplyContent")).toBeLessThan(body.indexOf("sendGmailThreadReply"));
     expect(functionBody(source, "handleStatusUpdate")).toContain("rtStatus");
     expect(functionBody(source, "handleMarkConversationRead")).toContain("isUnread: false");
     expect(functionBody(source, "handleMarkConversationUnread")).toContain("isUnread: true");

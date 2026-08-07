@@ -31,8 +31,14 @@ describe("Gmail mailbox validation", () => {
     expect(renameLabelSchema.parse({ ...scope, name: "Support/Renamed" })).toBeTruthy();
     expect(replaceConversationLabelsSchema.parse({ ...scope, labelIds: ["a", "b"] })).toBeTruthy();
     expect(replySchema.parse({ text: "hello" })).toEqual({ text: "hello" });
+    expect(replySchema.parse({ text: "hello", html: "<p>hello</p>" })).toEqual({
+      text: "hello",
+      html: "<p>hello</p>",
+    });
     expect(replySchema.safeParse({ text: "" }).success).toBe(false);
     expect(replySchema.safeParse({ text: "x".repeat(50_001) }).success).toBe(false);
+    expect(replySchema.safeParse({ text: "hello", html: "x".repeat(150_001) }).success).toBe(false);
+    expect(replySchema.safeParse({ text: "hello", html: "<script>evil()</script>" }).success).toBe(true);
     expect(statusSchema.parse({ status: "pending" })).toEqual({ status: "pending" });
     expect(statusSchema.safeParse({ status: "deleted" }).success).toBe(false);
   });

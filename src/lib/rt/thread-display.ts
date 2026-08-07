@@ -34,7 +34,20 @@ export function decodeRtAttachmentContent(value: string | null | undefined): str
   return raw;
 }
 
-function parseRecordedAppReply(body: string): { body: string } | null {
+function parseRecordedAppReply(
+  body: string,
+  contentType: string,
+): { body: string; contentType: "text/plain" | "text/html" } | null {
+  const normalizedContentType = normalizeContentType(contentType);
+  const rawBody = body.trimStart();
+  if (normalizedContentType === "text/html" && rawBody.startsWith(APP_REPLY_MARKER)) {
+    const separatorIndex = rawBody.indexOf("\n\n");
+    if (separatorIndex >= 0) {
+      const replyBody = rawBody.slice(separatorIndex + 2).trim();
+      if (replyBody) return { body: replyBody, contentType: "text/html" };
+    }
+  }
+
   const normalizedBody = body
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/p>/gi, "\n")
@@ -46,7 +59,7 @@ function parseRecordedAppReply(body: string): { body: string } | null {
   if (blankIndex < 0) return null;
   const replyBody = lines.slice(blankIndex + 1).join("\n").trim();
   if (!replyBody) return null;
-  return { body: replyBody };
+  return { body: replyBody, contentType: "text/plain" };
 }
 
 function chooseBestAttachment(attachments: RtAttachmentDetail[]): { body: string; contentType: string } | null {
@@ -91,7 +104,7 @@ export function enrichThreadsForDisplay(input: {
     }
 
     if (thread.internal) {
-      const appReply = parseRecordedAppReply(thread.body);
+      const appReply = parseRecordedAppReply(thread.body, thread.contentType);
       if (!appReply) {
         return { ...thread, hidden: true, displayType: "internal" as const };
       }
@@ -101,7 +114,7 @@ export function enrichThreadsForDisplay(input: {
         hidden: false,
         displayType: "app_reply" as const,
         body: appReply.body,
-        contentType: "text/plain",
+        contentType: appReply.contentType,
         from: input.mailboxEmail,
         sender: input.mailboxEmail,
         to: input.customerEmail ?? thread.to,

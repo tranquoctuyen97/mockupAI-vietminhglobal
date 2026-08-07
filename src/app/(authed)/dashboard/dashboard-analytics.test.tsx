@@ -193,7 +193,7 @@ describe("dashboard analytics components", () => {
     expect(markup).not.toContain("current and previous period trend");
   });
 
-  it("draws comparison sparklines when at least two dates exist", () => {
+  it("draws current-period sparklines when at least two dates exist", () => {
     const markup = renderToStaticMarkup(
       <AnalyticsStatCard
         currency
@@ -214,9 +214,9 @@ describe("dashboard analytics components", () => {
       />,
     );
 
-    expect(markup).toContain("current and previous period trend");
-    expect(markup).toContain("Current period");
-    expect(markup).toContain("Previous period");
+    expect(markup).toContain("current period trend");
+    expect(markup).toContain("Current period trend");
+    expect(markup).not.toContain("Current period compared with Previous period");
   });
 
   it("marks incomplete metrics as syncing", () => {
