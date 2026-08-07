@@ -1,3 +1,5 @@
+import type { Prisma } from "@prisma/client";
+import { fromZonedTime } from "date-fns-tz";
 import { prisma } from "@/lib/db";
 
 import { type ComparisonMode, comparisonRange, type DateRange } from "./date-ranges";
@@ -49,6 +51,8 @@ export interface TripleWhaleAnalyticsRepository {
   getWorkspaceMetrics(input: {
     tenantId: string;
     shopDomains: string[] | null;
+    asOf?: string;
+    timezone?: string;
   }): Promise<WorkspaceMetrics>;
   listTenantShops(tenantId: string): Promise<AnalyticsShop[]>;
   listDailyStats(input: {
@@ -88,6 +92,10 @@ const METRICS: AnalyticsMetricKey[] = [
   "netProfit",
   "orders",
 ];
+
+function endOfDayInTimezone(date: string, timezone: string): Date {
+  return fromZonedTime(`${date}T23:59:59.999`, timezone);
+}
 
 function eachDay(range: DateRange): string[] {
   const days: string[] = [];
@@ -160,11 +168,32 @@ function summarizeMetric(
 }
 
 export const prismaTripleWhaleAnalyticsRepository: TripleWhaleAnalyticsRepository = {
-  async getWorkspaceMetrics({ tenantId, shopDomains }) {
+  async getWorkspaceMetrics({ tenantId, shopDomains, asOf, timezone }) {
+    const asOfDate = asOf && timezone ? endOfDayInTimezone(asOf, timezone) : null;
+    const designDateFilter: Prisma.DesignWhereInput = asOfDate
+      ? {
+          createdAt: { lte: asOfDate },
+          OR: [{ deletedAt: null }, { deletedAt: { gt: asOfDate } }],
+        }
+      : { deletedAt: null };
+    const listingDateFilter: Prisma.ListingWhereInput = asOfDate
+      ? {
+          AND: [
+            {
+              OR: [
+                { publishedAt: { lte: asOfDate } },
+                { publishedAt: null, createdAt: { lte: asOfDate }, status: "ACTIVE" },
+              ],
+            },
+            { OR: [{ archivedAt: null }, { archivedAt: { gt: asOfDate } }] },
+          ],
+        }
+      : { status: "ACTIVE" };
+
     if (shopDomains === null) {
       const [designs, activeListings] = await Promise.all([
-        prisma.design.count({ where: { tenantId, deletedAt: null } }),
-        prisma.listing.count({ where: { tenantId, status: "ACTIVE" } }),
+        prisma.design.count({ where: { tenantId, ...designDateFilter } }),
+        prisma.listing.count({ where: { tenantId, ...listingDateFilter } }),
       ]);
       return { designs, activeListings, storeLinked: true };
     }
@@ -179,8 +208,12 @@ export const prismaTripleWhaleAnalyticsRepository: TripleWhaleAnalyticsRepositor
 
     const storeIds = stores.map((store) => store.id);
     const [designs, activeListings] = await Promise.all([
-      prisma.design.count({ where: { tenantId, storeId: { in: storeIds }, deletedAt: null } }),
-      prisma.listing.count({ where: { tenantId, storeId: { in: storeIds }, status: "ACTIVE" } }),
+      prisma.design.count({
+        where: { tenantId, storeId: { in: storeIds }, ...designDateFilter },
+      }),
+      prisma.listing.count({
+        where: { tenantId, storeId: { in: storeIds }, ...listingDateFilter },
+      }),
     ]);
     return { designs, activeListings, storeLinked: true };
   },
@@ -239,6 +272,8 @@ export async function getTripleWhaleAnalytics(
   const workspace = await repository.getWorkspaceMetrics({
     tenantId: input.tenantId,
     shopDomains: input.shopIds.length ? selectedShops.map((shop) => shop.shopDomain) : null,
+    asOf: input.range.to,
+    timezone: input.timezone,
   });
   const priorRange = comparisonRange(input.range, input.comparison);
   const queryFrom =

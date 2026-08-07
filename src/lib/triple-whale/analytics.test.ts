@@ -29,7 +29,12 @@ function repository(
   rows: ReturnType<typeof row>[],
   workspace = { designs: 125, activeListings: 3, storeLinked: true },
 ) {
-  const workspaceInputs: Array<{ tenantId: string; shopDomains: string[] | null }> = [];
+  const workspaceInputs: Array<{
+    tenantId: string;
+    shopDomains: string[] | null;
+    asOf?: string;
+    timezone?: string;
+  }> = [];
   return {
     workspaceInputs,
     repository: {
@@ -69,6 +74,41 @@ describe("Triple Whale analytics", () => {
     });
     expect(designCount).not.toHaveBeenCalled();
     expect(listingCount).not.toHaveBeenCalled();
+  });
+
+  it("counts workspace records as of the selected calendar day", async () => {
+    const designCount = vi.spyOn(prisma.design, "count").mockResolvedValue(20);
+    const listingCount = vi.spyOn(prisma.listing, "count").mockResolvedValue(2);
+
+    await prismaTripleWhaleAnalyticsRepository.getWorkspaceMetrics({
+      tenantId: "tenant",
+      shopDomains: null,
+      asOf: "2026-08-06",
+      timezone: "UTC",
+    });
+
+    const asOf = new Date("2026-08-06T23:59:59.999Z");
+    expect(designCount).toHaveBeenCalledWith({
+      where: {
+        tenantId: "tenant",
+        createdAt: { lte: asOf },
+        OR: [{ deletedAt: null }, { deletedAt: { gt: asOf } }],
+      },
+    });
+    expect(listingCount).toHaveBeenCalledWith({
+      where: {
+        tenantId: "tenant",
+        AND: [
+          {
+            OR: [
+              { publishedAt: { lte: asOf } },
+              { publishedAt: null, createdAt: { lte: asOf }, status: "ACTIVE" },
+            ],
+          },
+          { OR: [{ archivedAt: null }, { archivedAt: { gt: asOf } }] },
+        ],
+      },
+    });
   });
 
   it("counts matched workspace records using resolved store IDs", async () => {
@@ -161,7 +201,9 @@ describe("Triple Whale analytics", () => {
       fake.repository,
     );
 
-    expect(fake.workspaceInputs).toEqual([{ tenantId: "tenant", shopDomains: null }]);
+    expect(fake.workspaceInputs).toEqual([
+      { tenantId: "tenant", shopDomains: null, asOf: "2026-08-02", timezone: "UTC" },
+    ]);
     expect(result.workspace).toEqual({ designs: 125, activeListings: 3, storeLinked: true });
   });
 
@@ -180,7 +222,12 @@ describe("Triple Whale analytics", () => {
     );
 
     expect(fake.workspaceInputs).toEqual([
-      { tenantId: "tenant", shopDomains: ["a.myshopify.com"] },
+      {
+        tenantId: "tenant",
+        shopDomains: ["a.myshopify.com"],
+        asOf: "2026-08-02",
+        timezone: "UTC",
+      },
     ]);
     expect(result.workspace).toEqual({ designs: 20, activeListings: 2, storeLinked: true });
   });
