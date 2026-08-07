@@ -1,4 +1,4 @@
-import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
+import { formatInTimeZone } from "date-fns-tz";
 import { decrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
 import { fetchSummaryData } from "./client";
@@ -34,7 +34,9 @@ export async function syncStoreRange(input: {
 
   for (const record of records) {
     if (!record.date) continue;
-    const date = fromZonedTime(`${record.date}T00:00:00`, timezone);
+    // The Prisma column is PostgreSQL DATE; keep the upstream calendar date
+    // independent from the tenant timezone used for request boundaries.
+    const date = new Date(`${record.date}T00:00:00.000Z`);
 
     await prisma.tripleWhaleDailyStat.upsert({
       where: { credentialId_date: { credentialId: input.credentialId, date } },

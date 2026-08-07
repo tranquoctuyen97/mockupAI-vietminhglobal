@@ -56,15 +56,20 @@ export async function GET(request: Request) {
       timezone,
       ...parsed,
     });
+    const retryFailed = new URL(request.url).searchParams.get("retry") === "1";
     const syncJobs = result.missingRanges.length
       ? await enqueueMissingTripleWhaleRanges({
           tenantId: session.tenantId,
           ranges: result.missingRanges,
+          retryFailed,
         })
       : [];
+    const hasActiveSyncJobs = syncJobs.some((job) =>
+      ["queued", "syncing", "rate_limited"].includes(job.status),
+    );
     return NextResponse.json({
       ...result,
-      dataStatus: syncJobs.length ? "syncing" : result.dataStatus,
+      dataStatus: hasActiveSyncJobs ? "syncing" : result.dataStatus,
       syncJobs,
     });
   } catch (error) {

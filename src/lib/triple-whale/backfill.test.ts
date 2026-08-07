@@ -102,6 +102,107 @@ describe("Triple Whale historical backfill", () => {
     expect(jobs.map((job) => job.status)).toEqual(["queued", "queued"]);
   });
 
+  it("does not re-enqueue a completed range on a later analytics request", async () => {
+    const added: unknown[][] = [];
+    let removed = 0;
+    const queue = {
+      async getJob(jobId: string) {
+        return {
+          id: jobId,
+          data: {
+            tenantId: "tenant",
+            credentialId: "shop",
+            from: "2026-01-01",
+            to: "2026-01-31",
+          },
+          progress: 100,
+          async getState() {
+            return "completed";
+          },
+          async remove() {
+            removed += 1;
+          },
+        };
+      },
+      async add(...args: unknown[]) {
+        added.push(args);
+        throw new Error("must not enqueue");
+      },
+    };
+
+    const jobs = await enqueueMissingTripleWhaleRanges(
+      {
+        tenantId: "tenant",
+        ranges: [{ shopId: "shop", from: "2026-01-01", to: "2026-01-31", scope: "current" }],
+      },
+      queue,
+    );
+
+    expect(added).toHaveLength(0);
+    expect(removed).toBe(0);
+    expect(jobs).toEqual([
+      {
+        id: "tw-backfill-tenant-shop-2026-01-01-2026-01-31",
+        shopId: "shop",
+        from: "2026-01-01",
+        to: "2026-01-31",
+        status: "complete",
+      },
+    ]);
+  });
+
+  it("only retries a failed range when explicitly requested", async () => {
+    const added: unknown[][] = [];
+    let removed = 0;
+    const queue = {
+      async getJob(jobId: string) {
+        return {
+          id: jobId,
+          data: {
+            tenantId: "tenant",
+            credentialId: "shop",
+            from: "2026-01-01",
+            to: "2026-01-31",
+          },
+          progress: 0,
+          async getState() {
+            return "failed";
+          },
+          async remove() {
+            removed += 1;
+          },
+        };
+      },
+      async add(...args: unknown[]) {
+        added.push(args);
+        return {
+          id: (args[2] as { jobId: string }).jobId,
+          data: args[1],
+          progress: 0,
+          async getState() {
+            return "waiting";
+          },
+        };
+      },
+    };
+    const input = {
+      tenantId: "tenant",
+      ranges: [{ shopId: "shop", from: "2026-01-01", to: "2026-01-31", scope: "current" as const }],
+    };
+
+    await expect(enqueueMissingTripleWhaleRanges(input, queue)).resolves.toMatchObject([
+      { status: "failed" },
+    ]);
+    expect(added).toHaveLength(0);
+    expect(removed).toBe(0);
+
+    await expect(
+      enqueueMissingTripleWhaleRanges({ ...input, retryFailed: true }, queue),
+    ).resolves.toMatchObject([{ status: "queued" }]);
+    expect(added).toHaveLength(1);
+    expect(removed).toBe(1);
+  });
+
   it("uses upstream retry timing for delayed jobs", () => {
     const now = new Date("2026-08-01T00:00:00.000Z");
     const rateLimit = new TWRateLimitError({

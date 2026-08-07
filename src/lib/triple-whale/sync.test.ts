@@ -54,6 +54,16 @@ describe("Triple Whale explicit range sync", () => {
       }),
     );
     expect(upsert).toHaveBeenCalledTimes(1);
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          credentialId_date: {
+            credentialId: "shop",
+            date: new Date("2026-01-01T00:00:00.000Z"),
+          },
+        },
+      }),
+    );
     expect(update).not.toHaveBeenCalled();
   });
 });

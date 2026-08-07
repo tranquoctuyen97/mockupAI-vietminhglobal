@@ -8,6 +8,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { toast } from "sonner";
@@ -201,15 +202,20 @@ export default function TripleWhaleDashboard({ timezone }: { timezone: string })
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncingAll, setSyncingAll] = useState(false);
+  const completedSyncToastKey = useRef<string | null>(null);
 
   const load = useCallback(
-    async (signal?: AbortSignal) => {
+    async (signal?: AbortSignal, retryFailed = false) => {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(`/api/triple-whale/analytics?${queryForFilters(filters)}`, {
-          signal,
-        });
+        const query = queryForFilters(filters);
+        const response = await fetch(
+          `/api/triple-whale/analytics?${query}${retryFailed ? "&retry=1" : ""}`,
+          {
+            signal,
+          },
+        );
         const body = await response.json();
         if (!response.ok) throw new Error(body.error ?? "Unable to load analytics");
         setData(body as AnalyticsApiResponse);
@@ -232,6 +238,10 @@ export default function TripleWhaleDashboard({ timezone }: { timezone: string })
   useEffect(() => {
     const activeJobs = data?.syncJobs.filter((job) => ACTIVE_JOB_STATES.has(job.status)) ?? [];
     if (!activeJobs.length) return;
+    const activeJobKey = activeJobs
+      .map((job) => `${job.shopId}:${job.from}:${job.to}`)
+      .sort()
+      .join("|");
     let stopped = false;
     const timer = window.setInterval(async () => {
       const params = new URLSearchParams();
@@ -251,7 +261,10 @@ export default function TripleWhaleDashboard({ timezone }: { timezone: string })
             );
           } else {
             await load();
-            toast.success("Triple Whale historical data updated");
+            if (!stopped && completedSyncToastKey.current !== activeJobKey) {
+              completedSyncToastKey.current = activeJobKey;
+              toast.success("Triple Whale historical data updated");
+            }
           }
         } else {
           setData((current) => current && { ...current, syncJobs: body.jobs });
@@ -339,7 +352,7 @@ export default function TripleWhaleDashboard({ timezone }: { timezone: string })
       {data && (
         <SyncStatusBanner
           jobs={data.syncJobs}
-          onRetry={() => void load()}
+          onRetry={() => void load(undefined, true)}
           status={data.dataStatus}
         />
       )}

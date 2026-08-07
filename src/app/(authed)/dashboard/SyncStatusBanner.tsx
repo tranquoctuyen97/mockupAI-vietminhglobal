@@ -25,9 +25,10 @@ export default function SyncStatusBanner({
   jobs: TripleWhaleSyncJobSummary[];
   onRetry?: () => void;
 }) {
-  if (status === "complete" && !jobs.length) return null;
+  const active = jobs.some((job) => ["queued", "syncing", "rate_limited"].includes(job.status));
   const rateLimited = jobs.some((job) => job.status === "rate_limited");
   const failed = status === "failed" || jobs.some((job) => job.status === "failed");
+  if (!active && !failed) return null;
   const jobRange = jobs[0] ? formatRange(jobs[0].from, jobs[0].to) : null;
   const StatusIcon = failed ? AlertTriangle : rateLimited ? Clock3 : Database;
   const copy = failed

@@ -105,6 +105,48 @@ describe("Triple Whale analytics", () => {
     });
   });
 
+  it("queries and returns daily DATE values without applying a timezone shift", async () => {
+    const date = new Date("2026-08-06T00:00:00.000Z");
+    const findDailyStats = vi.spyOn(prisma.tripleWhaleDailyStat, "findMany").mockResolvedValue([
+      {
+        credentialId: "shop-a",
+        date,
+        orderRevenue: 10,
+        netProfit: 5,
+        netMargin: 0.5,
+        orders: 1,
+        paymentGateways: 1,
+        shipping: 1,
+        blendedAdSpend: 2,
+        cogs: 1,
+        totalCost: 5,
+        id: "stat-a",
+        syncedAt: date,
+      } as never,
+    ]);
+
+    const rows = await prismaTripleWhaleAnalyticsRepository.listDailyStats({
+      tenantId: "tenant",
+      shopIds: ["shop-a"],
+      from: "2026-08-06",
+      to: "2026-08-06",
+      timezone: "America/New_York",
+    });
+
+    expect(findDailyStats).toHaveBeenCalledWith({
+      where: {
+        credentialId: { in: ["shop-a"] },
+        credential: { tenantId: "tenant" },
+        date: {
+          gte: new Date("2026-08-06T00:00:00.000Z"),
+          lte: new Date("2026-08-06T00:00:00.000Z"),
+        },
+      },
+      orderBy: [{ date: "asc" }, { credentialId: "asc" }],
+    });
+    expect(rows[0]).toMatchObject({ shopId: "shop-a", date: "2026-08-06" });
+  });
+
   it("returns tenant-wide workspace metrics for all shops", async () => {
     const fake = repository([]);
 

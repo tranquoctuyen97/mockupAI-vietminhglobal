@@ -1,5 +1,3 @@
-import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
-
 import { prisma } from "@/lib/db";
 
 import { type ComparisonMode, comparisonRange, type DateRange } from "./date-ranges";
@@ -193,21 +191,23 @@ export const prismaTripleWhaleAnalyticsRepository: TripleWhaleAnalyticsRepositor
       orderBy: { customName: "asc" },
     });
   },
-  async listDailyStats({ tenantId, shopIds, from, to, timezone }) {
+  async listDailyStats({ tenantId, shopIds, from, to }) {
     const rows = await prisma.tripleWhaleDailyStat.findMany({
       where: {
         credentialId: { in: shopIds },
         credential: { tenantId },
         date: {
-          gte: fromZonedTime(`${from}T00:00:00`, timezone),
-          lte: fromZonedTime(`${to}T23:59:59`, timezone),
+          // `date` is a PostgreSQL DATE. Query it as a calendar date instead
+          // of converting it through the dashboard timezone.
+          gte: new Date(`${from}T00:00:00.000Z`),
+          lte: new Date(`${to}T00:00:00.000Z`),
         },
       },
       orderBy: [{ date: "asc" }, { credentialId: "asc" }],
     });
     return rows.map((row) => ({
       shopId: row.credentialId,
-      date: formatInTimeZone(row.date, timezone, "yyyy-MM-dd"),
+      date: row.date.toISOString().slice(0, 10),
       orderRevenue: Number(row.orderRevenue),
       blendedAdSpend: Number(row.blendedAdSpend),
       totalCost: Number(row.totalCost),

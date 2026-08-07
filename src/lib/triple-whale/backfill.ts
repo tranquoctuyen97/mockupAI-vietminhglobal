@@ -97,7 +97,7 @@ async function summarizeJob(
 }
 
 export async function enqueueMissingTripleWhaleRanges(
-  input: { tenantId: string; ranges: MissingRange[] },
+  input: { tenantId: string; ranges: MissingRange[]; retryFailed?: boolean },
   queue: BackfillQueue = getTripleWhaleSyncQueue() as Queue<TWSyncJobPayload> as BackfillQueue,
 ): Promise<TripleWhaleSyncJobSummary[]> {
   const summaries: TripleWhaleSyncJobSummary[] = [];
@@ -108,6 +108,10 @@ export async function enqueueMissingTripleWhaleRanges(
       if (job) {
         const state = await job.getState();
         if (state !== "completed" && state !== "failed") {
+          summaries.push(await summarizeJob(job, { shopId: missing.shopId, ...chunk }));
+          continue;
+        }
+        if (state === "completed" || !input.retryFailed) {
           summaries.push(await summarizeJob(job, { shopId: missing.shopId, ...chunk }));
           continue;
         }
