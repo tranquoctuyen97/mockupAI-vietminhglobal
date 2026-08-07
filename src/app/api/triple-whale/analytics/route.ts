@@ -9,6 +9,7 @@ import {
   type DateRange,
   inclusiveDayCount,
 } from "@/lib/triple-whale/date-ranges";
+import { DEFAULT_TRIPLE_WHALE_TIMEZONE } from "@/lib/triple-whale/timezone";
 
 const COMPARISON_MODES = new Set<ComparisonMode>([
   "none",
@@ -50,7 +51,7 @@ export async function GET(request: Request) {
       where: { id: session.tenantId },
       select: { twTimezone: true },
     });
-    const timezone = tenant?.twTimezone ?? "America/Los_Angeles";
+    const timezone = tenant?.twTimezone ?? DEFAULT_TRIPLE_WHALE_TIMEZONE;
     const result = await getTripleWhaleAnalytics({
       tenantId: session.tenantId,
       timezone,

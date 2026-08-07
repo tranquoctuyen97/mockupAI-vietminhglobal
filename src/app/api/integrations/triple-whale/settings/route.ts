@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
+import { TRIPLE_WHALE_TIMEZONE_VALUES } from "@/lib/triple-whale/timezone";
 
 const settingsSchema = z.object({
-  timezone: z.string().min(1),
+  timezone: z.enum(TRIPLE_WHALE_TIMEZONE_VALUES),
 });
 
 export async function PATCH(req: Request) {

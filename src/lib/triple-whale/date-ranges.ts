@@ -86,3 +86,8 @@ export function presetRange(preset: DatePreset, timezone: string, now = new Date
   const days = Number.parseInt(preset, 10);
   return { from: shiftDays(today, -(days - 1)), to: today };
 }
+
+/** Convert a calendar date to the UTC midnight representation used by PostgreSQL DATE. */
+export function calendarDateToUtcMidnight(value: string): Date {
+  return new Date(`${value}T00:00:00.000Z`);
+}

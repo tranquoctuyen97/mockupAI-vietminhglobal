@@ -15,7 +15,7 @@ model Tenant {
   id         String   @id @default(cuid())
   name       String
   createdAt  DateTime @default(now()) @map("created_at")
-  twTimezone String   @default("America/Los_Angeles") @map("tw_timezone")
+  twTimezone String   @default("Etc/GMT+7") @map("tw_timezone")
 
   users               User[]
   auditEvents         AuditEvent[]

@@ -7,6 +7,7 @@ import {
 import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { type DateRange, inclusiveDayCount } from "@/lib/triple-whale/date-ranges";
+import { DEFAULT_TRIPLE_WHALE_TIMEZONE } from "@/lib/triple-whale/timezone";
 
 const MAX_RANGE_DAYS = 366;
 
@@ -47,7 +48,7 @@ export async function GET(request: Request) {
       where: { id: session.tenantId },
       select: { twTimezone: true },
     });
-    const timezone = tenant?.twTimezone ?? parsed.timezone;
+    const timezone = tenant?.twTimezone ?? DEFAULT_TRIPLE_WHALE_TIMEZONE;
 
     let storeIds: string[] | null = null;
     let shopMapped = true;

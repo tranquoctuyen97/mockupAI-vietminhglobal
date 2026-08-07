@@ -3,6 +3,7 @@ import { decrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
 import { fetchSummaryData } from "./client";
 import { TripleWhaleRequestGate } from "./request-gate";
+import { currentTripleWhaleHour, DEFAULT_TRIPLE_WHALE_TIMEZONE } from "./timezone";
 import type { TWDailyRecord } from "./types";
 
 export async function syncStoreRange(input: {
@@ -16,7 +17,7 @@ export async function syncStoreRange(input: {
   });
   if (!credential) throw new Error(`No Triple Whale credential for ID ${input.credentialId}`);
 
-  const timezone = credential.tenant.twTimezone ?? "America/Los_Angeles";
+  const timezone = credential.tenant.twTimezone ?? DEFAULT_TRIPLE_WHALE_TIMEZONE;
   const requestGate = new TripleWhaleRequestGate();
   let records: TWDailyRecord[];
   try {
@@ -25,7 +26,7 @@ export async function syncStoreRange(input: {
       shopDomain: credential.shopDomain,
       startDate: input.from,
       endDate: input.to,
-      todayHour: Number(formatInTimeZone(new Date(), timezone, "H")),
+      todayHour: currentTripleWhaleHour(timezone),
       requestGate,
     });
   } finally {
@@ -76,7 +77,7 @@ export async function syncStore(credentialId: string): Promise<void> {
   });
   if (!credential) throw new Error(`No Triple Whale credential for ID ${credentialId}`);
 
-  const timezone = credential.tenant.twTimezone ?? "America/Los_Angeles";
+  const timezone = credential.tenant.twTimezone ?? DEFAULT_TRIPLE_WHALE_TIMEZONE;
   const now = new Date();
   const today = formatInTimeZone(now, timezone, "yyyy-MM-dd");
   const startDate = credential.lastSyncedAt

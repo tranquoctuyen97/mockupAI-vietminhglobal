@@ -1,7 +1,8 @@
-import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { NextResponse } from "next/server";
 import { requireFeature } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
+import { calendarDateToUtcMidnight } from "@/lib/triple-whale/date-ranges";
+import { DEFAULT_TRIPLE_WHALE_TIMEZONE } from "@/lib/triple-whale/timezone";
 
 export async function GET(req: Request) {
   const { session, response } = await requireFeature("stores");
@@ -18,9 +19,9 @@ export async function GET(req: Request) {
     where: { id: session.tenantId },
     select: { twTimezone: true },
   });
-  const timezone = tenant?.twTimezone ?? "America/Los_Angeles";
-  const fromUtc = fromZonedTime(`${from}T00:00:00`, timezone);
-  const toUtc = fromZonedTime(`${to}T23:59:59`, timezone);
+  const timezone = tenant?.twTimezone ?? DEFAULT_TRIPLE_WHALE_TIMEZONE;
+  const fromUtc = calendarDateToUtcMidnight(from);
+  const toUtc = calendarDateToUtcMidnight(to);
 
   const rows = await prisma.tripleWhaleDailyStat.findMany({
     where: {
@@ -42,7 +43,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     rows: rows.map((row) => ({
       id: row.id,
-      date: formatInTimeZone(row.date, timezone, "yyyy-MM-dd"),
+      date: row.date.toISOString().slice(0, 10),
       shopDomain: row.credential.shopDomain,
       customName: row.credential.customName,
       orderRevenue: Number(row.orderRevenue),

@@ -3,6 +3,7 @@ import {
   type TripleWhaleRateLimitMetadata,
   type TripleWhaleRequestGate,
 } from "./request-gate";
+import { currentTripleWhaleHour, DEFAULT_TRIPLE_WHALE_TIMEZONE } from "./timezone";
 import type { TWDailyRecord, TWMetric, TWSummaryResponse } from "./types";
 
 const TW_API_BASE = "https://api.triplewhale.com/api/v2";
@@ -104,6 +105,7 @@ export async function fetchSummaryData(opts: {
   startDate: string;
   endDate: string;
   todayHour?: number;
+  timezone?: string;
   requestGate?: Pick<TripleWhaleRequestGate, "beforeRequest" | "afterRateLimit">;
 }): Promise<TWDailyRecord[]> {
   await opts.requestGate?.beforeRequest();
@@ -119,7 +121,8 @@ export async function fetchSummaryData(opts: {
         start: opts.startDate,
         end: opts.endDate,
       },
-      todayHour: opts.todayHour ?? new Date().getUTCHours(),
+      todayHour:
+        opts.todayHour ?? currentTripleWhaleHour(opts.timezone ?? DEFAULT_TRIPLE_WHALE_TIMEZONE),
     }),
   });
   const rateLimit = parseTripleWhaleRateLimitHeaders(res.headers);

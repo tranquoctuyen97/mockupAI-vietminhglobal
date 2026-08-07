@@ -4,6 +4,7 @@ import { requireFeature } from "@/lib/auth/guards";
 import { encrypt } from "@/lib/crypto/envelope";
 import { prisma } from "@/lib/db";
 import { fetchSummaryData, TWAuthError } from "@/lib/triple-whale/client";
+import { DEFAULT_TRIPLE_WHALE_TIMEZONE } from "@/lib/triple-whale/timezone";
 
 export async function GET() {
   const { session, response } = await requireFeature("stores");
@@ -51,7 +52,7 @@ export async function GET() {
       name: s.name,
       shopifyDomain: s.shopifyDomain,
     })),
-    timezone: tenant?.twTimezone ?? "America/Los_Angeles",
+    timezone: tenant?.twTimezone ?? DEFAULT_TRIPLE_WHALE_TIMEZONE,
   });
 }
 

@@ -7,6 +7,10 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useId, useState } from "react";
 import { toast } from "sonner";
+import {
+  DEFAULT_TRIPLE_WHALE_TIMEZONE,
+  TRIPLE_WHALE_TIMEZONE_OPTIONS,
+} from "@/lib/triple-whale/timezone";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -32,15 +36,6 @@ interface PageData {
   shopifyStores: ShopifyStore[];
   timezone: string;
 }
-
-const TIMEZONES = [
-  { value: "America/Los_Angeles", label: "America/Los_Angeles (PT)" },
-  { value: "America/Denver",      label: "America/Denver (MT)" },
-  { value: "America/Chicago",     label: "America/Chicago (CT)" },
-  { value: "America/New_York",    label: "America/New_York (ET)" },
-  { value: "UTC",                 label: "UTC" },
-  { value: "Asia/Ho_Chi_Minh",    label: "Asia/Ho_Chi_Minh (ICT)" },
-];
 
 function getDefaultSyncFromDate() {
   return new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -574,8 +569,8 @@ export default function TripleWhaleClient() {
             <div style={{ fontWeight: 700, fontSize: 14 }}>Dashboard Timezone</div>
             <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Triple Whale dates are interpreted in this timezone for all shops</div>
           </div>
-          <select className="input" style={{ width: 280 }} value={data?.timezone ?? "America/Los_Angeles"} onChange={(e) => saveTimezone(e.target.value)}>
-            {TIMEZONES.map((tz) => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
+          <select className="input" style={{ width: 280 }} value={data?.timezone ?? DEFAULT_TRIPLE_WHALE_TIMEZONE} onChange={(e) => saveTimezone(e.target.value)}>
+            {TRIPLE_WHALE_TIMEZONE_OPTIONS.map((tz) => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
           </select>
         </div>
       </div>
