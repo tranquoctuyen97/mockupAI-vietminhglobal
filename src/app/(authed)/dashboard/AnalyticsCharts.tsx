@@ -1,19 +1,15 @@
 import type { AnalyticsMetricKey, TripleWhaleAnalyticsResult } from "@/lib/triple-whale/analytics";
 
-const CHARTS: Array<{ key: AnalyticsMetricKey; label: string; currency: boolean }> = [
-  { key: "orderRevenue", label: "Order revenue", currency: true },
-  { key: "orders", label: "Orders", currency: false },
-  { key: "blendedAdSpend", label: "Ads", currency: true },
-  { key: "totalCost", label: "Cost", currency: true },
-  { key: "netProfit", label: "Net profit", currency: true },
-];
-const COLORS = ["#54a9ed", "#6fcf97", "#f2b84b", "#f57835", "#818ce4", "#9fe870"];
+import AnalyticsDistributionPie from "./AnalyticsDistributionPie";
+import { buildShopColorMap } from "./analytics-chart-model";
 
-function formatValue(value: number, currency: boolean): string {
-  if (!currency) return value.toLocaleString("en-US", { maximumFractionDigits: 0 });
-  const absolute = Math.abs(value).toLocaleString("en-US", { maximumFractionDigits: 0 });
-  return value < 0 ? `-$${absolute}` : `$${absolute}`;
-}
+const CHARTS: Array<{ key: AnalyticsMetricKey; label: string; currency: boolean }> = [
+  { key: "orderRevenue", label: "Order revenue %", currency: true },
+  { key: "orders", label: "Order %", currency: false },
+  { key: "blendedAdSpend", label: "Ads", currency: true },
+  { key: "totalCost", label: "Cost %", currency: true },
+  { key: "netProfit", label: "Net profit %", currency: true },
+];
 
 function linePoints(values: Array<number | null>, min: number, max: number): string {
   return values
@@ -143,65 +139,6 @@ function EmptyChart() {
   );
 }
 
-function Distribution({
-  currency,
-  items,
-}: {
-  currency: boolean;
-  items: Array<{ shopId: string; label: string; value: number }>;
-}) {
-  if (!items.length) return <EmptyChart />;
-  const sorted = [...items].sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
-  const max = Math.max(...sorted.map((item) => Math.abs(item.value)), 1);
-  return (
-    <div
-      aria-label="Shop value comparison chart"
-      role="img"
-      style={{ display: "grid", gap: 11, minHeight: 190, paddingTop: 18 }}
-    >
-      {sorted.map((item, index) => (
-        <div key={item.shopId}>
-          <div
-            style={{
-              display: "flex",
-              fontSize: 11,
-              gap: 12,
-              justifyContent: "space-between",
-              marginBottom: 5,
-            }}
-          >
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {item.label}
-            </span>
-            <strong
-              style={{ color: item.value < 0 ? "var(--color-danger)" : "var(--text-primary)" }}
-            >
-              {formatValue(item.value, currency)}
-            </strong>
-          </div>
-          <div
-            style={{
-              background: "var(--bg-secondary)",
-              borderRadius: 99,
-              height: 8,
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                background: item.value < 0 ? "var(--color-danger)" : COLORS[index % COLORS.length],
-                borderRadius: 99,
-                height: "100%",
-                width: `${(Math.abs(item.value) / max) * 100}%`,
-              }}
-            />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default function AnalyticsCharts({
   distribution,
   daily,
@@ -211,6 +148,8 @@ export default function AnalyticsCharts({
   daily: TripleWhaleAnalyticsResult["analytics"]["daily"];
   selectedShopId: string;
 }) {
+  const colorByShop = buildShopColorMap(distribution);
+
   return (
     <section style={{ marginTop: 20 }}>
       <h2 style={{ fontSize: 16, fontWeight: 800, marginBottom: 10 }}>
@@ -219,11 +158,18 @@ export default function AnalyticsCharts({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {CHARTS.map(({ key, label, currency }) => (
           <article className="card" key={key} style={{ padding: 18 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 750 }}>{label}</h3>
+            <h3 style={{ fontSize: 15, fontWeight: 750 }}>
+              {selectedShopId ? label.replace(/ %$/, "") : label}
+            </h3>
             {selectedShopId ? (
-              <Trend label={label} points={daily[key]} />
+              <Trend label={label.replace(/ %$/, "")} points={daily[key]} />
             ) : (
-              <Distribution currency={currency} items={distribution[key]} />
+              <AnalyticsDistributionPie
+                colorByShop={colorByShop}
+                currency={currency}
+                items={distribution[key]}
+                label={label}
+              />
             )}
           </article>
         ))}

@@ -359,19 +359,46 @@ describe("dashboard analytics components", () => {
         orders: [{ date: "2026-08-01", current: 1, previous: 1 }],
       },
       distribution: {
-        orderRevenue: [{ shopId: "shop-a", label: "Shop A", value: 10 }],
-        blendedAdSpend: [{ shopId: "shop-a", label: "Shop A", value: 2 }],
-        totalCost: [{ shopId: "shop-a", label: "Shop A", value: 5 }],
-        netProfit: [{ shopId: "shop-a", label: "Shop A", value: 5 }],
-        orders: [{ shopId: "shop-a", label: "Shop A", value: 1 }],
+        orderRevenue: [
+          { shopId: "shop-a", label: "Shop A", value: 10 },
+          { shopId: "shop-b", label: "Shop B", value: 5 },
+        ],
+        blendedAdSpend: [
+          { shopId: "shop-a", label: "Shop A", value: 2 },
+          { shopId: "shop-b", label: "Shop B", value: 1 },
+        ],
+        totalCost: [
+          { shopId: "shop-a", label: "Shop A", value: 5 },
+          { shopId: "shop-b", label: "Shop B", value: 5 },
+        ],
+        netProfit: [
+          { shopId: "shop-a", label: "Shop A", value: 5 },
+          { shopId: "shop-b", label: "Shop B", value: 3 },
+        ],
+        orders: [
+          { shopId: "shop-a", label: "Shop A", value: 1 },
+          { shopId: "shop-b", label: "Shop B", value: 1 },
+        ],
       },
     };
-    expect(renderToStaticMarkup(<AnalyticsCharts {...common} selectedShopId="" />)).toContain(
-      "Distribution by shop",
+    const allShopsMarkup = renderToStaticMarkup(<AnalyticsCharts {...common} selectedShopId="" />);
+    expect(allShopsMarkup).toContain("Distribution by shop");
+    expect(allShopsMarkup).toContain('data-chart-type="pie"');
+    expect(allShopsMarkup).toContain("Order revenue %");
+    expect(allShopsMarkup).toContain("Order %");
+    expect(allShopsMarkup).toContain("Cost %");
+    expect(allShopsMarkup).toContain("Net profit %");
+    expect(allShopsMarkup).toContain("Shop A");
+    expect(allShopsMarkup).toContain("50%");
+
+    const selectedShopMarkup = renderToStaticMarkup(
+      <AnalyticsCharts {...common} selectedShopId="shop-a" />,
     );
-    expect(renderToStaticMarkup(<AnalyticsCharts {...common} selectedShopId="shop-a" />)).toContain(
-      "Daily trends",
+    expect(selectedShopMarkup).toContain("Daily trends");
+    expect(selectedShopMarkup).toContain(
+      'aria-label="Order revenue daily current and previous trend"',
     );
+    expect(selectedShopMarkup).not.toContain('data-chart-type="pie"');
   });
 
   it("keeps loss-making shops visible in profit comparison charts", () => {
@@ -399,6 +426,34 @@ describe("dashboard analytics components", () => {
     );
     expect(markup).toContain("Loss making");
     expect(markup).toContain("-$18");
+    expect(markup).toContain("absolute profit/loss magnitude");
+    expect(markup).toContain('data-has-negative-values="true"');
+  });
+
+  it("shows zero-value shops in the legend without rendering a zero-total pie", () => {
+    const markup = renderToStaticMarkup(
+      <AnalyticsCharts
+        daily={{
+          orderRevenue: [],
+          blendedAdSpend: [],
+          totalCost: [],
+          netProfit: [],
+          orders: [],
+        }}
+        distribution={{
+          orderRevenue: [{ shopId: "shop-a", label: "Zero shop", value: 0 }],
+          blendedAdSpend: [],
+          totalCost: [],
+          netProfit: [],
+          orders: [],
+        }}
+        selectedShopId=""
+      />,
+    );
+
+    expect(markup).toContain("Zero shop");
+    expect(markup).toContain("0%");
+    expect(markup).toContain("No non-zero data for this period");
   });
 
   it("shows an Apply action and the effective comparison periods", () => {

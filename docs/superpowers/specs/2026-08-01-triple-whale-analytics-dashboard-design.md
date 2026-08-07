@@ -74,7 +74,13 @@ The database stores daily Triple Whale statistics. For a one-day display period,
 
 ## Charts
 
-When All shops is selected, the five charts show the distribution of each metric across shops, with a consistent shop color legend.
+### 2026-08-07 clarification: Lark-style shop distribution
+
+When All shops is selected, the five distribution panels must render Lark-style pie charts, not horizontal comparison bars. The panel labels are `Order revenue %`, `Order %`, `Ads`, `Cost %`, and `Net profit %`. Every pie uses the same deterministic shop-to-color mapping, and every panel exposes a shop legend, the signed metric value, and that shop's percentage of the displayed pie.
+
+For metrics whose values are all non-negative, a slice percentage is `value / sum(values)`. Net profit may contain negative values, which a pie cannot represent as signed area. In that case, slice geometry and percentage use `abs(value) / sum(abs(values))`, while the label, tooltip, and legend retain the signed currency value and the panel explains that percentages represent absolute profit/loss magnitude. Zero-value shops remain in the legend at `0%` but do not create a visible slice. If every value is zero, the panel renders an explicit no-non-zero-data state instead of an empty chart.
+
+The chart must remain usable on narrow screens: the pie stays inside its card, the legend may scroll horizontally, and external callout labels may be suppressed on small viewports as long as the same value and percentage remain available in the legend and tooltip.
 
 When one shop is selected, distribution has no useful meaning. The five chart panels switch to daily trend charts for that shop.
 
