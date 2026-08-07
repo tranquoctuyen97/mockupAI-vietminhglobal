@@ -360,34 +360,45 @@ function StoreSwitcherPanel({
   selectedStore: StoreOption | null;
   onChooseStore: (storeId: string) => void;
 }) {
-  const recentStores = stores.slice(0, 3);
-  const allStores = stores.slice(3, 6);
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const filteredStores = normalizedQuery
+    ? stores.filter((store) =>
+        `${store.name} ${store.domain}`.toLocaleLowerCase().includes(normalizedQuery),
+      )
+    : stores;
+
   return (
     <div style={storePanel}>
-      <div style={storeSearch}>
+      <label style={storeSearch}>
         <Search size={16} />
-        <span>Search stores...</span>
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search stores..."
+          aria-label="Search stores"
+          style={storeSearchInput}
+        />
+      </label>
+      <PanelLabel>
+        All stores <span style={storeCount}>{filteredStores.length}</span>
+      </PanelLabel>
+      <div style={storeList}>
+        {filteredStores.length > 0 ? (
+          filteredStores.map((store, index) => (
+            <StoreRow
+              key={store.id}
+              store={store}
+              index={index}
+              selected={store.id === selectedStore?.id}
+              onChooseStore={onChooseStore}
+            />
+          ))
+        ) : (
+          <p style={noStoreResults}>No stores found.</p>
+        )}
       </div>
-      <PanelLabel>Recent stores</PanelLabel>
-      {recentStores.map((store, index) => (
-        <StoreRow
-          key={store.id}
-          store={store}
-          index={index}
-          selected={store.id === selectedStore?.id}
-          onChooseStore={onChooseStore}
-        />
-      ))}
-      {allStores.length > 0 && <PanelLabel>All stores</PanelLabel>}
-      {allStores.map((store, index) => (
-        <StoreRow
-          key={store.id}
-          store={store}
-          index={index + 3}
-          selected={store.id === selectedStore?.id}
-          onChooseStore={onChooseStore}
-        />
-      ))}
       <Link href="/stores" style={viewAllStores}>
         View all stores <ChevronRight size={15} />
       </Link>
@@ -874,6 +885,15 @@ const storeSearch: React.CSSProperties = {
   gap: 8,
   padding: "0 12px",
 };
+const storeSearchInput: React.CSSProperties = {
+  border: "none",
+  outline: "none",
+  background: "transparent",
+  color: "#101828",
+  flex: 1,
+  minWidth: 0,
+  font: "inherit",
+};
 const panelLabel: React.CSSProperties = {
   margin: "14px 0 6px",
   color: "#667085",
@@ -881,6 +901,22 @@ const panelLabel: React.CSSProperties = {
   fontWeight: 700,
   textTransform: "uppercase",
   letterSpacing: "0.04em",
+};
+const storeCount: React.CSSProperties = {
+  color: "#98a2b3",
+  fontWeight: 600,
+};
+const storeList: React.CSSProperties = {
+  maxHeight: 380,
+  overflowY: "auto",
+  paddingRight: 4,
+};
+const noStoreResults: React.CSSProperties = {
+  margin: 0,
+  padding: "18px 10px",
+  color: "#667085",
+  fontSize: 13,
+  textAlign: "center",
 };
 const storeRow: React.CSSProperties = {
   width: "100%",

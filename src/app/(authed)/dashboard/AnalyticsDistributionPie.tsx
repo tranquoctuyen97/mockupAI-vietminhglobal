@@ -6,6 +6,8 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 import { buildPieSlices, type PieSlice, type ShopColorMap } from "./analytics-chart-model";
 
+const MIN_RADIAL_LABEL_PERCENT = 10;
+
 function formatValue(value: number, currency: boolean): string {
   const absolute = Math.abs(value).toLocaleString("en-US", {
     maximumFractionDigits: currency ? 2 : 0,
@@ -20,7 +22,9 @@ function formatPercent(value: number): string {
 
 function renderPieLabel(currency: boolean, props: PieLabelRenderProps): ReactNode {
   const slice = props.payload as PieSlice | undefined;
-  if (!slice || props.x == null || props.y == null) return null;
+  if (!slice || slice.percent < MIN_RADIAL_LABEL_PERCENT || props.x == null || props.y == null) {
+    return null;
+  }
   return (
     <text
       dominantBaseline="central"
@@ -66,10 +70,10 @@ export default function AnalyticsDistributionPie({
               <Pie
                 data={visibleSlices}
                 dataKey="magnitude"
-                endAngle={360}
+                endAngle={450}
                 isAnimationActive={false}
                 label={(props) => renderPieLabel(currency, props)}
-                labelLine={{ stroke: "var(--border-default)", strokeWidth: 1 }}
+                labelLine={false}
                 nameKey="label"
                 outerRadius="62%"
                 startAngle={90}
@@ -117,18 +121,23 @@ export default function AnalyticsDistributionPie({
         aria-label={`${label} shop legend`}
         style={{
           display: "flex",
-          gap: 10,
+          flexWrap: "wrap",
+          gap: "6px 10px",
           listStyle: "none",
           margin: 0,
-          overflowX: "auto",
           padding: 0,
-          whiteSpace: "nowrap",
         }}
       >
         {slices.map((slice) => (
           <li
             key={slice.shopId}
-            style={{ alignItems: "center", display: "inline-flex", gap: 4, fontSize: 10 }}
+            style={{
+              alignItems: "center",
+              display: "inline-flex",
+              gap: 4,
+              fontSize: 10,
+              maxWidth: "100%",
+            }}
           >
             <span
               aria-hidden="true"
