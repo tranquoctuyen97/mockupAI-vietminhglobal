@@ -45,7 +45,7 @@ async function handler(
     return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
   }
 
-  const host = getPublicOrigin(request.nextUrl.origin);
+  const host = getPublicOrigin(request.nextUrl.origin, request.headers);
   const { token, orgId } = await getToken(session.tenantId);
   let body = await upstream.text();
 

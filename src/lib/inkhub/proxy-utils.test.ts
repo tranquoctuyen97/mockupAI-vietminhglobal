@@ -1,12 +1,49 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  getPublicOrigin,
   injectTokenScript,
   isTextContent,
   rewriteAbsolutePaths,
   rewriteApiUrls,
   rewriteRootAssets,
 } from "./proxy-utils";
+
+test("getPublicOrigin: prefers forwarded HTTPS origin behind a proxy", () => {
+  const previousAppOrigin = process.env.APP_PUBLIC_ORIGIN;
+  const previousNextOrigin = process.env.NEXT_PUBLIC_APP_URL;
+  delete process.env.APP_PUBLIC_ORIGIN;
+  delete process.env.NEXT_PUBLIC_APP_URL;
+  const headers = new Headers({
+    "x-forwarded-host": "app.example.com",
+    "x-forwarded-proto": "https",
+  });
+
+  try {
+    assert.equal(getPublicOrigin("http://internal:3000", headers), "https://app.example.com");
+  } finally {
+    if (previousAppOrigin === undefined) delete process.env.APP_PUBLIC_ORIGIN;
+    else process.env.APP_PUBLIC_ORIGIN = previousAppOrigin;
+    if (previousNextOrigin === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+    else process.env.NEXT_PUBLIC_APP_URL = previousNextOrigin;
+  }
+});
+
+test("getPublicOrigin: upgrades non-local HTTP origin when forwarded headers are absent", () => {
+  const previousAppOrigin = process.env.APP_PUBLIC_ORIGIN;
+  const previousNextOrigin = process.env.NEXT_PUBLIC_APP_URL;
+  delete process.env.APP_PUBLIC_ORIGIN;
+  delete process.env.NEXT_PUBLIC_APP_URL;
+
+  try {
+    assert.equal(getPublicOrigin("http://app.example.com"), "https://app.example.com");
+  } finally {
+    if (previousAppOrigin === undefined) delete process.env.APP_PUBLIC_ORIGIN;
+    else process.env.APP_PUBLIC_ORIGIN = previousAppOrigin;
+    if (previousNextOrigin === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+    else process.env.NEXT_PUBLIC_APP_URL = previousNextOrigin;
+  }
+});
 
 test("isTextContent: returns true for text types", () => {
   assert.equal(isTextContent("text/html; charset=utf-8"), true);
@@ -27,6 +64,9 @@ test("rewriteApiUrls: replaces all occurrences", () => {
   const result = rewriteApiUrls(input, "https://app.example.com");
   assert.ok(!result.includes("api-inkhub-v2.grabink.co"));
   assert.equal(result.match(/app\.example\.com\/api\/inkhub-api/g)?.length, 2);
+  assert.ok(result.includes('"https://app.example.com/api/inkhub-api/orders"'));
+  assert.ok(result.includes('"https://app.example.com/api/inkhub-api/auth"'));
+  assert.ok(!result.includes("/api/inkhub-api/api/"));
 });
 
 test("rewriteApiUrls: leaves unrelated URLs unchanged", () => {

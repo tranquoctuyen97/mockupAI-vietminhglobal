@@ -39,7 +39,7 @@ export default async function AutoFulfillPage() {
 
   return (
     <iframe
-      src="/api/inkhub-proxy/"
+      src="/api/inkhub-proxy"
       title="Auto Fulfill"
       className="w-full h-full border-0 block"
     />

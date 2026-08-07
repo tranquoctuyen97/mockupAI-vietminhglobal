@@ -1,6 +1,35 @@
-export function getPublicOrigin(requestOrigin: string): string {
-  const url = process.env.NEXT_PUBLIC_APP_URL;
-  return (url || requestOrigin).replace(/\/$/, "");
+function firstHeaderValue(value: string | null): string | undefined {
+  const first = value?.split(",", 1)[0]?.trim();
+  return first || undefined;
+}
+
+function isLocalHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
+export function getPublicOrigin(requestOrigin: string, headers?: Headers): string {
+  const configuredOrigin = process.env.APP_PUBLIC_ORIGIN ?? process.env.NEXT_PUBLIC_APP_URL;
+
+  if (configuredOrigin) {
+    try {
+      return new URL(configuredOrigin).origin;
+    } catch {
+      // Fall through to the request headers when the configured value is invalid.
+    }
+  }
+
+  const requestUrl = new URL(requestOrigin);
+  const forwardedHost = firstHeaderValue(headers?.get("x-forwarded-host") ?? null);
+  const forwardedProto = firstHeaderValue(headers?.get("x-forwarded-proto") ?? null);
+  const host = forwardedHost ?? requestUrl.host;
+  const protocol =
+    forwardedProto === "http" || forwardedProto === "https"
+      ? forwardedProto
+      : requestUrl.protocol === "https:" || isLocalHost(requestUrl.hostname)
+        ? requestUrl.protocol.slice(0, -1)
+        : "https";
+
+  return `${protocol}://${host}`;
 }
 
 export function isTextContent(contentType: string): boolean {
@@ -13,7 +42,13 @@ export function isTextContent(contentType: string): boolean {
 }
 
 export function rewriteApiUrls(body: string, host: string): string {
-  return body.replace(/https?:\/\/api-inkhub-v2\.grabink\.co/g, `${host}/api/inkhub-api`);
+  // The upstream client base URL already contains `/api`. Replace the full
+  // base so `/api/auth/me` becomes `/api/inkhub-api/auth/me`, not
+  // `/api/inkhub-api/api/auth/me`.
+  return body.replace(
+    /https?:\/\/api-inkhub-v2\.grabink\.co\/api(?=\/|["'`?)]|$)/g,
+    `${host}/api/inkhub-api`,
+  );
 }
 
 // Rewrite absolute paths (src="/..." href="/...") to go through the proxy.
