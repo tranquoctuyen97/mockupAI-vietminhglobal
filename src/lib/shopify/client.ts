@@ -4,17 +4,21 @@
 
 import type { ShopInfo } from "./types";
 
-const SHOPIFY_API_VERSION = "2025-04";
+const DEFAULT_SHOPIFY_API_VERSION = "2025-04";
 
 export class ShopifyClient {
   private domain: string;
   private accessToken: string;
   private graphqlUrl: string;
 
-  constructor(domain: string, accessToken: string) {
+  constructor(
+    domain: string,
+    accessToken: string,
+    apiVersion = DEFAULT_SHOPIFY_API_VERSION,
+  ) {
     this.domain = domain;
     this.accessToken = accessToken;
-    this.graphqlUrl = `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+    this.graphqlUrl = `https://${domain}/admin/api/${apiVersion}/graphql.json`;
   }
 
   /**
@@ -31,7 +35,7 @@ export class ShopifyClient {
     });
 
     if (response.status === 401 || response.status === 403) {
-      throw new ShopifyAuthError("Token expired or invalid");
+      throw new ShopifyAuthError("Token expired or access denied", response.status);
     }
 
     if (!response.ok) {
@@ -93,7 +97,7 @@ export class ShopifyClient {
 
 // Error classes
 export class ShopifyAuthError extends Error {
-  constructor(message: string) {
+  constructor(message: string, public readonly status: 401 | 403) {
     super(message);
     this.name = "ShopifyAuthError";
   }

@@ -93,6 +93,9 @@ interface StoreDetail {
   id: string;
   name: string;
   shopifyDomain: string;
+  shopifyCurrencyCode: string | null;
+  shopifyGrantedScopes: string[];
+  shopifyReportAccessReady: boolean;
   printifyShopId: string | null;
   inkhubShopId: number | null;
   inkhubShopLabel: string | null;
@@ -459,6 +462,7 @@ function OverviewTab({
   }, [handleTest, store.id, store.status]);
 
   const statusLabel = store.status === "ACTIVE" ? "Hoạt động" : store.status === "TOKEN_EXPIRED" ? "Token hết hạn" : store.status;
+  const requiresShopifyReconnect = store.status === "TOKEN_EXPIRED" || !store.shopifyReportAccessReady;
 
   return (
     <div>
@@ -477,13 +481,26 @@ function OverviewTab({
             <span className={`badge ${store.status === "ACTIVE" ? "badge-success" : "badge-warning"}`} style={{ fontSize: "0.72rem" }}>
               {statusLabel}
             </span>
-            {store.status === "TOKEN_EXPIRED" && (
+            {requiresShopifyReconnect && (
               <Link href={`/api/shopify/authorize?storeId=${store.id}`} className="btn btn-secondary" style={{ padding: "7px 12px", fontSize: "0.76rem" }}>
                 <RefreshCw size={13} />
                 Reconnect
               </Link>
             )}
           </div>
+        </div>
+        <div className="flex items-center gap-2" style={{ marginTop: 8 }}>
+          <span
+            className={`badge ${store.shopifyReportAccessReady ? "badge-success" : "badge-warning"}`}
+            style={{ fontSize: "0.72rem" }}
+          >
+            Reports access · {store.shopifyReportAccessReady ? "Ready" : "Reconnect required"}
+          </span>
+          {store.shopifyCurrencyCode && (
+            <span style={{ fontSize: "0.75rem", opacity: 0.55 }}>
+              Currency: {store.shopifyCurrencyCode}
+            </span>
+          )}
         </div>
         {result?.shopify && !result.shopify.ok && (
           <div style={{ fontSize: "0.8rem", color: "#ef4444", marginTop: 8 }}>Lỗi: {result.shopify.error}</div>

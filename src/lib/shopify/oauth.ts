@@ -13,7 +13,21 @@
 
 import { createHmac, timingSafeEqual, randomBytes } from "node:crypto";
 
-const DEFAULT_SCOPES = "write_products,read_products,read_orders,write_inventory,read_publications,write_publications";
+export const SHOPIFY_REQUIRED_SCOPES = [
+  "write_products",
+  "read_products",
+  "read_orders",
+  "read_reports",
+  "write_inventory",
+  "read_publications",
+  "write_publications",
+] as const;
+
+const DEFAULT_SCOPES = SHOPIFY_REQUIRED_SCOPES.join(",");
+
+export function normalizeGrantedScopes(scope: string): string[] {
+  return [...new Set(scope.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean))];
+}
 
 /**
  * Build Shopify OAuth authorization URL

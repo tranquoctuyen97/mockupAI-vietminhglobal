@@ -237,6 +237,7 @@ model Store {
   name              String
   shopifyDomain     String      @map("shopify_domain") // mystore.myshopify.com
   shopifyShopId     String?     @map("shopify_shop_id") // gid://shopify/Shop/...
+  shopifyCurrencyCode String?   @map("shopify_currency_code")
   printifyShopId    String?     @unique @map("printify_shop_id") // 1 shop = 1 store
   printifyShopTitle String?     @map("printify_shop_title") // Cached shop display name
   inkhubShopId      Int?        @map("inkhub_shop_id") // Inkhub shop id; stable sync key
@@ -282,6 +283,7 @@ model StoreCredentials {
   shopifyClientId        String   @map("shopify_client_id")
   shopifyClientSecretEnc Bytes    @map("shopify_client_secret_enc")
   shopifyTokenEncrypted  Bytes?   @map("shopify_token_encrypted")
+  shopifyGrantedScopes   String[] @default([]) @map("shopify_granted_scopes")
   encryptionKeyId        String   @map("encryption_key_id")
   rotatedAt              DateTime @default(now()) @map("rotated_at")
 

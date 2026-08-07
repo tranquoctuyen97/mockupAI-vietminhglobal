@@ -59,6 +59,7 @@ describe("dashboard analytics components", () => {
 
     expect(markup.indexOf(">Orders<")).toBeLessThan(markup.indexOf(">Designs<"));
     expect(markup).toContain("Expected Cost");
+    expect(markup.indexOf("Total sales by product")).toBeLessThan(markup.indexOf("Orders by listing"));
     expect(markup.indexOf(">Designs<")).toBeLessThan(markup.indexOf(">Active Listings<"));
     expect(markup.indexOf(">Active Listings<")).toBeLessThan(markup.indexOf("Quick start"));
   });

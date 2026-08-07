@@ -31,6 +31,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const store = await prisma.store.findUnique({
     where: { id, tenantId: session.tenantId },
     include: {
+      credentials: {
+        select: { shopifyGrantedScopes: true },
+      },
       printifyShop: true,
       colors: { orderBy: { sortOrder: "asc" } },
       templates: {
@@ -88,11 +91,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     })),
   }));
 
+  const { credentials, ...storeWithoutCredentials } = store;
+
   return NextResponse.json({
-    ...store,
+    ...storeWithoutCredentials,
     templates: enrichedTemplates,
     defaultPriceUsd: Number(store.defaultPriceUsd),
     presetStatus: getPresetStatusSync(store),
+    shopifyGrantedScopes: credentials?.shopifyGrantedScopes ?? [],
+    shopifyReportAccessReady: credentials?.shopifyGrantedScopes.includes("read_reports") ?? false,
   });
 }
 

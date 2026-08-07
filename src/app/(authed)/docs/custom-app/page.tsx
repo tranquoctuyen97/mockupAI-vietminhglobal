@@ -51,6 +51,7 @@ export default function CustomAppGuidePage() {
             <li><code>write_products</code> — Tạo/cập nhật sản phẩm</li>
             <li><code>read_products</code> — Đọc danh sách sản phẩm</li>
             <li><code>read_orders</code> — Đọc đơn hàng (auto-fulfill)</li>
+            <li><code>read_reports</code> — Đọc Shopify Analytics theo sản phẩm</li>
             <li><code>write_inventory</code> — Cập nhật tồn kho</li>
           </ul>
         </div>

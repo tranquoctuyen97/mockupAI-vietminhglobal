@@ -27,6 +27,7 @@ const REQUIRED_SCOPES = [
   { scope: "write_products", desc: "Tạo & sửa sản phẩm" },
   { scope: "read_products", desc: "Đọc thông tin sản phẩm" },
   { scope: "read_orders", desc: "Đọc đơn hàng (analytics)" },
+  { scope: "read_reports", desc: "Đọc báo cáo doanh thu theo sản phẩm" },
   { scope: "write_inventory", desc: "Quản lý tồn kho" },
   { scope: "read_publications", desc: "Đọc thông tin xuất bản" },
   { scope: "write_publications", desc: "Quản lý xuất bản (publish sản phẩm)" },
@@ -39,7 +40,7 @@ const SETUP_STEPS = [
   },
   {
     label: "Cấu hình Version — URLs + Scopes + Redirect URL",
-    desc: 'Tại trang "Create version": điền App URL, paste Redirect URL ở trên vào ô Redirect URLs, điền 4 Scopes bên dưới vào ô Scopes.',
+    desc: 'Tại trang "Create version": điền App URL, paste Redirect URL ở trên vào ô Redirect URLs, điền các Scopes bên dưới vào ô Scopes.',
     image: "/guides/shopify/step2-configure-version.png",
   },
   {

@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import {
   exchangeCodeForToken,
+  normalizeGrantedScopes,
   verifyHmac,
   sanitizeShopDomain,
   parseOAuthState,
@@ -95,6 +96,7 @@ export async function GET(request: Request) {
       data: {
         shopifyDomain: cleanShop,
         shopifyShopId: shopInfo.id,
+        shopifyCurrencyCode: shopInfo.currencyCode,
         name: shopInfo.name || undefined,
         status: "ACTIVE",
       },
@@ -104,6 +106,7 @@ export async function GET(request: Request) {
       where: { storeId },
       data: {
         shopifyTokenEncrypted: tokenEncrypted,
+        shopifyGrantedScopes: normalizeGrantedScopes(scope),
         rotatedAt: new Date(),
       },
     });
