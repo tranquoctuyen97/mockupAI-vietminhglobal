@@ -45,6 +45,22 @@ test("getPublicOrigin: upgrades non-local HTTP origin when forwarded headers are
   }
 });
 
+test("getPublicOrigin: upgrades configured non-local HTTP origin", () => {
+  const previousAppOrigin = process.env.APP_PUBLIC_ORIGIN;
+  const previousNextOrigin = process.env.NEXT_PUBLIC_APP_URL;
+  process.env.NEXT_PUBLIC_APP_URL = "http://app.example.com";
+  delete process.env.APP_PUBLIC_ORIGIN;
+
+  try {
+    assert.equal(getPublicOrigin("http://internal:3000"), "https://app.example.com");
+  } finally {
+    if (previousAppOrigin === undefined) delete process.env.APP_PUBLIC_ORIGIN;
+    else process.env.APP_PUBLIC_ORIGIN = previousAppOrigin;
+    if (previousNextOrigin === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+    else process.env.NEXT_PUBLIC_APP_URL = previousNextOrigin;
+  }
+});
+
 test("isTextContent: returns true for text types", () => {
   assert.equal(isTextContent("text/html; charset=utf-8"), true);
   assert.equal(isTextContent("text/javascript"), true);

@@ -7,15 +7,23 @@ function isLocalHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
+function normalizeConfiguredOrigin(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    if (url.protocol === "http:" && !isLocalHost(url.hostname)) url.protocol = "https:";
+    return url.origin;
+  } catch {
+    return undefined;
+  }
+}
+
 export function getPublicOrigin(requestOrigin: string, headers?: Headers): string {
   const configuredOrigin = process.env.APP_PUBLIC_ORIGIN ?? process.env.NEXT_PUBLIC_APP_URL;
 
   if (configuredOrigin) {
-    try {
-      return new URL(configuredOrigin).origin;
-    } catch {
-      // Fall through to the request headers when the configured value is invalid.
-    }
+    const normalizedOrigin = normalizeConfiguredOrigin(configuredOrigin);
+    if (normalizedOrigin) return normalizedOrigin;
   }
 
   const requestUrl = new URL(requestOrigin);
